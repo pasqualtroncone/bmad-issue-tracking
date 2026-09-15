@@ -109,6 +109,58 @@ Projects using [`bmad-loop`](https://github.com/bmad-code-org/bmad-loop) bypass 
 5. Add a row to the override table in `README.md`
 6. If the workflow has a standalone skill, create or update its `references/help.md` and bump `version` in `<skill>/module-manifest.toml` (manifest is now the source of truth — `module-help.csv` no longer exists)
 
+## Commit convention
+
+This repo follows the generic scoped-commit convention (`type(scope): description`,
+five types: `feat`, `fix`, `docs`, `chore`, `revert`; the description states the
+effect or the symptom, never the operation). Repo-specific rules:
+
+### Language
+
+- **English.** Upstream commits in English and changes may go back as PRs.
+
+### Canonical scopes
+
+The scope is semantic (what area is being talked about), not a folder path.
+
+| Scope | Area |
+|-------|------|
+| `install` | Packaging and install routes: `skills/module.yaml`, `skills/module-help.csv`, `.claude-plugin/marketplace.json`, `*/module-manifest.toml`, install docs |
+| `setup` | The `bmad-issue-tracking-setup` skill: version gate, deploy steps, prerequisite checks |
+| `sync` | The `bmad-issue-tracking-sync` skill and the `issue-sync/` workflows |
+| `overrides` | The TOML pointers in `assets/custom/` (which BMM workflows are hooked, and to what) |
+| `workflows` | The workflow YAML bodies in `assets/workflows/` (`common/`, per-workflow folders) |
+| `ci-gate` | `ci-status.sh`, the `ci-status.json` contract, CI wait/poll behaviour for bmad-loop |
+| `lang` | `bmad-workflow-lang.md`, the workflow language itself |
+| `tests` | The test suite infrastructure (`conftest.py`, runners); a test for area X is `chore(X)` |
+| `readme` / `changelog` | The respective file, when the change is only there |
+| `release` | Version bumps and tags |
+| `repo` | Repo housekeeping that fits no area (`.gitignore`, stale artifacts) |
+
+**Without scope** go cross-cutting changes (`LICENSE`, this convention): plain `docs:` or `chore:`.
+
+**Vocabulary maintenance:** a commit that needs a scope missing from this table adds it
+to the table in the same commit/PR.
+
+### Issue tracker
+
+- The issue reference goes **only in the footer**: `Refs #n`, or `Closes #n` in the
+  commit/PR that closes the task. Never in the scope or the description.
+
+### PR title
+
+The PR title becomes the `main` commit message when squash-merged, so it must satisfy the
+full convention (type + scope + description with substance). Intermediate branch commits
+follow the same format with lower stakes; the `Refs #n` footer is non-negotiable.
+
+### Examples from this repo
+
+- ✅ `chore(release): 3.0.0`
+- ✅ `chore: add the MIT LICENSE file the README already declares`
+- ❌ `docs(readme): fix stale BMM version refs, add architecture/CI/troubleshooting/license`
+  → the "and" list signals several changes; split, or name the one effect that matters:
+  `docs(readme): BMM version refs no longer point at 6.11`
+
 ## Python environment
 
 Tests use `pytest` and `pyyaml`. Always use the project venv — never `pip3 install --break-system-packages`:
