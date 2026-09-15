@@ -99,10 +99,14 @@ cp -rf <path>/workflows/* _bmad/_config/custom/workflows/
 - `_bmad/_config/custom/workflows/common/ensure-mr.yaml`
 - `_bmad/_config/custom/workflows/common/ensure-labels.yaml`
 - `_bmad/_config/custom/workflows/common/find-issue.yaml`
+- `_bmad/_config/custom/workflows/common/find-mr.yaml`
 - `_bmad/_config/custom/workflows/common/find-prd.yaml`
 - `_bmad/_config/custom/workflows/common/find-prd-key.yaml`
 - `_bmad/_config/custom/workflows/common/find-stories.yaml`
+- `_bmad/_config/custom/workflows/common/get-failed-jobs.yaml`
+- `_bmad/_config/custom/workflows/common/get-mr-pipeline.yaml`
 - `_bmad/_config/custom/workflows/common/mark-mr-ready.yaml`
+- `_bmad/_config/custom/workflows/common/merge-mr.yaml`
 - `_bmad/_config/custom/workflows/common/post-build-dispatch.yaml`
 - `_bmad/_config/custom/workflows/common/post-build-dispatch-auto.yaml`
 - `_bmad/_config/custom/workflows/common/post-build-dispatch-interactive.yaml`

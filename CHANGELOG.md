@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first, and the error message no longer tells classic users to run `npx skills add`.
 - Setup step 3 copied `bmad-workflow-lang.md` into `_bmad/_config/custom/` before creating the
   directory, which does not exist on a fresh classic install.
+- Setup step 3's verify list missed four shipped `common/` workflows (`find-mr`, `get-failed-jobs`,
+  `get-mr-pipeline`, `merge-mr`), so a consumer could lack them and the installer stay green.
+  `tests/test_setup_verify_list.py` now pins the list to `assets/`.
 
 ## [3.0.0] - 2026-09-15
 
