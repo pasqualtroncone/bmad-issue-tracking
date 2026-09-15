@@ -21,8 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- README and `CLAUDE.md` describe both install routes truthfully: BMAD 6.12.0 (latest release)
-  ships only the classic installer with the `_bmad/{bmm,core,...}/` layout; the Skills CLI /
+- README and `CLAUDE.md` describe both install routes truthfully: BMAD 6.12.0 ships only the classic installer with the `_bmad/{bmm,core,...}/` layout; the Skills CLI /
   `module-manifest.toml` distribution is BMAD `main` (6.13.0-next), unreleased, and the two
   routes never coexist in one project. Previous text claimed 6.12.0 had adopted
   Skills-as-modules and a flat `_bmad/{method,toolbox}/` layout.
@@ -41,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup step 3's verify list missed four shipped `common/` workflows (`find-mr`, `get-failed-jobs`,
   `get-mr-pipeline`, `merge-mr`), so a consumer could lack them and the installer stay green.
   `tests/test_setup_verify_list.py` now pins the list to `assets/`.
+- The sync skill's `module-manifest.toml` pointed `knowledge` at the setup skill's help file instead of
+  its own `references/help.md`; that help file still required BMM 6.11.0 and read the version only
+  from the legacy `_bmad/bmm/config.yaml`.
+- Setup could not find its assets on a classic install for tools other than Claude Code; any
+  `*/skills/bmad-issue-tracking-setup/` under the project root is now a candidate.
 
 ## [3.0.0] - 2026-09-15
 
