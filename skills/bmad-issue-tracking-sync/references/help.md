@@ -1,4 +1,4 @@
-# Module: issue-tracking
+# Module: bmad-issue-tracking
 
 Override layer. Ships TOML pointers + YAML workflows that hook into `bmm` workflow `on_complete` / `activation_steps_append`. Does not run standalone: must be installed in a consumer project that already has `bmm` (≥6.11.0).
 
@@ -13,8 +13,8 @@ This module exposes no new menus or commands. The sync skill is the only user-in
 
 ## Prerequisites (consumer project)
 
-- `bmm` ≥ 6.11.0 installed (`_bmad/bmm/config.yaml` exists, `# Version:` header ≥ 6.11.0)
-- `uv` available (mandatory for BMM 6.11.0+ workflow Python)
+- `bmm` ≥ 6.12.0 installed. Classic installer: `installation.version` in `_bmad/_config/manifest.yaml` (fallback: `# Version:` header in `_bmad/bmm/config.yaml`). Skills CLI: `version` in `.agents/skills/bmad-*/module-manifest.toml`
+- `uv` available (mandatory for BMM 6.12.0+ workflow Python)
 - For bmad-loop consumers: `.bmad-loop/` directory present (optional — sync skill works without bmad-loop)
 
 ## Routing
