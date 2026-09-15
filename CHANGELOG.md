@@ -16,8 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `npx bmad-method install --custom-source <repo>` (Discovery mode) and
   `--custom-source <repo>/skills` (Direct mode) now register the module as
   `bmad-issue-tracking` with its version instead of an anonymous `skills` module.
-- `tests/test_packaging.py`: module code, version, skill list and help-CSV header must agree
-  across `module.yaml`, `marketplace.json` and every `module-manifest.toml`.
+- `tests/test_packaging.py`: module code, semver version string, skill list, manifest `knowledge`
+  targets and help-CSV header/rows must agree across `module.yaml`, `marketplace.json`, every
+  `module-manifest.toml` and the newest `CHANGELOG.md` release heading, in the shapes the
+  6.12.0 installer's line-based parsers actually accept.
 
 ### Changed
 
@@ -45,6 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the legacy `_bmad/bmm/config.yaml`.
 - Setup could not find its assets on a classic install for tools other than Claude Code; any
   `*/skills/bmad-issue-tracking-setup/` under the project root is now a candidate.
+- The README override table lacked rows for `bmad-build.toml` and `bmad-build-auto.toml`;
+  `tests/test_setup_verify_list.py` now pins the table to `assets/custom/` as well.
 
 ## [3.0.0] - 2026-09-15
 
