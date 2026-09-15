@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `LICENSE` (MIT). The README declared the license but the file was never committed.
+- Classic-installer packaging restored alongside the Skills-as-modules manifests, so the same
+  release installs through both routes: `skills/module.yaml` + `skills/module-help.csv`
+  (BMM 6.12.0 canonical help schema) and `.claude-plugin/marketplace.json`.
+  `npx bmad-method install --custom-source <repo>` (Discovery mode) and
+  `--custom-source <repo>/skills` (Direct mode) now register the module as
+  `bmad-issue-tracking` with its version instead of an anonymous `skills` module.
+- `tests/test_packaging.py`: module code, version, skill list and help-CSV header must agree
+  across `module.yaml`, `marketplace.json` and every `module-manifest.toml`.
+
 ## [3.0.0] - 2026-09-15
 
 [compare v2.2.0...v3.0.0](https://github.com/jrevillard/bmad-issue-tracking/compare/v2.2.0...v3.0.0)
