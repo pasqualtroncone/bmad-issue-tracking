@@ -294,4 +294,4 @@ issue_tracking:
 
 ## License
 
-Released under the MIT License. A `LICENSE` file should accompany releases — if you cloned this repo and it is missing, request it from the maintainer or open an issue.
+Released under the [MIT License](./LICENSE).
