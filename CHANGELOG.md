@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
   clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
-  folder (`_bmad/bmad-issue-tracking/…`, `.claude/skills/…`, `.agents/skills/…`, cache, then ask)
+  folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)
   once and reuses it for TOML overrides, workflows, `ci-status.sh` and the close-trace-mr plugin.
 - Setup step 1 read the BMM version from `.agents/skills/*/module-manifest.toml` on the assumption
   that 6.12.0 installs that way; on a classic install it now reads `_bmad/_config/manifest.yaml`

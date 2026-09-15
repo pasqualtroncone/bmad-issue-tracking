@@ -32,11 +32,10 @@ One-time setup for BMAD Issue Tracking integration. Deploys TOML overrides to `_
 
 <step n="2" goal="Deploy TOML overrides">
 <action>Resolve `<module_dir>`: the installed copy of the `bmad-issue-tracking-setup` skill folder (the one containing this SKILL.md next to `assets/` and `scripts/`). Check these locations in order and use the first that contains `assets/custom/`:</action>
-1. `_bmad/bmad-issue-tracking/bmad-issue-tracking-setup/` (classic installer module directory)
-2. `.claude/skills/bmad-issue-tracking-setup/` (both routes copy the skill here for Claude Code)
-3. `.agents/skills/bmad-issue-tracking-setup/` (Skills CLI, other agents)
-4. `~/.bmad/cache/custom-modules/github.com/jrevillard/bmad-issue-tracking/skills/bmad-issue-tracking-setup/` (classic installer clone cache for URL sources)
-5. Ask the user for the path to the cloned `bmad-issue-tracking` repo and use `<repo>/skills/bmad-issue-tracking-setup/`
+1. `.claude/skills/bmad-issue-tracking-setup/` (both routes copy the whole skill folder here for Claude Code; the classic installer's `_bmad/bmad-issue-tracking/` holds only `config.yaml` + `module-help.csv`)
+2. `.agents/skills/bmad-issue-tracking-setup/` (Skills CLI, other agents)
+3. `~/.bmad/cache/custom-modules/github.com/jrevillard/bmad-issue-tracking/skills/bmad-issue-tracking-setup/` (classic installer clone cache for URL sources)
+4. Ask the user for the path to the cloned `bmad-issue-tracking` repo and use `<repo>/skills/bmad-issue-tracking-setup/`
 <action>Every `<path>` below means `<module_dir>/assets`. The TOML overrides are in `<path>/custom/`.</action>
 
 <action>IMPORTANT: Always overwrite existing TOML files — this is an update, not a first install. New versions may have changed TOML content.</action>

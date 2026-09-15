@@ -53,7 +53,7 @@ npx bmad-method install --directory . --modules bmm \
 
 Pin a release with `--custom-source https://github.com/jrevillard/bmad-issue-tracking@v3.0.0`, or point at a local clone (`--custom-source /path/to/bmad-issue-tracking`; changes take effect on reinstall). Both `<repo>` (Discovery mode via `marketplace.json`) and `<repo>/skills` (Direct mode) work as the source.
 
-The installer registers the module as `bmad-issue-tracking` with its version in `_bmad/_config/manifest.yaml`, copies both skills to `_bmad/bmad-issue-tracking/` and `.claude/skills/`, and adds their rows to `_bmad/_config/bmad-help.csv`.
+The installer registers the module as `bmad-issue-tracking` with its version in `_bmad/_config/manifest.yaml`, copies both skills to `.claude/skills/` (the module directory `_bmad/bmad-issue-tracking/` holds only its config and help catalog), and adds their rows to `_bmad/_config/bmad-help.csv`.
 
 ### Route B: Skills CLI (unreleased BMAD)
 
