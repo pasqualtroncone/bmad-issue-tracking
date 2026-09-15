@@ -19,6 +19,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tests/test_packaging.py`: module code, version, skill list and help-CSV header must agree
   across `module.yaml`, `marketplace.json` and every `module-manifest.toml`.
 
+### Changed
+
+- README and `CLAUDE.md` describe both install routes truthfully: BMAD 6.12.0 (latest release)
+  ships only the classic installer with the `_bmad/{bmm,core,...}/` layout; the Skills CLI /
+  `module-manifest.toml` distribution is BMAD `main` (6.13.0-next), unreleased, and the two
+  routes never coexist in one project. Previous text claimed 6.12.0 had adopted
+  Skills-as-modules and a flat `_bmad/{method,toolbox}/` layout.
+
+### Fixed
+
+- `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
+  clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
+  folder (`_bmad/bmad-issue-tracking/…`, `.claude/skills/…`, `.agents/skills/…`, cache, then ask)
+  once and reuses it for TOML overrides, workflows, `ci-status.sh` and the close-trace-mr plugin.
+- Setup step 1 read the BMM version from `.agents/skills/*/module-manifest.toml` on the assumption
+  that 6.12.0 installs that way; on a classic install it now reads `_bmad/_config/manifest.yaml`
+  first, and the error message no longer tells classic users to run `npx skills add`.
+- Setup step 3 copied `bmad-workflow-lang.md` into `_bmad/_config/custom/` before creating the
+  directory, which does not exist on a fresh classic install.
+
 ## [3.0.0] - 2026-09-15
 
 [compare v2.2.0...v3.0.0](https://github.com/jrevillard/bmad-issue-tracking/compare/v2.2.0...v3.0.0)

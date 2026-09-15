@@ -2,7 +2,7 @@
 
 BMAD module that mirrors sprint tracking to GitLab Issues or GitHub Issues. Supports both cloud and self-hosted instances via their respective CLIs (`glab` / `gh`).
 
-Uses native BMad TOML customization for workflow integrations. Ships as a Skills-as-modules module (manifest declares `module = "bmad-issue-tracking"`).
+Uses native BMad TOML customization for workflow integrations. Installs through both BMad routes: the classic installer (`npx bmad-method install --custom-source`) and the Skills CLI (`npx skills add`).
 
 ## Prerequisites
 
@@ -33,75 +33,86 @@ In the manual flow (`/bmad-build`), the hook blocks the workflow on CI. In the b
 
 ## Installation
 
-### 1. Install BMad core first (one-time per project)
+BMad has two install routes. **They never coexist in one project** — pick the one your project already uses.
 
-The issue-tracking module extends a project that already has BMad set up:
+| Route | BMad versions | What this module ships for it |
+|---|---|---|
+| **Classic installer** — `npx bmad-method install` | every released version, incl. 6.12.0 (latest) | `skills/module.yaml`, `skills/module-help.csv`, `.claude-plugin/marketplace.json` |
+| **Skills CLI** — `npx skills add` + `bmad setup` | BMAD `main` (6.13.0-next), unreleased as of 2026-09 | `skills/*/module-manifest.toml` |
 
-```bash
-npx skills add bmad-code-org/BMAD-METHOD
-```
+### Route A: classic installer (released BMAD, recommended today)
 
-Then open your coding tool in the project and ask the `bmad` skill to run `bmad setup` (this materializes `_bmad/` in your project, including `bmm` ≥ 6.12.0).
-
-### 2. Add the issue-tracking module
-
-From the project root:
+1. Install or update BMad in your project as usual (`npx bmad-method install`, BMM ≥ 6.12.0).
+2. Add this module as a custom source. Interactive: run the installer again and answer **yes** to "install custom or community modules", then paste the repo URL or local path. Non-interactive:
 
 ```bash
-# Latest (default branch)
-npx skills add jrevillard/bmad-issue-tracking
+npx bmad-method install --directory . --modules bmm \
+  --custom-source https://github.com/jrevillard/bmad-issue-tracking \
+  --tools claude-code --yes
 ```
 
-The installer reads each `skills/<name>/module-manifest.toml`; both declare `module = "bmad-issue-tracking"`. After install, two slash commands become available:
+Pin a release with `--custom-source https://github.com/jrevillard/bmad-issue-tracking@v3.0.0`, or point at a local clone (`--custom-source /path/to/bmad-issue-tracking`; changes take effect on reinstall). Both `<repo>` (Discovery mode via `marketplace.json`) and `<repo>/skills` (Direct mode) work as the source.
 
-- `/bmad-issue-tracking-sync` — Sync sprint status to issues
-- `/bmad-issue-tracking-setup` — Deploy TOML overrides and shared tasks (run once)
+The installer registers the module as `bmad-issue-tracking` with its version in `_bmad/_config/manifest.yaml`, copies both skills to `_bmad/bmad-issue-tracking/` and `.claude/skills/`, and adds their rows to `_bmad/_config/bmad-help.csv`.
+
+### Route B: Skills CLI (unreleased BMAD)
+
+```bash
+npx skills add bmad-code-org/BMAD-METHOD      # BMad core, then run `bmad setup` in your coding tool
+npx skills add jrevillard/bmad-issue-tracking  # this module
+```
+
+The Skills CLI reads each `skills/<name>/module-manifest.toml`; both declare `module = "bmad-issue-tracking"`.
 
 > **Pinning to a release:** the skills CLI treats `@<ref>` after the package name as a *skill name filter*, not a git ref — `npx skills add jrevillard/bmad-issue-tracking@v3.0.0` looks for a skill *named* `v3.0.0`. For release-tag installs, the GitHub URL form is the only reliable syntax (see [Development install](#development-install)).
 
-### 3. Run the setup skill
+### Then, on either route: run the setup skill
 
 ```
 /bmad-issue-tracking-setup
 ```
 
 This deploys TOML overrides to `_bmad/custom/`, shared tasks to `_bmad/_config/custom/`, and configures:
-- **Platform** (GitLab or GitHub) — detected from git remote, with mismatch handling
-- **Connection** (host and project) — always configured explicitly
-- **Branch patterns** (PRD branch, story branches) — controls automatic branch and MR/PR creation
 
-### 4. PRD key
+- `issue_tracking.platform` (gitlab or github)
+- `issue_tracking.enabled` (true)
+- `issue_tracking.branch_patterns` (default: `feat/{prd_key}/prd`, `feat/{prd_key}/{story_key}`)
+- `issue_tracking.host` / `issue_tracking.project` (or `issue_tracking.owner` / `issue_tracking.repo` for GitHub)
 
-`prd_key` is captured automatically when running `/bmad-create-prd` (via `activation_steps_append`). No manual configuration needed.
+`prd_key` is captured automatically when running `/bmad-prd` (via `activation_steps_append`). No manual configuration needed.
 
 ## Development install
 
-For contributors testing branches or local edits before a release is tagged. The skills CLI accepts two non-default forms in addition to `owner/repo`. Both forms ship only the skill folders — to actually deploy TOML overrides, workflow YAMLs, and the bmad-loop plugin into your project's `_bmad/`, you must still run `/bmad-issue-tracking-setup` afterwards (same as the production flow, see step 3 above).
+For contributors testing branches or local edits before a release is tagged. Whatever the route, only the skill folders are shipped — to actually deploy TOML overrides, workflow YAMLs, and the bmad-loop CI gate into your project's `_bmad/`, you must still run `/bmad-issue-tracking-setup` afterwards.
 
-### Install from a GitHub branch
+### Classic installer
 
-Use the GitHub URL form with `/tree/<branch>`:
+```bash
+npx bmad-method install --directory . --modules bmm --custom-source /absolute/path/to/bmad-issue-tracking --tools claude-code --yes
+```
+
+Local sources are read from disk on every reinstall, no commit needed. A Git URL accepts `/tree/<branch>` or `@<tag>` to pick a ref.
+
+### Skills CLI, from a GitHub branch
 
 ```bash
 npx skills add https://github.com/jrevillard/bmad-issue-tracking/tree/skills-as-modules
 ```
 
-The CLI clones the branch (not the default branch), so each `<skill>/module-manifest.toml` is read from that ref. Useful to validate a release-candidate branch before tagging.
+The CLI clones the branch (not the default branch), so each `<skill>/module-manifest.toml` is read from that ref.
 
-### Install from a local clone
-
-Point the CLI at an absolute path on disk. No commit or push required — the CLI reads whatever is currently on the filesystem:
+### Skills CLI, from a local clone
 
 ```bash
 npx skills add /absolute/path/to/bmad-issue-tracking
 ```
 
-Handy when iterating on `<skill>/module-manifest.toml`, `references/help.md`, or `scripts/`. Re-run after each edit so the symlinked `.agents/skills/<skill>/` reflects the latest state.
+Re-run after each edit so the copied `.claude/skills/<skill>/` (or `.agents/skills/<skill>/`) reflects the latest state.
 
-### Caveats for both dev installs
+### Caveats for the Skills CLI dev installs
 
 - `npx skills update` won't roll either form forward to a tagged release — you'll need to remove the dev install (`npx skills remove`) and reinstall via the production command.
-- The `bmad setup` doctor's `state: "blocked"` for the `issue-tracking` module is *expected* until you publish a tag matching the manifest's `version`. The install itself is healthy — only the release comparability check fails.
+- The `bmad setup` doctor's `state: "blocked"` for the `bmad-issue-tracking` module is *expected* until you publish a tag matching the manifest's `version`. The install itself is healthy — only the release comparability check fails.
 
 ## Development setup
 
@@ -112,12 +123,15 @@ To test the install flow end-to-end, use a throwaway consumer project — never
 reinstall BMM into this repo:
 
 ```bash
-mkdir /tmp/bmad-issue-tracking-consumer
-cd /tmp/bmad-issue-tracking-consumer
+mkdir /tmp/bmad-issue-tracking-consumer && cd /tmp/bmad-issue-tracking-consumer && git init
+# classic route (released BMAD): both skills registered as module "bmad-issue-tracking"
+npx bmad-method install --directory . --modules bmm --custom-source /path/to/bmad-issue-tracking --tools claude-code --yes
+# Skills CLI route (BMAD main): picker lists exactly 2 skills
 npx skills add bmad-code-org/BMAD-METHOD
-npx skills add /home/jerome/git_projects/bmad-issue-tracking   # this repo
-# picker lists exactly 2 skills
+npx skills add /path/to/bmad-issue-tracking
 ```
+
+`uv run --with pytest --with pyyaml pytest` runs the suite; `tests/test_packaging.py` keeps the metadata of both routes in agreement.
 
 ## What gets installed
 
@@ -247,7 +261,7 @@ The architecture is simpler: at the end of every `bmad-build-auto` session, the 
 
 ## After BMM updates
 
-- **Skills** — update with `npx skills update`, then run `bmad` skill → `bmad doctor` (verifies the runtime). Re-run `/bmad-issue-tracking-setup` to refresh the deployed TOML/YAML assets in your `_bmad/custom/` and `_bmad/_config/custom/workflows/` trees.
+- **Skills** — classic route: re-run `npx bmad-method install` (custom sources are refreshed with the rest). Skills CLI route: `npx skills update`, then run the `bmad` skill → `bmad doctor`. On either route re-run `/bmad-issue-tracking-setup` to refresh the deployed TOML/YAML assets in your `_bmad/custom/` and `_bmad/_config/custom/workflows/` trees.
 - **TOML overrides** — no action needed (survive BMM updates unless we rename a workflow).
 - **Shared tasks** — no action needed
 

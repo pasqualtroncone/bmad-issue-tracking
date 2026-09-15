@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-BMAD module that integrates sprint tracking with GitLab/GitHub Issues. It's not a runnable application — it's a set of TOML overrides and Skills-as-modules folders consumed by the new BMad installer (each `<skill>/module-manifest.toml` declares `module = "issue-tracking"`).
+BMAD module that integrates sprint tracking with GitLab/GitHub Issues. It's not a runnable application — it's a set of TOML overrides and two skill folders, packaged for both BMad install routes: the classic installer (`npx bmad-method install --custom-source`, reads `skills/module.yaml`, `skills/module-help.csv`, `.claude-plugin/marketplace.json`) and the Skills CLI (`npx skills add`, reads each `<skill>/module-manifest.toml`; all declare `module = "bmad-issue-tracking"`).
 
-Requires BMM 6.12.0+ (the flat per-skill install layout `_bmad/{method,toolbox,...}/` replaces the legacy `_bmad/{bmm,bmb,cis,core}/` subdirectories from 6.12.0 onward; BMad adopted the Skills-as-modules format with this version).
+Requires BMM 6.12.0+ (targets the 6.12.0 skill set and `uv`). Install-route facts, verified 2026-09-16: **BMAD 6.12.0 is the latest release and ships only the classic installer**, whose consumer layout is still `_bmad/{bmm,core,_config,custom,...}/`. The Skills-as-modules distribution (`npx skills add bmad-code-org/BMAD-METHOD`, `module-manifest.toml`, `bmad setup/update/doctor`, flat `_bmad/{method,toolbox}/`) merged into BMAD `dev` on 2026-09-05 as `6.13.0-next` and is unreleased. The two routes are mutually exclusive per consumer project (the classic installer refuses to run in a Skills-CLI-managed project). Consumers on a released BMAD use the classic route; the manifests are forward compatibility.
 
 ## Architecture
 
-Two Skills-as-modules folders, each with its own manifest declaring the same module key:
+Two skill folders, each with its own `module-manifest.toml` declaring the same module key (plus the shared classic metadata in `skills/module.yaml` + `skills/module-help.csv`):
 
 - `skills/bmad-issue-tracking-sync/` — the user-facing `/bmad-issue-tracking-sync` command. Manifest: `module = "issue-tracking"`, `knowledge = "references/help.md in the bmad-issue-tracking-sync skill"`.
 - `skills/bmad-issue-tracking-setup/` — one-time deploy. Manifest: same module key, plus `scripts = [...]` listing the bmad-loop integration Python + shell files.
@@ -107,7 +107,7 @@ Projects using [`bmad-loop`](https://github.com/bmad-code-org/bmad-loop) bypass 
 3. Add the TOML file to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3)
 4. Add the YAML files to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3b)
 5. Add a row to the override table in `README.md`
-6. If the workflow has a standalone skill, create or update its `references/help.md` and bump `version` in `<skill>/module-manifest.toml` (manifest is now the source of truth — `module-help.csv` no longer exists)
+6. If the workflow has a standalone skill, create or update its `references/help.md`, add its row to `skills/module-help.csv` (classic help catalog) and bump `version` in `<skill>/module-manifest.toml`
 
 ## Commit convention
 
@@ -173,7 +173,7 @@ python3 -m venv .venv && source .venv/bin/activate && pip install pytest pyyaml
 When working on a branch, add functional changes to the `[Unreleased]` section of `CHANGELOG.md` following Keep a Changelog format (Added, Changed, Fixed, etc.) — one entry per logical change, not per commit.
 
 When cutting a release:
-1. Bump `version` in every `skills/*/module-manifest.toml` so all skills declare the same release version (manifest is now the source of truth — `module.yaml` and `marketplace.json` no longer exist).
+1. Bump `version` in every `skills/*/module-manifest.toml`, in `skills/module.yaml` and in `.claude-plugin/marketplace.json` — `tests/test_packaging.py` fails if they disagree.
 2. Update `CHANGELOG.md` — replace `[Unreleased]` with the version and date, add comparison link.
 3. Create a git tag `v{version}` on the version bump commit and push it (`git push origin --tags`).
 
