@@ -1,7 +1,7 @@
 """The setup skill's per-file verify list must name exactly the files it deploys.
 
 skills/bmad-issue-tracking-setup/SKILL.md (steps 2 and 3) lists every TOML
-override and workflow YAML the consumer must end up with. The installer stays
+override and workflow YAML the consumer must end up with. The setup skill's own verify step stays
 green when the list is stale, so the consumer silently misses files (four
 common/ MR atomics shipped that way). This test pins the list to assets/.
 """

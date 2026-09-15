@@ -20,8 +20,8 @@ One-time setup for BMAD Issue Tracking integration. Deploys TOML overrides to `_
 
 <step n="1" goal="Verify BMM installation">
 <action>Detect the BMM version. BMad has two install routes and they never coexist in one project; check them in this order:</action>
-<action>1. **Classic installer** (`npx bmad-method install`, every released BMAD version up to and including 6.12.0) — read `installation.version` in `_bmad/_config/manifest.yaml`. Fallback: the `# Version:` header in `_bmad/bmm/config.yaml`.</action>
-<action>2. **Skills CLI** (`npx skills add bmad-code-org/BMAD-METHOD` + `bmad setup`, BMAD `main` / 6.13.0-next, unreleased at the time of writing) — read the `version` field in `.agents/skills/bmad-sprint-planning/module-manifest.toml`. If that skill is not installed, scan the first manifest under `.agents/skills/bmad-*/module-manifest.toml` whose `module = "method"`.</action>
+<action>1. **Classic installer** (`npx bmad-method install`, released BMAD) — read `installation.version` in `_bmad/_config/manifest.yaml`. Fallback: the `# Version:` header in `_bmad/bmm/config.yaml`.</action>
+<action>2. **Skills CLI** (`npx skills add bmad-code-org/BMAD-METHOD` + `bmad setup`, BMAD `main`, 6.13.0-next) — read the `version` field in `.agents/skills/bmad-sprint-planning/module-manifest.toml`. If that skill is not installed, scan the first manifest under `.agents/skills/bmad-*/module-manifest.toml` whose `module = "method"`.</action>
 <action>Extract the semver (strip any `-next` suffix). Accept it only if ≥ 6.12.0.</action>
 <check if="version < 6.12.0 or not found">
   <output>ERROR: BMM 6.12.0+ required. This module targets the 6.12.0 skill set (`bmad-build`, `bmad-build-auto`, `bmad-ux`, consolidated `bmad-sprint-planning`) and `uv`-based tooling; older BMM installs miss those skills or `uv`. Update with `npx bmad-method install` (classic route) or `npx skills update` (Skills CLI route).</output>
@@ -32,10 +32,11 @@ One-time setup for BMAD Issue Tracking integration. Deploys TOML overrides to `_
 
 <step n="2" goal="Deploy TOML overrides">
 <action>Resolve `<module_dir>`: the installed copy of the `bmad-issue-tracking-setup` skill folder (the one containing this SKILL.md next to `assets/` and `scripts/`). Check these locations in order and use the first that contains `assets/custom/`:</action>
-1. `.claude/skills/bmad-issue-tracking-setup/` (both routes copy the whole skill folder here for Claude Code; the classic installer's `_bmad/bmad-issue-tracking/` holds only `config.yaml` + `module-help.csv`)
-2. `.agents/skills/bmad-issue-tracking-setup/` (Skills CLI, other agents)
-3. `~/.bmad/cache/custom-modules/github.com/jrevillard/bmad-issue-tracking/skills/bmad-issue-tracking-setup/` (classic installer clone cache for URL sources)
-4. Ask the user for the path to the cloned `bmad-issue-tracking` repo and use `<repo>/skills/bmad-issue-tracking-setup/`
+1. `.claude/skills/bmad-issue-tracking-setup/` (both routes install the whole skill folder here for Claude Code; the classic installer's `_bmad/bmad-issue-tracking/` holds only `config.yaml` + `module-help.csv`)
+2. `.agents/skills/bmad-issue-tracking-setup/` (other coding tools on either route: the classic installer's cross-tool default and the Skills CLI's canonical directory)
+3. Any other `*/skills/bmad-issue-tracking-setup/` directly under the project root (tool-specific targets such as `.cursor/`, `.kiro/`, `.agent/`)
+4. `~/.bmad/cache/custom-modules/github.com/jrevillard/bmad-issue-tracking/skills/bmad-issue-tracking-setup/` (classic installer clone cache for URL sources)
+5. Ask the user for the path to the cloned `bmad-issue-tracking` repo and use `<repo>/skills/bmad-issue-tracking-setup/`
 <action>Every `<path>` below means `<module_dir>/assets`. The TOML overrides are in `<path>/custom/`.</action>
 
 <action>IMPORTANT: Always overwrite existing TOML files — this is an update, not a first install. New versions may have changed TOML content.</action>
@@ -64,7 +65,7 @@ cp -f <path>/custom/*.toml _bmad/custom/
 - `bmad-retrospective.toml` (requires BMM 6.11.0+)
 - `bmad-sprint-planning.toml` (requires BMM 6.11.0+; owns the sprint-status artifact)
 - `bmad-sprint-status.toml` (requires BMM 6.11.0+; consolidated into bmad-sprint-planning, retained as shim alias)
-- `bmad-ux.toml` (requires BMM 6.11.0+; replaces bmad-create-ux-design, removed in 6.11.0)
+- `bmad-ux.toml` (replaces bmad-create-ux-design, retired in BMM 6.8.0)
 
 <action>Note: All TOML files are in pointer format — they reference workflow YAML files deployed in step 3.</action>
 <action>Verify each TOML file is valid by checking it contains a `[workflow]` section and at least one hook key (`on_complete`, `activation_steps_append`, etc.).</action>
