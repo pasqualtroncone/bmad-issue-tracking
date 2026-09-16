@@ -230,12 +230,14 @@ def cmd_analyze(args):
         impro, lines = [], []
         for i, c in enumerate(commands):
             norm = re.sub(r"^\s*cd\s+\S+\s*(&&|;)\s*", "", c.strip(), flags=re.DOTALL)
-            match = None
+            match, best = None, None
             for rel, line, cmd, rx, prefix in pats:
-                if rx.search(norm) or (len(prefix) >= 12 and prefix in norm):
-                    match = f"{rel}:{line}"
-                    hit[match] += 1
-                    break
+                m = rx.search(norm)
+                pos = m.start() if m else (norm.find(prefix) if len(prefix) >= 12 and prefix in norm else -1)
+                if pos >= 0 and (best is None or pos < best):
+                    match, best = f"{rel}:{line}", pos  # the step whose text starts earliest in the command wins
+            if match:
+                hit[match] += 1
             tag = match or "IMPROVISED"
             lines.append(f"{i+1:3d}  {tag:45s}  {norm.splitlines()[0][:110] if norm.strip() else '(empty)'}")
             if not match:
