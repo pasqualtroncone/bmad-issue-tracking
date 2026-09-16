@@ -58,7 +58,7 @@ DEFECTS = {
             "Filter the result on the exact `**Sprint Key:** \\`{story_key}\\`` body marker or on the exact title prefix `Story {epic}.{story}:` (as create-issue.yaml already does with `where: title matches`); search-index latency (~5 s) also argues for the REST list endpoint + local filter."),
     "D23": ("find-issue on GitHub never finds the PRD issue: the space in `PRD: {prd_key}` breaks the request and the pipe hides the failure",
             "common/find-issue.yaml:15 · issue-sync/prepare.yaml:17 · bmad-prd/complete.yaml:32",
-            ["d19-D23", "d19"],
+            ["d19-D23", "d19", "A4-D23"],
             "URL-encode `search_text` (`urllib.parse.quote_plus`) or switch to `gh api -X GET search/issues -f q=…`; add `set -o pipefail`-equivalent handling (check gh's exit before parsing)."),
     "D21": ("Issue titles come out as `Story 1.1: ` (or `Story 1.1: Intent`): the 6.12.0 spec template has no `# ` heading",
             "common/ensure-issue.yaml:53-63 · common/sync-issues.yaml:108-139",

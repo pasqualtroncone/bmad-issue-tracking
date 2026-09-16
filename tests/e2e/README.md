@@ -91,6 +91,16 @@ command look like a module defect. The blast radius is the disposable repo and `
 `E2E_STRICT_ALLOW="Bash(gh:*),Bash(git:*),…"` reruns a scenario with a closed list to document
 what a hook really needs.
 
+## Two things learned the hard way
+
+- **Never edit a scenario script while it is running.** bash reads the file incrementally; an edit
+  moves the offsets and the running script dies with a syntax error at the next line it reads
+  (A4 run 2 lost its verdict that way; the evidence was intact and the verdict was re-derived).
+- **`claude -p` options are variadic.** `--allowedTools a,b prompt` swallows the prompt. The drivers
+  pass the prompt through stdin for that reason. Also: Claude Code 2.1.270 blocks a foreground
+  `sleep N && …` Bash call outright and defaults the Bash tool to 120 s (600 s max), which is
+  what A2 measures against.
+
 ## Cost and time
 
 | Level | Wall time | LLM cost |
