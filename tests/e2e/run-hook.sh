@@ -58,7 +58,7 @@ SKILL="${TOML#bmad-}"
 log "[$CASE/$TAG] hook=$TOML entry=$ENTRY worktree=$WT"
 log "  claude -p … (max-turns $CLAUDE_MAX_TURNS, timeout ${CLAUDE_TIMEOUT}s) → $D/trace.jsonl"
 start=$(date +%s)
-rc="$(claude_headless "$WT" "$D/trace.jsonl" "$(cat "$D/prompt.txt")")"
+rc="$(claude_headless "$WT" "$D/trace.jsonl" "$D/prompt.txt")"
 echo "$(( $(date +%s) - start ))" > "$D/wall-seconds.txt"
 log "  claude rc=$rc wall=$(cat "$D/wall-seconds.txt")s"
 $TT analyze "$D/trace.jsonl" --entry "$ENTRY" --out "$D" | tee "$D/analyze.txt" >&2
