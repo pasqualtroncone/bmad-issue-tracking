@@ -27,7 +27,7 @@ D="$(case_dir "$CASE")/$TAG"; mkdir -p "$D"
 } > "$D/prompt.txt"
 log "[$CASE/$TAG] skill=$SKILL cwd=$CWD → $D/trace.jsonl"
 start=$(date +%s)
-rc="$(claude_headless "$CWD" "$D/trace.jsonl" "$(cat "$D/prompt.txt")")"
+rc="$(claude_headless "$CWD" "$D/trace.jsonl" "$D/prompt.txt")"
 echo "$(( $(date +%s) - start ))" > "$D/wall-seconds.txt"
 log "  claude rc=$rc wall=$(cat "$D/wall-seconds.txt")s"
 if [ -n "$ENTRY" ]; then $TT analyze "$D/trace.jsonl" --entry "$ENTRY" --out "$D" | tee "$D/analyze.txt" >&2

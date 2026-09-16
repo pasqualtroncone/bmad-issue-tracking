@@ -54,16 +54,21 @@ def scan_steps(rel):
             out.append((start + 1, typ, value))
             continue
         body = []
+        acc = value
         while i < len(lines):
             l = lines[i]
-            if STEP_RE.match(l) or FIELD_RE.match(l):
-                break
-            if l.strip() and (len(l) - len(l.lstrip())) <= indent and value != "|":
-                # a column-0 python line inside `-c "..."` is allowed; anything else at or
-                # left of the step indent that is not part of an open quote ends the body
-                if l.startswith(" ") or l.startswith("#"):
+            # inside an open `-c "..."` quote everything belongs to the body — including a
+            # column-0 `#` python comment (merge-mr.yaml:81) and lines that look like steps
+            in_quote = (acc.count('"') - acc.count('\\"')) % 2 == 1
+            if not in_quote and value != "|":
+                if STEP_RE.match(l) or FIELD_RE.match(l):
                     break
+                if l.strip() and (len(l) - len(l.lstrip())) <= indent and (l.startswith(" ") or l.startswith("#")):
+                    break
+            if value == "|" and (STEP_RE.match(l) or FIELD_RE.match(l)):
+                break
             body.append(l)
+            acc += "\n" + l
             i += 1
         while body and not body[-1].strip():
             body.pop()

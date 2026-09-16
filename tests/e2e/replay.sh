@@ -167,8 +167,10 @@ case_d4() {
   local lf; lf="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
   replay $c control-find-issue-shape common/find-issue.yaml "$lf" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$key"
   if [ "${n:-0}" -lt 105 ]; then verdict $c BLOCKED "search index shows $n < 105 after 300 s (label qualifier 'label:prd:$key' may not parse — see index.txt/seed.log)"; return; fi
+  gh api "search/issues?q=Seed+repo:$REPO_GH+label:prd:$key&per_page=100" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d" % (len(s), s.count(chr(10))))' > "$d/paginate-shape.txt" 2>&1
   if grep -q 'JSONDecodeError\|Extra data' "$d/bulk-fetch.err" && [ "$(cat "$d/control-labprd.rc")" = 0 ]; then
-    verdict $c CONFIRMED "sync-issues.yaml:$l 'gh api search/issues --paginate | json.load' fails with '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/bulk-fetch.err" | head -1 | cut -c1-80)' at >100 issues (2 pages concatenated); ≤100 (prd:$PRD_KEY) works; find-issue.yaml:$lf splits pages correctly ($(wc -l < "$d/control-find-issue-shape.out") line, rc=$(cat "$d/control-find-issue-shape.rc"))"
+    local fi_note="find-issue.yaml:$lf (the per-line split meant as the fix) ALSO fails at 2 pages: rc=$(cat "$d/control-find-issue-shape.rc") '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/control-find-issue-shape.err" | head -1 | cut -c1-60)' because gh --paginate joins pages with NO newline ($(cat "$d/paginate-shape.txt")); 'gh api --paginate --slurp' is the supported fix"
+    verdict $c CONFIRMED "sync-issues.yaml:$l 'gh api search/issues --paginate | json.load' fails with '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/bulk-fetch.err" | head -1 | cut -c1-80)' at >100 issues (2 pages concatenated); ≤100 (prd:$PRD_KEY) works. $fi_note"
   else verdict $c REFUTED "bulk rc=$(cat "$d/bulk-fetch.rc") lines=$(wc -l < "$d/bulk-fetch.out") err=$(head -c 200 "$d/bulk-fetch.err")"; fi
 }
 
@@ -202,10 +204,12 @@ case_d8() {
   local le; le="$(line_of common/ensure-mr.yaml 'gh pr create' 2)"
   echo "Sprint key: 1-1-login-form" > /tmp/e2e-d8-desc.md
   replay $c ensure-mr-head common/ensure-mr.yaml "$le" mr_title="Story 1.1: 1-1-login-form" description_body="Sprint key: 1-1-login-form" target_branch="feat/$PRD_KEY/prd" source_branch="$sb" mr_repo="github.com/$REPO_GH"
+  sed 's/ 2>&1 | grep .*$//' "$d/ensure-mr-head.cmd" > "$d/ensure-mr-head-gh-only.cmd"
+  ( cd "$CONSUMER" && bash "$d/ensure-mr-head-gh-only.cmd" ) > "$d/ensure-mr-head-gh-only.out" 2> "$d/ensure-mr-head-gh-only.err"; echo $? > "$d/ensure-mr-head-gh-only.rc"
   rm -f /tmp/e2e-d8-desc.md
   git checkout -q main; git branch -D bmad-loop/r1/1-1-login-form >/dev/null 2>&1 || true
   if [ "$(cat "$d/push.rc")" = 128 ] && grep -q 'no upstream\|has no upstream branch' "$d/push.err"; then
-    local d22=""; [ ! -s "$d/ls-remote-story-branch.txt" ] && d22="; D22: module-derived story_branch '$sb' does not exist on origin, and ensure-mr.yaml:$le --head $sb fails: $(grep -o 'head.*not found\|could not find\|Head.*' "$d/ensure-mr-head.err" "$d/ensure-mr-head.out" 2>/dev/null | head -1 | cut -d: -f2- | cut -c1-90)"
+    local d22=""; [ ! -s "$d/ls-remote-story-branch.txt" ] && d22="; D22: module-derived story_branch '$sb' does not exist on origin, and ensure-mr.yaml:$le --head $sb fails (gh rc=$(cat "$d/ensure-mr-head-gh-only.rc")): '$(grep -m1 -iE 'head|not found|error|could not' "$d/ensure-mr-head-gh-only.err" | cut -c1-110)' — the step's '2>&1 | grep https://' swallows it and stores an empty mr_url"
     verdict $c CONFIRMED "post-dev-complete.yaml:$l2 'git push' on bmad-loop/r1/1-1-login-form (no upstream; push.autoSetupRemote $(cat "$d/push-autosetupremote.txt" | head -1)) → exit 128 '$(grep -o 'fatal:.*' "$d/push.err" | head -1 | cut -c1-70)'; dev-finish/review-finish halt there$d22"
   else verdict $c REFUTED "push rc=$(cat "$d/push.rc") $(head -c 200 "$d/push.err")"; fi
 }
@@ -256,9 +260,13 @@ case_d19() {
   titles() { uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join("#%s %s" % (i["number"], i["title"]) for i in d))' "$1" 2>/dev/null; }
   { echo "== search_text=1-1-login-form"; titles "$d/find-1-1.out"; echo "== search_text='Epic 1:'"; titles "$d/find-epic-1.out"; echo "== search_text='PRD: $key' rc=$(cat "$d/find-prd.rc")"; titles "$d/find-prd.out"; head -c 300 "$d/find-prd.err"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   local n11 ne1; n11="$(titles "$d/find-1-1.out" | wc -l)"; ne1="$(titles "$d/find-epic-1.out" | wc -l)"
+  if grep -q 'PROTOCOL_ERROR' "$d/find-prd.err" && [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$(tr -d '[:space:]' < "$d/find-prd.out")" = "[]" ]; then
+    gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
+    verdict $c-D23 CONFIRMED "find-issue.yaml:$lf with search_text='PRD: $key' puts a raw space in the URL → gh api: '$(grep -o 'stream error.*' "$d/find-prd.err" | head -1)'; the trailing '| python' makes the step exit 0 with issue_result='[]' → issue_id empty. Every 'PRD: {prd_key}' lookup on GitHub (issue-sync/prepare, bmad-prd/complete create-vs-update, edit-prd, correct-course) silently misses; percent-encoded, the same query returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' fails the same way (rc=$(cat "$d/find-epic-1.rc"), $ne1 hits)"
+  fi
   local first11; first11="$(titles "$d/find-1-1.out" | head -1)"
   if [ "$n11" -gt 1 ] || [ "$ne1" -gt 1 ]; then
-    verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) is a fuzzy search with no title check: '1-1-login-form' returns $n11 issues (first: $first11), 'Epic 1:' returns $ne1; the FILTER takes item 0 → the wrong issue gets status updates/comments when 1.10/Epic 10 sorts first. 'PRD: $key' (space+colon in URL) rc=$(cat "$d/find-prd.rc"). Index latency ≈${t}s → a just-created issue is invisible to find-issue"
+    verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) is a fuzzy search with no title check: search_text '1-1-login-form' returns $n11 issues ($(titles "$d/find-1-1.out" | cut -d' ' -f2- | tr '\n' ';')) and the FILTER takes item 0 — whichever the search index ranks first. Search-index latency measured ≈${t}s (first run: 5 s) → an issue created seconds earlier can be invisible to the next find-issue"
   elif [ "$n11" = 0 ] && [ "$ne1" = 0 ]; then verdict $c BLOCKED "search returned nothing (rc=$(cat "$d/find-1-1.rc"); see summary.txt) — label qualifier or index"
   else verdict $c REFUTED "exact hits only: 1-1→$n11, Epic 1→$ne1 (latency ${t}s; PRD rc=$(cat "$d/find-prd.rc"))"; fi
 }
@@ -279,10 +287,10 @@ case_d9() {
   local n=""; n="$(grep -o 'pull/[0-9]*' "$d/run.out" | head -1 | cut -d/ -f2)"
   if [ -n "$n" ]; then gh pr view "$n" -R "$REPO_GH" --json title,body > "$d/pr.json"; gh pr close "$n" -R "$REPO_GH" --delete-branch >/dev/null 2>&1 || true; fi
   git branch -D "$br" >/dev/null 2>&1 || true
-  local inj=0; grep -q INJECTED "$d/pr.json" 2>/dev/null && inj=1
+  local inj=0; grep -q INJECTED "$d/pr.json" "$d/gh-only.err" 2>/dev/null && inj=1
   local titleok=0; grep -q 'Login "Form"' "$d/pr.json" 2>/dev/null && titleok=1
   if [ "$(cat "$d/syntax.rc")" != 0 ] || [ "$inj" = 1 ] || [ "$titleok" = 0 ]; then
-    verdict $c LATENT "ensure-mr.yaml:$le interpolates --title/--body inline: with a body holding quotes, a backtick and \$(…) the step 'succeeds' (pipeline rc=$(cat "$d/run.rc") — the grep hides gh's exit) but creates $( [ -n "$n" ] && echo "a PR" || echo "NO PR"); gh alone: rc=$(cat "$d/gh-only.rc") '$(head -c 120 "$d/gh-only.err" | tr '\n' ' ')'; shell noise: '$(head -c 60 "$d/run.err" | tr '\n' ' ')'; \$(…) executed=$inj, quoted title preserved=$titleok. Current callers pass benign bodies/titles, so LATENT"
+    verdict $c LATENT "ensure-mr.yaml:$le interpolates --title/--body inline: with a body holding quotes, a backtick and \$(…) the literal step 'succeeds' (pipeline rc=$(cat "$d/run.rc") — the '2>&1 | grep https' hides gh's exit) but creates $( [ -n "$n" ] && echo "a PR" || echo "NO PR"); gh alone rc=$(cat "$d/gh-only.rc"): '$(grep -m1 'unknown argument' "$d/gh-only.err" | cut -c1-110)'; the shell ran \$(echo INJECTED)=$inj and tried to execute the backtick ('$(grep -o 'backtick: command not found' "$d/run.err" | head -1)'); quoted title preserved=$titleok. Current callers pass benign bodies/titles, so LATENT"
   else verdict $c REFUTED "rendered command survived quotes, backticks and \$(…) intact"; fi
 }
 

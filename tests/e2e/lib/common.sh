@@ -135,16 +135,17 @@ CLAUDE_DISALLOWED="${E2E_CLAUDE_DISALLOWED:-Bash(rm -rf:*),Bash(git push --force
 CLAUDE_MAX_TURNS="${E2E_CLAUDE_MAX_TURNS:-250}"
 CLAUDE_TIMEOUT="${E2E_CLAUDE_TIMEOUT:-1500}"
 
-# claude_headless <cwd> <trace.jsonl> <prompt> [extra claude args...]
+# claude_headless <cwd> <trace.jsonl> <prompt-file> [extra claude args...]
+# The prompt goes through STDIN: --allowedTools/--disallowedTools are variadic and would
+# swallow a trailing positional prompt (found by the timeout calibration run).
 claude_headless() {
-  local cwd="$1" trace="$2" prompt="$3"; shift 3
-  local strict_args=()
-  if [ -n "${E2E_STRICT_ALLOW:-}" ]; then strict_args=(--allowedTools "$E2E_STRICT_ALLOW"); else strict_args=(--allowedTools "$CLAUDE_ALLOWED"); fi
+  local cwd="$1" trace="$2" promptfile="$3"; shift 3
+  local allow="$CLAUDE_ALLOWED"; [ -n "${E2E_STRICT_ALLOW:-}" ] && allow="$E2E_STRICT_ALLOW"
   ( cd "$cwd" && env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT ${E2E_CLAUDE_ENV:-} \
       timeout "$CLAUDE_TIMEOUT" claude -p --output-format stream-json --verbose \
         --max-turns "$CLAUDE_MAX_TURNS" --permission-mode acceptEdits \
-        "${strict_args[@]}" --disallowedTools "$CLAUDE_DISALLOWED" "$@" \
-        "$prompt" > "$trace" 2> "${trace%.jsonl}.stderr" )
+        --allowedTools "$allow" --disallowedTools "$CLAUDE_DISALLOWED" "$@" \
+        < "$promptfile" > "$trace" 2> "${trace%.jsonl}.stderr" )
   echo $? > "${trace%.jsonl}.rc"
   cat "${trace%.jsonl}.rc"
 }
