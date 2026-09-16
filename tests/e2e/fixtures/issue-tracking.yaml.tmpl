@@ -1,0 +1,11 @@
+issue_tracking:
+  enabled: true
+  platform: @PLATFORM@
+  git_platform: @GIT_PLATFORM@
+  host: @HOST@
+  project: @PROJECT@
+  worktree_base: _bmad/worktrees
+@CROSS@
+  branch_patterns:
+    prd: "feat/{prd_key}/prd"
+    story: "feat/{prd_key}/{story_key}"

@@ -1,0 +1,22 @@
+# Deterministic CI for the e2e lab. Triggered on push only (never pull_request,
+# so one push = one run). The outcome is decided by the committed file ci/outcome:
+#   pass     → exit 0
+#   fail     → exit 1
+#   sleep:N  → sleep N seconds, then exit 0 (a "running" pipeline for N seconds)
+name: ci
+on: push
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: outcome
+        run: |
+          o="$(cat ci/outcome 2>/dev/null || echo pass)"
+          echo "ci/outcome = $o"
+          case "$o" in
+            pass) exit 0 ;;
+            fail) echo "deliberate failure (ci/outcome=fail)"; exit 1 ;;
+            sleep:*) sleep "${o#sleep:}"; exit 0 ;;
+            *) echo "unknown outcome '$o'"; exit 2 ;;
+          esac

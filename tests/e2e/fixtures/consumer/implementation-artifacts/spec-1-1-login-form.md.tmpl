@@ -1,0 +1,46 @@
+---
+title: 'Login Form'
+type: 'feature'
+created: '2026-09-16'
+status: '@STATUS@'
+review_loop_iteration: 0
+followup_review_recommended: false
+context: []
+warnings: []
+deferred: []
+---
+
+<intent-contract>
+
+## Intent
+
+**Problem:** There is no login form; users cannot authenticate.
+
+**Approach:** Add a minimal `login()` function and a form stub in `src/login.py`.
+
+## Boundaries & Constraints
+
+**Always:** Keep the change inside `src/login.py`.
+
+**Never:** Add a database or external dependency.
+
+</intent-contract>
+
+## Code Map
+
+- `src/login.py` -- the only file the story touches
+
+## Tasks & Acceptance
+
+**Execution:**
+
+- [x] `src/login.py` -- add `login(username, password)` -- the story's single capability
+
+**Acceptance Criteria:**
+
+- `login("alice", "secret")` returns `True`; anything else returns `False`
+
+## Review Triage Log
+
+<!-- One entry per review pass (bmad-build-auto) or one row per finding (bmad-build). -->
+@TRIAGE_ROWS@
