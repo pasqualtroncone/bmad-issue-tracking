@@ -1,0 +1,15 @@
+# Deterministic CI for the e2e lab (GitLab variant). Same contract as ci.yml.
+gate:
+  image: alpine:3.20
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+  script:
+    - o="$(cat ci/outcome 2>/dev/null || echo pass)"
+    - echo "ci/outcome = $o"
+    - |
+      case "$o" in
+        pass) exit 0 ;;
+        fail) echo "deliberate failure (ci/outcome=fail)"; exit 1 ;;
+        sleep:*) sleep "${o#sleep:}"; exit 0 ;;
+        *) echo "unknown outcome '$o'"; exit 2 ;;
+      esac

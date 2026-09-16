@@ -1,0 +1,19 @@
+# Sprint status for the e2e lab — same shape bmad-sprint-planning 6.12.0 writes.
+# Timestamps use MM-DD-YYYY HH:MM.
+
+generated: 09-16-2026 12:00
+last_updated: 09-16-2026 12:00
+project: bmad-it-lab
+project_key: LAB
+tracking_system: file-system
+story_location: "_bmad-output/implementation-artifacts"
+
+development_status:
+  epic-1: in-progress
+  1-1-login-form: @S11@
+  1-2-logout: backlog
+  1-10-login-form-extended: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-report-job: backlog
