@@ -75,7 +75,7 @@ DEFECTS = {
     "D06": ("find-issue on GitLab is a fuzzy full-text search and the FILTER takes the newest hit: story 1-1 resolves to story 11.1",
             "common/find-issue.yaml:12,20-24 · common/create-issue.yaml:15,26-29",
             ["g06"],
-            "After the search, select the item whose description contains the exact `**Sprint Key:** \`{key}\`` marker (or whose title starts with the exact `Story N.M:` / `Epic N:` prefix); GitLab returns results newest-first, so 'first hit' is the wrong heuristic by construction."),
+            "After the search, select the item whose description contains the exact Sprint Key marker in the body (or whose title starts with the exact `Story N.M:` / `Epic N:` prefix); GitLab returns results newest-first, so 'first hit' is the wrong heuristic by construction."),
     "D10": ("Cross-platform (issues on GitHub, code on GitLab): the MR atomics query the issue-tracker repo and reference variables nobody sets",
             "common/get-mr-pipeline.yaml:33,42 · common/merge-mr.yaml:69,73",
             ["g10"],
