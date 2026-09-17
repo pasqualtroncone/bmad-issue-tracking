@@ -15,7 +15,7 @@ Nothing here is collected by pytest (no `test_*.py`), and nothing runs without y
 | Tool | State needed |
 |---|---|
 | `gh` | authenticated; `repo` + `workflow` scopes. `delete_repo` only for `lab-down.sh` (else it archives and prints the delete command) |
-| `glab` | only for `--platform gitlab|both` and cases `g06`; `! glab auth login` (scopes `api`, `write_repository`) |
+| `glab` | for the GitLab consumer and the `g06`/`gl-*` cases; authenticated on the host you pass with `--gl-host` (check `glab auth status --hostname <host>`, not just gitlab.com). Scopes `api`, `write_repository`. The namespace is the authenticated username |
 | `uv`, `node`/`npx`, `git` | `npx -y bmad-method@6.12.0` is fetched from npm on `lab-up` |
 | `claude` | level 2 / BMM phase: headless `claude -p` runs on your account (≈ $0.5–3 per scenario) |
 | `bmad-loop` 0.11.1 | level 3 only (`uv tool install bmad-loop`) |
@@ -48,6 +48,8 @@ D08.
 ```bash
 make e2e-static                 # level 0, seconds, no lab
 make e2e-up  [PLATFORM=github]  # ≈4 min (npm install of bmad-method)
+tests/e2e/lab-up.sh --add-gitlab --gl-host gitlab.example.com   # add a GitLab consumer to the current lab
+tests/e2e/replay.sh gitlab      # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18
 make e2e-check                  # resolve_customization.py returns the module's on_complete per skill
 make e2e-replay                 # level 1, ≈35 min (two Actions runs, 105 issues seeded, index waits)
 tests/e2e/replay.sh d18         # or one case at a time
@@ -70,7 +72,9 @@ Cases and what they prove:
 | `d16` | 1 | D16 | `gh pr merge` rc=0, stdout empty → `merged=false` |
 | `d19` | 1 | D19/D20 | `find-issue` on `1-1-login-form` also returns `Story 1.10`; index latency; space in URL |
 | `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |
-| `g06`, `g10` | 1 | D06, D10 | GitLab fuzzy `search=`; cross-platform repo mix-up (rendering) |
+| `g06` | 1 | D06 | GitLab `search=1-1-login-form` returns 1.1, 1.10 and 11.1 newest-first; FILTER takes 11.1 |
+| `gl-d23`, `gl-d4`, `gl-d16`, `gl-d2`, `gl-d18` | 1 | D23, D04, D16, D02, D18 on GitLab | same replays as the GitHub cases against the GitLab consumer (D16 and D02 are GitHub-only; the rest hit both) |
+| `g10` | 1 | D10 | cross-platform repo mix-up (rendering) |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
 | `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2 |
 | `L` | 3 | D08/D22 end to end | `bmad-loop run --story 1-1` (runbook, by hand) |
