@@ -309,14 +309,21 @@ gl_titles() { uv run --no-project python -c 'import json,sys; d=json.load(open(s
 
 case_g06() {
   local c=g06; gl_setup $c || return; local d; d="$(case_dir $c)"
-  gl_issue "Epic 1: Authentication"; gl_issue "Epic 10: Placeholder"; gl_issue "Story 1.1: Login Form"; gl_issue "Story 1.10: Login Form Extended"
+  # issues shaped like the module writes them: the sprint key sits in the DESCRIPTION
+  gl_issue_body() { glab api "projects/$ENC/issues?labels=prd::$PRD_KEY&state=all&per_page=100" --hostname "$GLH" | grep -qF "\"title\":\"$1\"" || glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=$1" -f "description=**Sprint Key:** \`$2\`" -f "labels=prd::$PRD_KEY" >/dev/null; }
+  gl_issue_body "Story 1.1: Login Form" 1-1-login-form; gl_issue_body "Story 1.10: Login Form Extended" 1-10-login-form-extended
+  gl_issue_body "Story 11.1: Eleven" 11-1-login-form; gl_issue_body "Epic 1: Authentication" epic-1; gl_issue_body "Epic 10: Placeholder" epic-10
+  sleep 5
   local lf; lf="$(line_of common/find-issue.yaml 'glab api' 1)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
   REPLAY_CWD="$CONSUMER_GL" replay $c find-1-1 common/find-issue.yaml "$lf" search_text="1-1-login-form" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
-  gl_titles "$d/find-epic-1.out" > "$d/titles-epic.txt"; gl_titles "$d/find-1-1.out" > "$d/titles-1-1.txt"; cat "$d/titles-epic.txt" "$d/titles-1-1.txt" >&2
-  local n first; n="$(grep -c . "$d/titles-epic.txt")"; first="$(head -1 "$d/titles-epic.txt")"
-  if [ "$n" -gt 1 ]; then verdict $c CONFIRMED "find-issue.yaml:$lf (GitLab $GLH) search='Epic 1:' returns $n issues, FILTER takes the first: '$first'; '1-1-login-form' returns $(grep -c . "$d/titles-1-1.txt") ($(tr '\n' ';' < "$d/titles-1-1.txt"))"
-  else verdict $c REFUTED "$n hit(s) for 'Epic 1:' ($first); '1-1-login-form' → $(grep -c . "$d/titles-1-1.txt") hit(s): $(tr '\n' ';' < "$d/titles-1-1.txt")"; fi
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1-nospace common/find-issue.yaml "$lf" search_text="Epic%201:" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  gl_titles "$d/find-1-1.out" > "$d/titles-1-1.txt"; gl_titles "$d/find-epic-1-nospace.out" > "$d/titles-epic.txt"; cat "$d/titles-1-1.txt" "$d/titles-epic.txt" >&2
+  local n1 ne; n1="$(grep -c . "$d/titles-1-1.txt")"; ne="$(grep -c . "$d/titles-epic.txt")"
+  local epicnote="'Epic 1:' as written → rc=$(cat "$d/find-epic-1.rc") HTTP 400 (space, see gl-d23); percent-encoded it returns $ne hit(s): $(tr '\n' ';' < "$d/titles-epic.txt")"
+  if [ "$n1" -gt 1 ] || [ "$ne" -gt 1 ]; then verdict $c CONFIRMED "find-issue.yaml:$lf (GitLab $GLH) is fuzzy: search='1-1-login-form' → $n1 hit(s) ($(tr '\n' ';' < "$d/titles-1-1.txt")); FILTER takes the first. $epicnote"
+  elif [ "$n1" = 1 ]; then verdict $c REFUTED "GitLab search is token-based here: '1-1-login-form' → exactly $(head -1 "$d/titles-1-1.txt") (1.10 and 11.1 not matched). $epicnote"
+  else verdict $c BLOCKED "'1-1-login-form' → $n1 hits: $(head -c 200 "$d/find-1-1.err"). $epicnote"; fi
 }
 
 case_gl-d23() {  # does the GitLab find-issue survive a space in search_text?
@@ -326,7 +333,7 @@ case_gl-d23() {  # does the GitLab find-issue survive a space in search_text?
   REPLAY_CWD="$CONSUMER_GL" replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $PRD_KEY" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
   gl_titles "$d/find-prd.out" > "$d/titles.txt"; cat "$d/titles.txt" >&2
   if [ "$(cat "$d/find-prd.rc")" = 0 ] && grep -q "PRD: $PRD_KEY" "$d/titles.txt"; then verdict $c REFUTED "GitLab path: 'PRD: $PRD_KEY' with a space is found (rc=0, $(head -1 "$d/titles.txt")) — glab api encodes the query; D23 is GitHub-only"
-  else verdict $c CONFIRMED "GitLab path also fails with a space: rc=$(cat "$d/find-prd.rc") $(head -c 200 "$d/find-prd.err")"; fi
+  else verdict $c CONFIRMED "GitLab path fails with a space too, differently: glab sends the raw URL, nginx answers HTTP 400 and glab exits rc=$(cat "$d/find-prd.rc") → the RUN step HALTS the workflow (lang §5) instead of the silent [] of GitHub. Every 'PRD: {prd_key}' / 'Epic N:' lookup is dead on both platforms"; fi
 }
 
 case_gl-d16() {  # glab mr merge: stdout vs exit code
