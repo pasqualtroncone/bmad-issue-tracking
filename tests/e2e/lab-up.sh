@@ -11,13 +11,15 @@
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"
 
-PLATFORM=github; VIA_SKILL=0; CHECK=0; ID=""
+PLATFORM=github; VIA_SKILL=0; CHECK=0; ID=""; ADD_GL=0; GL_HOST="${E2E_GL_HOST:-gitlab.com}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2;;
     --via-skill) VIA_SKILL=1; shift;;
     --check) CHECK=1; shift;;
     --id) ID="$2"; shift 2;;
+    --gl-host) GL_HOST="$2"; shift 2;;
+    --add-gitlab) ADD_GL=1; shift;;   # add a GitLab consumer to the CURRENT lab (self-hosted host via --gl-host)
     -h|--help) sed -n 2,12p "$0"; exit 0;;
     *) die "unknown arg $1";;
   esac
@@ -62,8 +64,21 @@ check_lab() {
 }
 
 if [ "$CHECK" = 1 ]; then check_lab; exit $?; fi
+export GITLAB_HOST="$GL_HOST"   # glab repo create / glab api pick the host from here
+
+if [ "$ADD_GL" = 1 ]; then
+  load_lab; need glab
+  glab auth status --hostname "$GL_HOST" >/dev/null 2>&1 || die "glab is not authenticated on $GL_HOST"
+  REPO_NAME="bmad-it-lab-$LAB_ID"; REPO_GL="$GL_OWNER/$REPO_NAME"; ID="$LAB_ID"
+  [ -d "$LAB/consumer-gitlab" ] && die "consumer-gitlab already exists in $LAB"
+  log "creating private GitLab project $GL_HOST/$REPO_GL"
+  glab repo create "$REPO_GL" --private --description "bmad-issue-tracking e2e lab $ID (disposable)" >/dev/null
+  { echo "REPO_GL=$REPO_GL"; echo "GL_HOST=$GL_HOST"; } >> "$LAB/lab.env"
+  PLATFORM=gitlab-add
+fi
 
 # ---------------------------------------------------------------------------
+if [ "$ADD_GL" = 0 ]; then
 [ -n "$ID" ] || ID="$(date +%Y%m%d)-$(head -c 2 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 LAB="$LAB_ROOT/$ID"; CONSUMER="$LAB/consumer"
 [ -e "$LAB" ] && die "lab $LAB already exists; run lab-down.sh first or pick another --id"
@@ -76,9 +91,10 @@ log "lab id: $ID  ($LAB)"
   echo "LAB_ID=$ID"
   echo "PLATFORM=$PLATFORM"
   case "$PLATFORM" in github|both) echo "REPO_GH=$REPO_GH";; esac
-  case "$PLATFORM" in gitlab|both) echo "REPO_GL=$REPO_GL";; esac
+  case "$PLATFORM" in gitlab|both) echo "REPO_GL=$REPO_GL"; echo "GL_HOST=$GL_HOST";; esac
   echo "CREATED=$(date -u +%FT%TZ)"
 } > "$LAB/lab.env"
+fi
 
 # --- 1. remote repos ---------------------------------------------------------
 case "$PLATFORM" in
@@ -90,8 +106,8 @@ esac
 case "$PLATFORM" in
   gitlab|both)
     need glab
-    glab auth status >/dev/null 2>&1 || die "glab is not authenticated: run  ! glab auth login  (gitlab.com, scopes api + write_repository)"
-    log "creating private GitLab project $REPO_GL"
+    glab auth status --hostname "$GL_HOST" >/dev/null 2>&1 || die "glab is not authenticated on $GL_HOST: run  ! glab auth login --hostname $GL_HOST  (scopes api + write_repository)"
+    log "creating private GitLab project $GL_HOST/$REPO_GL"
     glab repo create "$REPO_GL" --private --description "bmad-issue-tracking e2e lab $ID (disposable)" >/dev/null
     ;;
 esac
@@ -175,7 +191,7 @@ case "$PLATFORM" in
   github|both) build_consumer "$CONSUMER" github "git@github.com:$REPO_GH.git" github.com "$REPO_GH";;
 esac
 case "$PLATFORM" in
-  gitlab|both) build_consumer "$LAB/consumer-gitlab" gitlab "git@gitlab.com:$REPO_GL.git" gitlab.com "$REPO_GL";;
+  gitlab|both|gitlab-add) build_consumer "$LAB/consumer-gitlab" gitlab "git@$GL_HOST:$REPO_GL.git" "$GL_HOST" "$REPO_GL";;
 esac
 
 log "lab ready: $LAB"

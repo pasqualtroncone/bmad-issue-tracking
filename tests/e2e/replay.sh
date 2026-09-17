@@ -294,20 +294,69 @@ case_d9() {
   else verdict $c REFUTED "rendered command survived quotes, backticks and \$(…) intact"; fi
 }
 
+# --- GitLab (self-hosted or gitlab.com; host from lab.env GL_HOST) --------------------------
+gl_setup() {
+  load_lab; [ -n "${REPO_GL:-}" ] || { verdict "$1" BLOCKED "no GitLab lab (lab-up.sh --add-gitlab --gl-host <host>)"; return 1; }
+  GLH="${GL_HOST:-gitlab.com}"; export GITLAB_HOST="$GLH"
+  glab auth status --hostname "$GLH" >/dev/null 2>&1 || { verdict "$1" BLOCKED "glab not authenticated on $GLH"; return 1; }
+  ENC="$(uv run --no-project python -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REPO_GL")"
+  glab label create --name "prd::$PRD_KEY" -R "$GLH/$REPO_GL" >/dev/null 2>&1 || true
+}
+gl_issue() {  # gl_issue <title> — create once, labelled prd::labprd
+  glab api "projects/$ENC/issues?labels=prd::$PRD_KEY&state=all&per_page=100" --hostname "$GLH" | grep -qF "\"title\":\"$1\"" || glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=$1" -f "labels=prd::$PRD_KEY" >/dev/null
+}
+gl_titles() { uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join("!%s %s" % (i["iid"], i["title"]) for i in d))' "$1" 2>/dev/null; }
+
 case_g06() {
-  local c=g06; load_lab; local d; d="$(case_dir $c)"
-  [ -n "${REPO_GL:-}" ] || { verdict $c BLOCKED "no GitLab lab (lab-up.sh --platform gitlab|both)"; return; }
-  glab auth status >/dev/null 2>&1 || { verdict $c BLOCKED "glab not authenticated"; return; }
-  local enc; enc="$(uv run --no-project python -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REPO_GL")"
-  glab label create --name "prd::$PRD_KEY" -R "$REPO_GL" >/dev/null 2>&1 || true
-  for t in "Epic 1: Authentication" "Epic 10: Placeholder"; do
-    glab api "projects/$enc/issues?search=$t&labels=prd::$PRD_KEY" | grep -q "\"title\":\"$t\"" || glab api --method POST "projects/$enc/issues" -f "title=$t" -f "labels=prd::$PRD_KEY" >/dev/null
-  done
+  local c=g06; gl_setup $c || return; local d; d="$(case_dir $c)"
+  gl_issue "Epic 1: Authentication"; gl_issue "Epic 10: Placeholder"; gl_issue "Story 1.1: Login Form"; gl_issue "Story 1.10: Login Form Extended"
   local lf; lf="$(line_of common/find-issue.yaml 'glab api' 1)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project_enc="$enc" sep=:: prd_key="$PRD_KEY" host=gitlab.com
-  uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join("!%s %s" % (i["iid"], i["title"]) for i in d))' "$d/find-epic-1.out" > "$d/titles.txt" 2>&1; cat "$d/titles.txt" >&2
-  local n first; n="$(wc -l < "$d/titles.txt")"; first="$(head -1 "$d/titles.txt")"
-  if [ "$n" -gt 1 ]; then verdict $c CONFIRMED "find-issue.yaml:$lf (GitLab) search='Epic 1:' returns $n issues, FILTER takes the first: '$first' (GitLab orders by created desc → the newer Epic 10 wins)"; else verdict $c REFUTED "$n hit(s): $first"; fi
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-1-1 common/find-issue.yaml "$lf" search_text="1-1-login-form" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  gl_titles "$d/find-epic-1.out" > "$d/titles-epic.txt"; gl_titles "$d/find-1-1.out" > "$d/titles-1-1.txt"; cat "$d/titles-epic.txt" "$d/titles-1-1.txt" >&2
+  local n first; n="$(grep -c . "$d/titles-epic.txt")"; first="$(head -1 "$d/titles-epic.txt")"
+  if [ "$n" -gt 1 ]; then verdict $c CONFIRMED "find-issue.yaml:$lf (GitLab $GLH) search='Epic 1:' returns $n issues, FILTER takes the first: '$first'; '1-1-login-form' returns $(grep -c . "$d/titles-1-1.txt") ($(tr '\n' ';' < "$d/titles-1-1.txt"))"
+  else verdict $c REFUTED "$n hit(s) for 'Epic 1:' ($first); '1-1-login-form' → $(grep -c . "$d/titles-1-1.txt") hit(s): $(tr '\n' ';' < "$d/titles-1-1.txt")"; fi
+}
+
+case_gl-d23() {  # does the GitLab find-issue survive a space in search_text?
+  local c=gl-d23; gl_setup $c || return; local d; d="$(case_dir $c)"
+  gl_issue "PRD: $PRD_KEY"
+  local lf; lf="$(line_of common/find-issue.yaml 'glab api' 1)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $PRD_KEY" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  gl_titles "$d/find-prd.out" > "$d/titles.txt"; cat "$d/titles.txt" >&2
+  if [ "$(cat "$d/find-prd.rc")" = 0 ] && grep -q "PRD: $PRD_KEY" "$d/titles.txt"; then verdict $c REFUTED "GitLab path: 'PRD: $PRD_KEY' with a space is found (rc=0, $(head -1 "$d/titles.txt")) — glab api encodes the query; D23 is GitHub-only"
+  else verdict $c CONFIRMED "GitLab path also fails with a space: rc=$(cat "$d/find-prd.rc") $(head -c 200 "$d/find-prd.err")"; fi
+}
+
+case_gl-d16() {  # glab mr merge: stdout vs exit code
+  local c=gl-d16; gl_setup $c || return; local d; d="$(case_dir $c)"
+  cd "$CONSUMER_GL"; git checkout -q main; local br="gl-d16-$(date +%s)"
+  git checkout -q -b "$br" main; echo "$br" > "$br.txt"; git add "$br.txt"; git commit -q -m "gl-d16 probe"; git push -q -u origin "$br"; git checkout -q main
+  local iid; iid="$(glab mr create --title "gl-d16 probe" --description "probe" --source-branch "$br" --target-branch main -R "$GLH/$REPO_GL" --yes 2>&1 | grep -oE '/merge_requests/[0-9]+' | head -1 | grep -oE '[0-9]+$')"
+  echo "mr=$iid" > "$d/mr.txt"; [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR: see mr.txt"; return; }
+  local lm; lm="$(line_of common/merge-mr.yaml 'glab mr merge' 1)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c merge-ok common/merge-mr.yaml "$lm" squash=true host="$GLH" project="$REPO_GL" mr_iid="$iid"
+  glab api "projects/$ENC/merge_requests/$iid" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; m=json.load(sys.stdin); print(m["state"], m.get("merge_commit_sha") or m.get("squash_commit_sha") or "")' > "$d/mr-state-after.txt" 2>&1
+  local ld; ld="$(run_line_of common/merge-mr.yaml '^gl = sys.argv\[1\]')"
+  REPLAY_CWD="$CONSUMER_GL" replay $c derive common/merge-mr.yaml "$ld" gl_merge_out="$(cat "$d/merge-ok.out")" gh_merge_out=""
+  git pull -q --ff-only origin main 2>/dev/null; git branch -D "$br" >/dev/null 2>&1
+  if grep -q '^merged' "$d/mr-state-after.txt"; then
+    if [ "$(tr -d '[:space:]' < "$d/derive.out")" = true ]; then verdict $c REFUTED "GitLab path: glab mr merge rc=$(cat "$d/merge-ok.rc"), stdout $(wc -c < "$d/merge-ok.out")B → merged=true; D16 is GitHub-only"
+    else verdict $c CONFIRMED "GitLab path too: MR merged (state $(cat "$d/mr-state-after.txt")) but stdout empty → merged=$(cat "$d/derive.out")"; fi
+  else verdict $c BLOCKED "MR not merged: rc=$(cat "$d/merge-ok.rc") $(head -c 200 "$d/merge-ok.err") state=$(cat "$d/mr-state-after.txt")"; fi
+}
+
+case_gl-d4() {  # glab api --paginate | json.load
+  local c=gl-d4; gl_setup $c || return; local d; d="$(case_dir $c)"
+  local have; have="$(glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate 2>/dev/null | grep -o '"iid"' | wc -l)"
+  glab label create --name "prd::bulkprd" -R "$GLH/$REPO_GL" >/dev/null 2>&1 || true
+  local i="$have"; while [ "$i" -lt 105 ]; do i=$((i+1)); glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=Seed $i (bulkprd)" -f "labels=prd::bulkprd" >/dev/null 2>&1 || { sleep 20; i=$((i-1)); }; printf '\r  seeded %d/105' "$i" >&2; sleep 0.4; done; echo >&2
+  glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d objects=%d" % (len(s), s.count(chr(10)), s.count("[{")))' > "$d/paginate-shape.txt" 2>&1; cat "$d/paginate-shape.txt" >&2
+  local l; l="$(line_of common/sync-issues.yaml 'glab api "projects' 1)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/sync-issues.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
+  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path: glab api --paginate yields one parseable document ($(cat "$d/paginate-shape.txt")); $(grep -c . "$d/bulk-fetch.out") rows; D04 is GitHub-only"
+  else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") rows=$(grep -c . "$d/bulk-fetch.out") $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
 }
 
 case_g10() {
@@ -329,7 +378,8 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d16|d19|d9|g06|g10) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d16|d19|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    gitlab) for k in g06 gl-d23 gl-d16 gl-d4; do log "=== $k"; "case_$k"; done;;
     all) case_static; for k in d17 d7 d8 d16 d9 d19 d2 d18 d4; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
