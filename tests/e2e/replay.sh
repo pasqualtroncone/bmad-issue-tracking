@@ -354,6 +354,59 @@ case_gl-d16() {  # glab mr merge: stdout vs exit code
   else verdict $c BLOCKED "MR not merged: rc=$(cat "$d/merge-ok.rc") $(head -c 200 "$d/merge-ok.err") state=$(cat "$d/mr-state-after.txt")"; fi
 }
 
+# gl_wait_pipeline <ref> [timeout] — latest pipeline status for a ref once terminal
+gl_wait_pipeline() {
+  local ref="$1" t=0 st
+  while [ $t -lt "${2:-600}" ]; do
+    st="$(glab api "projects/$ENC/pipelines?ref=$ref&per_page=1" --hostname "$GLH" 2>/dev/null | uv run --no-project python -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["status"] if d else "")')"
+    case "$st" in success|failed|canceled|skipped) echo "$st"; return 0;; esac
+    sleep 10; t=$((t+10))
+  done; echo "timeout"; return 1
+}
+# gl_mr_for <branch> → iid (creates the MR to main if missing)
+gl_mr_for() {
+  local iid; iid="$(glab api "projects/$ENC/merge_requests?source_branch=$1&state=opened" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["iid"] if d else "")')"
+  [ -n "$iid" ] || iid="$(glab mr create --title "$1" --description "lab MR" --source-branch "$1" --target-branch main -R "$GLH/$REPO_GL" --yes 2>&1 | grep -oE '/merge_requests/[0-9]+' | head -1 | grep -oE '[0-9]+$')"
+  echo "$iid"
+}
+
+case_gl-ci() {  # shared setup for gl-d2 / gl-d18: a green MR and a red MR with finished pipelines
+  gl_setup gl-ci || return 1; local d; d="$(case_dir gl-ci)"
+  cd "$CONSUMER_GL"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  for pair in "gl-ci-green|pass" "gl-ci-red|fail"; do br="${pair%%|*}"; o="${pair#*|}"
+    git branch -D "$br" >/dev/null 2>&1; git checkout -q -b "$br" main; set_outcome . "$o"; git commit -q --allow-empty -m "$br marker"; git push -q -f -u origin "$br"; git checkout -q main
+  done
+  GREEN_IID="$(gl_mr_for gl-ci-green)"; log "  waiting gl-ci-green pipeline…"; echo "green MR !$GREEN_IID pipeline: $(gl_wait_pipeline gl-ci-green)" | tee "$d/runs.txt" >&2
+  RED_IID="$(gl_mr_for gl-ci-red)";     log "  waiting gl-ci-red pipeline…";   echo "red MR !$RED_IID pipeline: $(gl_wait_pipeline gl-ci-red)" | tee -a "$d/runs.txt" >&2
+  glab api "projects/$ENC/pipelines?per_page=3" --hostname "$GLH" > "$d/latest-pipelines.json"
+  cd - >/dev/null
+}
+
+case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the project's latest)?
+  local c=gl-d2; case_gl-ci || return; local d; d="$(case_dir $c)"
+  local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml 'glab api' 1)"; l2="$(line_of common/get-mr-pipeline.yaml 'glab api' 2)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH"
+  local got latest; got="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; latest="$(uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d[0]["ref"]+"="+d[0]["status"])' "$(case_dir gl-ci)/latest-pipelines.json")"
+  if [ "$got" = success ]; then verdict $c REFUTED "GitLab path is per-MR and correct: get-mr-pipeline.yaml:$l2 for the green MR !$GREEN_IID → '$got' while the project's latest pipeline is $latest. D02 is GitHub-only"
+  else verdict $c CONFIRMED "GitLab path also wrong: green MR reports '$got' (latest project pipeline $latest)"; fi
+}
+
+case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
+  local c=gl-d18; case_gl-ci || return; local d; d="$(case_dir $c)"
+  local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH" > "$d/gitlab-loop.cmd"
+  sed 's/max_attempts=60/max_attempts=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
+  log "  (a) literal GitLab loop, max_attempts=2 (≈60 s), MR !$GREEN_IID (pipeline success)…"
+  ( cd "$CONSUMER_GL" && bash "$d/gitlab-loop-2.cmd" ) > "$d/gitlab-loop-2.out" 2> "$d/gitlab-loop-2.err"; echo $? > "$d/gitlab-loop-2.rc"
+  sed '/STATUS=\$(uv run --no-project python -c "/a import sys' "$d/gitlab-loop-2.cmd" > "$d/gitlab-loop-2-patched.cmd"
+  log "  (b) +import sys (≈30 s)…"
+  ( cd "$CONSUMER_GL" && bash "$d/gitlab-loop-2-patched.cmd" ) > "$d/gitlab-loop-2-patched.out" 2> "$d/gitlab-loop-2-patched.err"; echo $? > "$d/gitlab-loop-2-patched.rc"
+  local a b; a="$(tr -d '[:space:]' < "$d/gitlab-loop-2.out")"; b="$(tr -d '[:space:]' < "$d/gitlab-loop-2-patched.out")"
+  if [ "$a" = timeout ] && [ "$b" = passed ]; then verdict $c CONFIRMED "wait-for-green-ci.yaml:$gl (GitLab, $GLH) against MR !$GREEN_IID whose pipeline is success: literal loop → '$a' after max_attempts; with 'import sys' → '$b' on the first poll. D18 hits both platforms"
+  else verdict $c REFUTED "literal='$a' patched='$b' (see $d)"; fi
+}
+
 case_gl-d4() {  # glab api --paginate | json.load
   local c=gl-d4; gl_setup $c || return; local d; d="$(case_dir $c)"
   local have; have="$(glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate 2>/dev/null | grep -o '"iid"' | wc -l)"
@@ -386,7 +439,8 @@ main() {
   case "$what" in
     static) case_static;;
     d17|d18|d2|d4|d7|d8|d16|d19|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
-    gitlab) for k in g06 gl-d23 gl-d16 gl-d4; do log "=== $k"; "case_$k"; done;;
+    gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18; do log "=== $k"; "case_$k"; done;;
+    gl-d2|gl-d18) "case_$what";;
     all) case_static; for k in d17 d7 d8 d16 d9 d19 d2 d18 d4; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
