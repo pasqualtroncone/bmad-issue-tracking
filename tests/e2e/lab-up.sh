@@ -69,6 +69,8 @@ export GITLAB_HOST="$GL_HOST"   # glab repo create / glab api pick the host from
 if [ "$ADD_GL" = 1 ]; then
   load_lab; need glab
   glab auth status --hostname "$GL_HOST" >/dev/null 2>&1 || die "glab is not authenticated on $GL_HOST"
+  # the GitLab username is the namespace (it can differ from the GitHub login: pasqual.troncone vs pasqualtroncone)
+  [ -n "${E2E_GL_OWNER:-}" ] || GL_OWNER="$(glab api user --hostname "$GL_HOST" 2>/dev/null | uv run --no-project python -c 'import json,sys; print(json.load(sys.stdin)["username"])')"
   REPO_NAME="bmad-it-lab-$LAB_ID"; REPO_GL="$GL_OWNER/$REPO_NAME"; ID="$LAB_ID"
   [ -d "$LAB/consumer-gitlab" ] && die "consumer-gitlab already exists in $LAB"
   log "creating private GitLab project $GL_HOST/$REPO_GL"
