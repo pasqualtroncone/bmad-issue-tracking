@@ -17,6 +17,7 @@ if [ -n "${REPO_GH:-}" ]; then
     echo "to delete by hand:  gh auth refresh -h github.com -s delete_repo && gh repo delete $REPO_GH --yes"
   fi
 fi
+export GITLAB_HOST="${GL_HOST:-gitlab.com}"
 if [ -n "${REPO_GL:-}" ]; then
   if [ "$ARCHIVE" = 0 ]; then log "deleting GitLab project $REPO_GL"; glab repo delete "$REPO_GL" --yes || warn "glab repo delete failed"
   else glab repo archive "$REPO_GL" 2>/dev/null || echo "to delete by hand:  glab repo delete $REPO_GL --yes"; fi
