@@ -156,6 +156,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that exit 0 and an empty MR URL, so the caller carried on as if the MR existed. The body
   now travels as a file (`--body-file` / `--description-file`), the title is one
   single-quoted argument, and the create's own exit code reaches the caller.
+- A failed bulk fetch made the tracker look empty and the whole sprint look unsynced: the
+  two bulk fetches of `common/sync-issues.yaml` piped `glab api` / `gh api --paginate` into
+  python without `set -o pipefail`, so a CLI failure (auth, network, rate limit) still
+  exited 0 with an empty `issue_index`. Every entry then looked new — `create-issue` adopts
+  by exact title, so no duplicates, but no status was reconciled and the counters lied.
 
 ## [3.0.0] - 2026-09-15
 
