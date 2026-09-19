@@ -192,17 +192,36 @@ case_d4() {
     [ "${n:-0}" -ge 105 ] && break; sleep 10; t=$((t+10))
   done
   echo "search total_count after ${t}s: $n" | tee "$d/index.txt" >&2
-  local l; l="$(line_of common/sync-issues.yaml 'gh api "search/issues' 1)"
-  replay $c bulk-fetch common/sync-issues.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
-  replay $c control-labprd common/sync-issues.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$PRD_KEY"
-  local lf; lf="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
-  replay $c control-find-issue-shape common/find-issue.yaml "$lf" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # #55 deleted sync-issues' two bulk fetches — they built an `issue_index` no step ever
+  # read — so the D04 evidence moves to the surviving consumer of the SAME stream shape:
+  # find-issue.yaml's title-shaped lookup is the only `gh api search/issues --paginate`
+  # left, and "Extra data" is exactly what its raw_decode loop exists to survive. Both
+  # replays ask the same step for the same text; only the label size differs.
+  local l; l="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
+  replay $c bulk-fetch common/find-issue.yaml "$l" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  replay $c control-labprd common/find-issue.yaml "$l" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$PRD_KEY"
   if [ "${n:-0}" -lt 105 ]; then verdict $c BLOCKED "search index shows $n < 105 after 300 s (label qualifier 'label:prd:$key' may not parse — see index.txt/seed.log)"; return; fi
-  gh api "search/issues?q=Seed+repo:$REPO_GH+label:prd:$key&per_page=100" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d" % (len(s), s.count(chr(10))))' > "$d/paginate-shape.txt" 2>&1
+  # the stream the step was just handed, walked by the step's OWN parser: "a >100-issue
+  # label is parsed whole" means every concatenated document is read, not just the first.
+  gh api "search/issues?q=Seed+repo:$REPO_GH+label:prd:$key&per_page=100" --paginate | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+items = [i for page in pages for i in page.get('items', [])]
+print('documents=%d items=%d bytes=%d newlines=%d' % (len(pages), len(items), len(text), text.count(chr(10))))
+" > "$d/paginate-shape.txt" 2>&1
+  local shape sel; shape="$(cat "$d/paginate-shape.txt")"; sel="$(tr -d '[:space:]' < "$d/bulk-fetch.out")"
+  echo "prd:$key search/issues --paginate shape: $shape; step selected #${sel:-(empty)}" >&2
   if grep -q 'JSONDecodeError\|Extra data' "$d/bulk-fetch.err" && [ "$(cat "$d/control-labprd.rc")" = 0 ]; then
-    local fi_note="find-issue.yaml:$lf (the per-line split meant as the fix) ALSO fails at 2 pages: rc=$(cat "$d/control-find-issue-shape.rc") '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/control-find-issue-shape.err" | head -1 | cut -c1-60)' because gh --paginate joins pages with NO newline ($(cat "$d/paginate-shape.txt")); 'gh api --paginate --slurp' is the supported fix"
-    verdict $c CONFIRMED "sync-issues.yaml:$l 'gh api search/issues --paginate | json.load' fails with '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/bulk-fetch.err" | head -1 | cut -c1-80)' at >100 issues (2 pages concatenated); ≤100 (prd:$PRD_KEY) works. $fi_note"
-  else verdict $c REFUTED "bulk rc=$(cat "$d/bulk-fetch.rc") lines=$(wc -l < "$d/bulk-fetch.out") err=$(head -c 200 "$d/bulk-fetch.err")"; fi
+    verdict $c CONFIRMED "find-issue.yaml:$l 'gh api search/issues --paginate | python' fails with '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/bulk-fetch.err" | head -1 | cut -c1-80)' at >100 issues: gh --paginate joins the pages with NO separator ($shape), so a plain json.load dies on the second document and a per-line split finds no lines. ≤100 (prd:$PRD_KEY) works (rc=$(cat "$d/control-labprd.rc")). 'gh api --paginate --slurp' is the other supported fix"
+  else verdict $c REFUTED "find-issue.yaml:$l reads the whole --paginate stream of the 105-issue label prd:$key: rc=$(cat "$d/bulk-fetch.rc"), its raw_decode loop walks $shape and selects #${sel:-(empty)}; documents>1 is gh concatenating the pages with no separator, which is what killed the pre-fix json.load. The ≤100 control (prd:$PRD_KEY) is rc=$(cat "$d/control-labprd.rc"). err=$(head -c 200 "$d/bulk-fetch.err")"; fi
 }
 
 case_d7() {
@@ -888,10 +907,37 @@ case_gl-d4() {  # glab api --paginate | json.load
   glab label create --name "prd::bulkprd" -R "$GLH/$REPO_GL" >/dev/null 2>&1 || true
   local i="$have"; while [ "$i" -lt 105 ]; do i=$((i+1)); glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=Seed $i (bulkprd)" -f "labels=prd::bulkprd" >/dev/null 2>&1 || { sleep 20; i=$((i-1)); }; printf '\r  seeded %d/105' "$i" >&2; sleep 0.4; done; echo >&2
   glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d objects=%d" % (len(s), s.count(chr(10)), s.count("[{")))' > "$d/paginate-shape.txt" 2>&1; cat "$d/paginate-shape.txt" >&2
-  local l; l="$(line_of common/sync-issues.yaml 'glab api "projects' 1)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/sync-issues.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
-  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: rc=0, $(grep -c . "$d/bulk-fetch.out") rows ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step parsed them anyway"
-  else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") rows=$(grep -c . "$d/bulk-fetch.out") $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
+  # #55 deleted sync-issues' GitLab bulk fetch (it built an `issue_index` no step read).
+  # The surviving page-aware GitLab listing is create-issue.yaml's title lookup, and it
+  # prints ONE id instead of a row per issue — so "a >100-issue label is parsed whole" is
+  # now proved by WHICH id comes back rather than by counting rows. The step is asked for
+  # the OLDEST seeded title: GitLab lists issues newest-first, so "Seed 1 (bulkprd)" sits
+  # at the tail of the LAST document, and only a parser that walked every concatenated
+  # page can answer with its iid.
+  local want pos
+  read -r want pos <<< "$(glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+p, pages = 0, []
+while p < len(text):
+    if text[p].isspace():
+        p += 1
+        continue
+    page, p = dec.raw_decode(text, p)
+    pages.append(page)
+issues = [i for page in pages for i in page]
+hit = [(n, i) for n, i in enumerate(issues) if i['title'] == 'Seed 1 (bulkprd)']
+print((str(hit[0][1]['iid']) + ' ' + str(hit[0][0] + 1) + '/' + str(len(issues))) if hit else ' ')
+")"
+  echo "oldest seeded title 'Seed 1 (bulkprd)' is !${want:-(none)} at position ${pos:-?} of the concatenated stream" | tee "$d/oldest.txt" >&2
+  printf '%s' "Seed 1 (bulkprd)" > /tmp/issue-title.txt
+  local l; l="$(line_of common/create-issue.yaml 'glab api --paginate' 1)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/create-issue.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
+  rm -f /tmp/issue-title.txt
+  local got; got="$(tr -d '[:space:]' < "$d/bulk-fetch.out")"
+  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ -n "$want" ] && [ "$got" = "$want" ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: create-issue.yaml:$l answers !$got for 'Seed 1 (bulkprd)', the issue at position $pos of the 105 ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step's raw_decode loop parsed every one of them; a first-document-only parse could not have reached it"
+  else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") selected='${got:-(empty)}' want=!${want:-?} (position ${pos:-?}) $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
 }
 
 case_d26() {  # #36 — the retrospective issue carries no **Sprint Key** marker, so sync never finds it

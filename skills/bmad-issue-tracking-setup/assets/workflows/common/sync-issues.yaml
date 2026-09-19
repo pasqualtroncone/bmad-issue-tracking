@@ -1,8 +1,10 @@
 # common/sync-issues.yaml
 #
-# Purpose: Syncs sprint-status.yaml entries to the issue tracker.
-#           Single pass: fetches all PRD issues, then creates missing or updates
-#           status for each entry. Tracks created/updated/skipped counts.
+# Purpose: Syncs sprint-status.yaml entries to the issue tracker. One pass over
+#           sprint-status.yaml: each entry is matched to its issue through
+#           common/find-issue (by the **Sprint Key** marker the module writes into
+#           every issue it creates), then created or moved to the mapped status.
+#           Tracks created/updated/skipped counts.
 # Input variables: (none — uses platform, host, project, sep, prd_key, branch_patterns from scope)
 # Output variables:
 #   - sync_created: number of issues created
@@ -15,45 +17,6 @@
 - SET: { variable: sync_created, value: "0" }
 - SET: { variable: sync_updated, value: "0" }
 - SET: { variable: sync_skipped, value: "0" }
-# Fetch all PRD issues (bulk fetch for matching).
-# `set -o pipefail` is the whole guard: without it a failing CLI (auth, network, rate
-# limit) still left the pipeline at exit 0 with an empty issue_index, and an empty index
-# is indistinguishable from an empty tracker — every entry looked new, so nothing was
-# reconciled and the counters lied. find-issue.yaml took the same precaution.
-- RUN: set -o pipefail; glab api "projects/{project_enc}/issues?labels=prd{sep}{prd_key}&state=all&per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
-import json, sys
-dec = json.JSONDecoder()
-text = sys.stdin.read()
-pos, pages = 0, []
-while pos < len(text):
-    if text[pos].isspace():
-        pos += 1
-        continue
-    page, pos = dec.raw_decode(text, pos)
-    pages.append(page)
-for i in [issue for page in pages for issue in page]:
-    status = next((l for l in i['labels'] if l.startswith('status')), 'none')
-    print(str(i['iid']) + '\t' + i['title'] + '\t' + status)
-"
-  STORE: issue_index
-  PLATFORM: gitlab
-- RUN: set -o pipefail; gh api "search/issues?q=repo:{project}+label:prd{sep}{prd_key}&per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
-import json, sys
-dec = json.JSONDecoder()
-text = sys.stdin.read()
-pos, pages = 0, []
-while pos < len(text):
-    if text[pos].isspace():
-        pos += 1
-        continue
-    page, pos = dec.raw_decode(text, pos)
-    pages.append(page)
-for item in [i for page in pages for i in page.get('items', [])]:
-    status = next((l['name'] for l in item['labels'] if l['name'].startswith('status')), 'none')
-    print(str(item['number']) + '\t' + item['title'] + '\t' + status)
-"
-  STORE: issue_index
-  PLATFORM: github
 # Read sprint-status entries
 - READ: {implementation_artifacts}/sprint-status.yaml
   EXTRACT:

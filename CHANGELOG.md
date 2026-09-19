@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routes never coexist in one project. Previous text claimed 6.12.0 had adopted
   Skills-as-modules and a flat `_bmad/{method,toolbox}/` layout.
 
+### Removed
+
+- The two paginated tracker fetches at the top of `common/sync-issues.yaml`. They built an
+  `issue_index` variable no step ever read, so every sync paid a full paginated listing
+  (on GitHub through the lagging search index) for a dead value, and their `set -o
+  pipefail` turned a transient rate limit on that unused call into a hard halt. The header
+  promised a "3-tier matching" the loop never did: matching is `common/find-issue` on the
+  **Sprint Key** marker, once per entry.
+
 ### Fixed
 
 - A first sync spent minutes sleeping over issues nobody had created yet. `common/find-issue.yaml`
