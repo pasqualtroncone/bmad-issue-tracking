@@ -94,6 +94,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unrelated red one and the CI gate blocked it. They now filter on `{source_branch}`, and
   `get-mr-pipeline` targets `{mr_repo}` instead of the issue tracker's `{host}/{project}`, which
   are not the same repo when the git remote and the tracker are on different platforms.
+- A successful GitHub merge was reported as `merged=false`: `common/merge-mr.yaml` derived the
+  result from the merge CLI's stdout, and `gh pr merge` exits 0 with zero bytes of it. The gh
+  steps now append `&& echo merged`, so stdout carries the exit code the file header always
+  named as the truth source. Reading `merge_commit_sha` instead would have inverted the other
+  way — GitHub returns a test-merge SHA for an open PR.
 
 ## [3.0.0] - 2026-09-15
 
