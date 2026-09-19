@@ -267,6 +267,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `PRD: {prd_key}`, the format of the PRD ISSUE, and labels it `prd:{key}`. An exact-title
   match could therefore hand back the PR's number and `gh issue edit <pr>` edited the pull
   request instead of the issue. The filter is now on both branches.
+- `common/sync-issues.yaml` labelled every issue `status{sep}` with nothing behind it
+  whenever the interpreter rendered a LOOP map item as its KEY — the rendering lang §4.1
+  actually specifies. The status was split out of the rendered item, so a bare key left
+  `entry_status` empty, `mapped_status` empty and the status update wrong. Only the key
+  still comes from the loop item; the status is read back from `sprint-status.yaml` by
+  that key, so both renderings produce the same answer.
 
 ## [3.0.0] - 2026-09-15
 

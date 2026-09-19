@@ -62,7 +62,7 @@ for item in [i for page in pages for i in page.get('items', [])]:
     items: entries
     as: entry
     do:
-      # --- Split the loop item into key and status ---
+      # --- Derive the key from the loop item, the status from the FILE ---
       # `entries` is a YAML MAP. lang §4.1 says a map item is {key, value}, but the
       # interpreter renders {entry} as the single string "key: status" — so every step
       # that used {entry} as a key put "1-1-login-form: backlog" into issue titles and
@@ -73,11 +73,34 @@ import sys
 print(sys.argv[1].strip().split(':', 1)[0].strip())
 " "{entry}"
         STORE: entry_key
+      # The STATUS cannot come from the same split: under the OTHER rendering — the bare
+      # key, which is what lang §4.1 actually specifies — there is nothing after the
+      # colon, so entry_status was '', mapped_status was '' and every issue got the label
+      # `status{sep}` with nothing behind it, plus a status update to that empty value.
+      # The key is all the loop item has to supply; the status is read back from
+      # sprint-status.yaml by that key, so both renderings produce the same answer.
+      # Parsed with re rather than yaml: `uv run --no-project python` has the standard
+      # library only, and development_status is a flat one-level map of scalars.
       - RUN: uv run --no-project python -c "
-import sys
-parts = sys.argv[1].strip().split(':', 1)
-print(parts[1].strip() if len(parts) > 1 else '')
-" "{entry}"
+import re, sys
+key = sys.argv[2].strip()
+status = ''
+inside = False
+with open(sys.argv[1], 'r', encoding='utf-8') as f:
+    for line in f:
+        if re.match(r'^development_status\s*:', line):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if line.strip() and not line[:1].isspace():
+            break
+        m = re.match(r'\s+([^:]+?)\s*:\s*(.*?)\s*\Z', line.rstrip(chr(10)))
+        if m and m.group(1).strip().strip(chr(39) + chr(34)) == key:
+            status = m.group(2).strip().strip(chr(39) + chr(34))
+            break
+print(status)
+" {implementation_artifacts}/sprint-status.yaml "{entry_key}"
         STORE: entry_status
       # --- Classify entry ---
       - RUN: uv run --no-project python -c "

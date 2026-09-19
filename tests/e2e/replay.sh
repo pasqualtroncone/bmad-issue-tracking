@@ -872,6 +872,9 @@ rows = open(e2e + '/fixtures/triage-rows.md').read().rstrip()
 open(work + '/ia/spec-1-1-login-form.md', 'w').write(t.replace('@STATUS@', 'in-review').replace('@TRIAGE_ROWS@', rows))
 PY
   cp "$E2E_ROOT/fixtures/consumer/implementation-artifacts/spec-1-1-login-form.legacy-h1.md" "$1/legacy-h1.md"
+  # the status step reads sprint-status.yaml by key (#52), so the fixture needs one;
+  # @S11@ is the placeholder lab-up substitutes per scenario
+  sed 's/@S11@/backlog/' "$E2E_ROOT/fixtures/consumer/implementation-artifacts/sprint-status.yaml" > "$1/ia/sprint-status.yaml"
 }
 
 case_d21() {  # #12 — story issue titles come out empty: the 6.12.0 spec template has no H1
@@ -921,14 +924,18 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   lst="$(run_line_of common/sync-issues.yaml 'STORE: entry_status')"
   lt="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
   # both renderings lang §4.1 leaves open: "key: status" (what the interpreter does) and
-  # the bare key (what the language says a map item is)
+  # the bare key (what the language says a map item is). The KEY still comes out of the
+  # rendered item; since #52 the STATUS is read from sprint-status.yaml by that key, so
+  # the status step is replayed with {entry_key}/{implementation_artifacts}, not {entry} —
+  # which is precisely what makes the bare rendering yield 'backlog' instead of ''.
   replay $c key-pair    common/sync-issues.yaml "$lk"  entry="1-1-login-form: backlog"
-  replay $c status-pair common/sync-issues.yaml "$lst" entry="1-1-login-form: backlog"
   replay $c key-bare    common/sync-issues.yaml "$lk"  entry="1-1-login-form"
-  replay $c status-bare common/sync-issues.yaml "$lst" entry="1-1-login-form"
-  local kp sp kb sb
-  kp="$(head -1 "$d/key-pair.out")"; sp="$(head -1 "$d/status-pair.out")"
-  kb="$(head -1 "$d/key-bare.out")"; sb="$(head -1 "$d/status-bare.out")"
+  local kp kb
+  kp="$(head -1 "$d/key-pair.out")"; kb="$(head -1 "$d/key-bare.out")"
+  replay $c status-pair common/sync-issues.yaml "$lst" implementation_artifacts="$work/ia" entry_key="$kp"
+  replay $c status-bare common/sync-issues.yaml "$lst" implementation_artifacts="$work/ia" entry_key="$kb"
+  local sp sb
+  sp="$(head -1 "$d/status-pair.out")"; sb="$(head -1 "$d/status-bare.out")"
   # the derived key feeds the title step and the description file name
   replay $c title common/sync-issues.yaml "$lt" implementation_artifacts="$work/ia" entry_key="$kp"
   local title fname title_leak=0
@@ -943,16 +950,16 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   grep -n '{entry}' "$WF/common/sync-issues.yaml" | grep -v ':[[:space:]]*#' \
     | awk -F: -v k="$((ka-1))" -v s="$((sa-1))" '$1!=k && $1!=s' > "$d/raw-entry-uses.txt" || true
   local leaks; leaks="$(grep -c . "$d/raw-entry-uses.txt")"
-  { echo "entry='1-1-login-form: backlog' → key='$kp' status='$sp'"
-    echo "entry='1-1-login-form'          → key='$kb' status='$sb'"
+  { echo "entry='1-1-login-form: backlog' → key='$kp' status='$sp' (read from $work/ia/sprint-status.yaml)"
+    echo "entry='1-1-login-form'          → key='$kb' status='$sb' (same file, same key)"
     echo "title step  → '$title' (carries ': $sp'? $title_leak)"
     echo "description file → '$fname'"
     echo "steps still rendering {entry} as a key: $leaks"; cat "$d/raw-entry-uses.txt"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
-  if [ "$kp" = "1-1-login-form" ] && [ "$sp" = "backlog" ] && [ "$kb" = "1-1-login-form" ] && [ -z "$sb" ] \
+  if [ "$kp" = "1-1-login-form" ] && [ "$sp" = "backlog" ] && [ "$kb" = "1-1-login-form" ] && [ "$sb" = "backlog" ] \
      && [ "$title_leak" = 0 ] && [ "$fname" = "/tmp/issue-desc-1-1-login-form.md" ] && [ "$leaks" = 0 ]; then
-    verdict $c REFUTED "sync-issues.yaml:$lk/$lst split the loop item once: 'key: status' → key='$kp' status='$sp', a bare 'key' → key='$kb' status='' (both renderings accepted). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
+    verdict $c REFUTED "sync-issues.yaml:$lk takes the KEY from the loop item under both renderings ('key: status' → '$kp', bare 'key' → '$kb') and sync-issues.yaml:$lst reads the STATUS from sprint-status.yaml by that key → '$sp' / '$sb' (#52: the bare rendering used to leave it empty, so the label was 'status{sep}' with nothing behind it). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
   else
-    verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
+    verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb', want 'backlog'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
   fi
 }
 
