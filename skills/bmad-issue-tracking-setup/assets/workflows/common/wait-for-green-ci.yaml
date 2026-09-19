@@ -10,7 +10,9 @@
 #   - project: issue tracker project (from check-config)
 #   - project_enc: URL-encoded project path (from check-config)
 #   - mr_repo: resolved MR repo (set by check-mr-ci)
-#   - source_branch: source branch (set by check-mr-ci, defaults to current_branch)
+#   - source_branch: source branch (set by check-mr-ci, defaults to current_branch). On GitHub
+#       it is also the `gh run list --branch` filter: without it the poll reads the newest run
+#       of the whole repo, i.e. some other branch's pipeline.
 # Output variables:
 #   - ci_status: "passed", "no_ci", "no_mr", "running", "failed", "timeout"
 #   - pipeline_id: id of the failed pipeline (set on failure-path, passed to get-failed-jobs)
@@ -84,8 +86,9 @@ else:
                 while [ $attempt -lt $max_attempts ]; do
                   sleep 30
                   attempt=$((attempt + 1))
-                  # get-mr-pipeline equivalent: fetch latest workflow run for the existing mr_iid
-                  raw=$(gh run list --limit 1 -R "{mr_repo}" --json databaseId,status,conclusion 2>/dev/null)
+                  # get-mr-pipeline equivalent: latest workflow run of the MR's source branch
+                  # (--branch is mandatory: without it this reads the repo's newest run, any branch)
+                  raw=$(gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion 2>/dev/null)
                   pipeline_status=$(echo "$raw" | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
@@ -142,7 +145,7 @@ print(str(ps[0]['id']) if ps else '')
           PLATFORM: gitlab
           STORE: pipeline_id
       FALSE:
-        - RUN: gh run list --limit 1 -R "{mr_repo}" --json databaseId | uv run --no-project python -c "
+        - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
 print(str(rs[0]['databaseId']) if rs else '')

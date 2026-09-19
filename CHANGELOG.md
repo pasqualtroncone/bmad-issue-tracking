@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   halted on the issue it was about to create. The lookup is now a `RUN` that prints the issue id —
   exact title first, prefix second — or an empty string, and reads the `--paginate` stream with
   `json.JSONDecoder().raw_decode` so any number of pages parses.
+- GitHub CI status was read repo-wide: `common/get-mr-pipeline.yaml` and the poll and failure
+  paths of `common/wait-for-green-ci.yaml` ran `gh run list --limit 1` with no `--branch`, so the
+  newest run of ANY branch was reported as this MR's pipeline — a green story branch inherited an
+  unrelated red one and the CI gate blocked it. They now filter on `{source_branch}`, and
+  `get-mr-pipeline` targets `{mr_repo}` instead of the issue tracker's `{host}/{project}`, which
+  are not the same repo when the git remote and the tracker are on different platforms.
 
 ## [3.0.0] - 2026-09-15
 
