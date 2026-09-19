@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `*/skills/bmad-issue-tracking-setup/` under the project root is now a candidate.
 - The README override table lacked rows for `bmad-build.toml` and `bmad-build-auto.toml`;
   `tests/test_setup_verify_list.py` now pins the table to `assets/custom/` as well.
+- Every `PRD: <key>` and `Epic <n>:` issue lookup missed: the search text went raw into the
+  query URL, so its space reached the wire. GitHub answered `PROTOCOL_ERROR` and the trailing
+  `| python` hid it — the step exited 0 with an empty result and the PRD issue looked absent,
+  so sync created a duplicate; GitLab answered HTTP 400 and `glab` exit 1 halted the workflow.
+  `common/find-issue.yaml` and `common/create-issue.yaml` now pass the search text as a `-f`
+  request field (`--method GET`), which both CLIs percent-encode, and the GitHub search runs
+  under `set -o pipefail` so a failed `gh api` can no longer be read as "no issue found".
 
 ## [3.0.0] - 2026-09-15
 

@@ -3,16 +3,18 @@
 # Purpose: Finds an issue by search text and returns its tracker ID.
 #           Uses targeted search on both platforms (fixes GitHub fetch-all asymmetry).
 # Input variables:
-#   - search_text: text to search for in the issue (e.g. "{story_key}", "PRD: {prd_key}", "Epic {epic_num}:")
+#   - search_text: text to search for in the issue (e.g. "{story_key}", "PRD: {prd_key}", "Epic {epic_num}:").
+#       Passed as a `-f` request field, never interpolated into the URL, so the CLI
+#       percent-encodes it: a space or a colon ("PRD: mobile-oidc", "Epic 1:") is safe.
 #   - prd_key: the PRD key (from scope, for label scoping)
 # Output variables:
 #   - issue_id: the issue IID (GitLab) or number (GitHub); empty string if not found
 # Side effects: none
 
-- RUN: glab api "projects/{project_enc}/issues?search={search_text}&labels=prd{sep}{prd_key}" --hostname {host} --paginate
+- RUN: glab api "projects/{project_enc}/issues" --method GET -f "search={search_text}" -f "labels=prd{sep}{prd_key}" --hostname {host} --paginate
   STORE: issue_result
   PLATFORM: gitlab
-- RUN: gh api "search/issues?q={search_text}+repo:{project}+label:prd{sep}{prd_key}&per_page=100" --hostname {host} --paginate | uv run --no-project python -c "import json,sys; pages=sys.stdin.read().strip().split('\n'); items=[]; [items.extend(json.loads(p).get('items',[])) for p in pages if p]; print(json.dumps(items))"
+- RUN: set -o pipefail; gh api "search/issues" --method GET -f "q={search_text} repo:{project} label:prd{sep}{prd_key}" -f "per_page=100" --hostname {host} --paginate | uv run --no-project python -c "import json,sys; pages=sys.stdin.read().strip().split('\n'); items=[]; [items.extend(json.loads(p).get('items',[])) for p in pages if p]; print(json.dumps(items))"
   STORE: issue_result
   PLATFORM: github
 - CHECK: empty issue_result

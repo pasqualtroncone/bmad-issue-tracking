@@ -265,6 +265,15 @@ case_d19() {
   if grep -q 'PROTOCOL_ERROR' "$d/find-prd.err" && [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$(tr -d '[:space:]' < "$d/find-prd.out")" = "[]" ]; then
     gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
     verdict $c-D23 CONFIRMED "find-issue.yaml:$lf with search_text='PRD: $key' puts a raw space in the URL → gh api: '$(grep -o 'stream error.*' "$d/find-prd.err" | head -1)'; the trailing '| python' makes the step exit 0 with issue_result='[]' → issue_id empty. Every 'PRD: {prd_key}' lookup on GitHub (issue-sync/prepare, bmad-prd/complete create-vs-update, edit-prd, correct-course) silently misses; percent-encoded, the same query returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' fails the same way (rc=$(cat "$d/find-epic-1.rc"), $ne1 hits)"
+  else
+    # same control query, so the REFUTED arm reports what the encoded lookup ought to return
+    gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
+    local nprd; nprd="$(titles "$d/find-prd.out" | wc -l)"
+    if [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$nprd" -ge 1 ]; then
+      verdict $c-D23 REFUTED "find-issue.yaml:$lf with search_text='PRD: $key' → rc=0 and $nprd hit(s) ($(titles "$d/find-prd.out" | tr '\n' ';')), no PROTOCOL_ERROR: the space never reaches the URL. The encoded control returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' → rc=$(cat "$d/find-epic-1.rc"), $ne1 hit(s)"
+    else
+      verdict $c-D23 BLOCKED "neither shape: rc=$(cat "$d/find-prd.rc") hits=$nprd out=$(head -c 120 "$d/find-prd.out") err=$(head -c 160 "$d/find-prd.err")"
+    fi
   fi
   local first11; first11="$(titles "$d/find-1-1.out" | head -1)"
   if [ "$n11" -gt 1 ] || [ "$ne1" -gt 1 ]; then
