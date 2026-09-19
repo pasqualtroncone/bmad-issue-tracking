@@ -18,6 +18,8 @@
 # `empty search_result` guard never catches it).
 # The page stream is parsed with raw_decode because `--paginate` concatenates one JSON
 # document per page with no separator: past 100 issues a plain parse dies on "Extra data".
+# `search=` is fuzzy on both trackers ("Story 1.1: Login Form" also returns Story 1.10), so
+# the title decides, exact first and prefix second — the same rule as the GitHub sibling.
 - RUN: set -o pipefail; glab api --paginate "projects/{project_enc}/issues" --method GET -f "search={title}" -f "labels=prd{sep}{prd_key}" --hostname {host} | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
@@ -30,8 +32,10 @@ while pos < len(text):
     page, pos = dec.raw_decode(text, pos)
     pages.append(page)
 issues = [i for page in pages for i in page]
-print(str(issues[0]['iid']) if issues else '')
-"
+title = sys.argv[1]
+match = [i for i in issues if (i.get('title') or '') == title] or [i for i in issues if (i.get('title') or '').startswith(title)]
+print(str(match[0]['iid']) if match else '')
+" "{title}"
   STORE: found_issue_id
   PLATFORM: gitlab
 # GitHub lists every issue carrying the PRD label, so the title comparison happens here:
