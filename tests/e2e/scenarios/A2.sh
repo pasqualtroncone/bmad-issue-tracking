@@ -4,10 +4,11 @@
 # Historically: D18 kept the loop going for the whole 60×30 s budget inside ONE RUN, so
 # D03 followed — the Bash tool times out at 600 s and no ci-status.json was ever written.
 # Both are fixed (#31 the sys import, #14 the bounded rounds): the wait is now a LOOP of
-# nine rounds, each ONE RUN of ≤ 8 polls × 25 s ≈ 200 s.
-#   A2.sh proxy    BASH_MAX_TIMEOUT_MS=90000 — a 90 s cap is BELOW one 200 s round, so this
+# eighteen rounds, each ONE RUN of ≤ 4 polls × 25 s ≈ 100 s (#50 halved the round so it
+# fits the tool's 120 s DEFAULT, not only its 600 s maximum, and doubled the rounds).
+#   A2.sh proxy    BASH_MAX_TIMEOUT_MS=90000 — a 90 s cap is BELOW one 100 s round, so this
 #                  pass still times out by construction; it measures the cap, not the module
-#   A2.sh default  real defaults (600 s tool timeout, ≈12 min) — a round fits three times
+#   A2.sh default  real defaults (600 s tool timeout, ≈12 min) — a round fits six times
 #                  over, so a timeout here now means a regression, not the original defect
 #   A2.sh patched  wait-for-green-ci.yaml with 'import sys' added + sleep:660 → isolates D03
 #                  (the import is already in the file since #31; the sed is now a no-op

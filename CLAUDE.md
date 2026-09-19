@@ -227,11 +227,13 @@ A third rule is not checked by `tests/` but by the e2e level-0 report (`make e2e
 item `D03-static`): **no single `RUN` may block longer than the interpreter's Bash tool
 allows** — 120 s by default, 600 s at most. A long wait is expressed in the workflow
 language, not in bash: `common/wait-for-green-ci.yaml` spends its 30-minute CI budget as a
-`LOOP` over nine rounds, each ONE `RUN` of at most 8 polls × 25 s (~200 s) that stores
+`LOOP` over eighteen rounds, each ONE `RUN` of at most 4 polls × 25 s (~100 s) that stores
 `ci_status` and lets the following iterations no-op once the state is terminal. The
 original shape (one `RUN` looping `sleep 30` sixty times) was killed by the tool on any
 pipeline longer than the cap, so `ci_status` was never set, `common/write-ci-status.yaml`
-never wrote `ci-status.json` and bmad-loop's `[verify]` failed for the wrong reason.
+never wrote `ci-status.json` and bmad-loop's `[verify]` failed for the wrong reason. The
+round must fit the 120 s DEFAULT, not just the 600 s maximum: at 8 polls (~200 s) it only
+survived where the interpreter had raised the timeout, which is the same failure again.
 
 ## Adding or removing a workflow file
 

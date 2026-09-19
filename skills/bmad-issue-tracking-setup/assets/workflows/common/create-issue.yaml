@@ -3,14 +3,28 @@
 # Purpose: Searches for an existing issue by title, creates one if not found.
 #           Extracts and returns the issue ID.
 # Input variables:
-#   - title: the exact issue title to search for (prefix match); passed as a `-f` field, never into the URL (the CLI percent-encodes it)
+#   - title: the exact issue title to search for (prefix match)
 #   - labels: newline-separated list of labels to assign (e.g. "type::prd\nstatus::done")
 #   - description_file: path to the file containing the issue description
 # Output variables:
 #   - issue_id: the IID (GitLab) or number (GitHub) of the created/found issue
-# Side effects: creates an issue on the issue tracker if it does not already exist
+# Side effects: creates an issue on the issue tracker if it does not already exist;
+#               writes and removes /tmp/issue-title.txt
 # Requires: host and project in scope (provided by common/check-config via callers)
+#
+# THE TITLE NEVER TOUCHES THE COMMAND LINE. It used to be interpolated inside double
+# quotes three times (`-f "search={title}"`, the python argv `"{title}"`, `gh issue
+# create --title "{title}"`), and story titles come from user-typed spec frontmatter: a
+# double quote made the shell split the command (syntax error → halt on every dev-finish
+# of that story), a `$(…)` was EXECUTED before the CLI saw it. Same class as D09, which
+# ensure-mr.yaml fixed by handing the body to the CLI as a file. Here the title is
+# written to a file with WRITE (no shell involved at all) and every step reads it back in
+# python, which then calls gh/glab with an ARGUMENT LIST — no shell, no quoting.
 
+- WRITE:
+    file: /tmp/issue-title.txt
+    content: "{title}"
+    mode: overwrite
 # Look up an existing issue with this title. The step prints the issue id, or an EMPTY
 # string when there is none — the lookup must not be a FILTER: lang §5 stops the workflow
 # when `where` matches nothing, and "no issue yet" is the normal case every story and epic
@@ -18,9 +32,11 @@
 # `empty search_result` guard never catches it).
 # The page stream is parsed with raw_decode because `--paginate` concatenates one JSON
 # document per page with no separator: past 100 issues a plain parse dies on "Extra data".
-# `search=` is fuzzy on both trackers ("Story 1.1: Login Form" also returns Story 1.10), so
-# the title decides, exact first and prefix second — the same rule as the GitHub sibling.
-- RUN: set -o pipefail; glab api --paginate "projects/{project_enc}/issues" --method GET -f "search={title}" -f "labels=prd{sep}{prd_key}" --hostname {host} | uv run --no-project python -c "
+# The listing is scoped by the PRD LABEL only, exactly like the GitHub sibling below. It
+# used to carry `-f "search={title}"` as well, which put the title on the command line for
+# nothing: `search=` is fuzzy on both trackers ("Story 1.1: Login Form" also returns
+# Story 1.10), so the title had to decide here anyway — exact first, prefix second.
+- RUN: set -o pipefail; glab api --paginate "projects/{project_enc}/issues" --method GET -f "labels=prd{sep}{prd_key}" --hostname {host} | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
 text = sys.stdin.read()
@@ -32,10 +48,10 @@ while pos < len(text):
     page, pos = dec.raw_decode(text, pos)
     pages.append(page)
 issues = [i for page in pages for i in page]
-title = sys.argv[1]
+title = open(sys.argv[1], encoding='utf-8').read().strip()
 match = [i for i in issues if (i.get('title') or '') == title] or [i for i in issues if (i.get('title') or '').startswith(title)]
 print(str(match[0]['iid']) if match else '')
-" "{title}"
+" /tmp/issue-title.txt
   STORE: found_issue_id
   PLATFORM: gitlab
 # GitHub lists every issue carrying the PRD label, so the title comparison happens here:
@@ -52,17 +68,18 @@ while pos < len(text):
         continue
     page, pos = dec.raw_decode(text, pos)
     pages.append(page)
-title = sys.argv[1]
+title = open(sys.argv[1], encoding='utf-8').read().strip()
 issues = [i for page in pages for i in page if 'pull_request' not in i]
 match = [i for i in issues if i['title'] == title] or [i for i in issues if i['title'].startswith(title)]
 print(str(match[0]['number']) if match else '')
-" "{title}"
+" /tmp/issue-title.txt
   STORE: found_issue_id
   PLATFORM: github
 # If found, adopt it as issue_id and stop
 - CHECK: empty found_issue_id
   FALSE:
     - SET: { variable: issue_id, value: "{found_issue_id}" }
+    - RUN: rm -f /tmp/issue-title.txt
     - CHECK: empty issue_id
       TRUE:
         - STOP
@@ -90,13 +107,31 @@ labels = sys.argv[1].strip().split('\n')
 print(','.join(labels))
 " "{labels}"
   STORE: label_arg
-- RUN: glab api --method POST "projects/{project_enc}/issues" --hostname {host} -f "title={title}" -F "description=@{description_file}" -f "labels={label_arg}"
+- RUN: uv run --no-project python -c "
+import subprocess, sys
+title = open(sys.argv[1], encoding='utf-8').read().strip()
+out = subprocess.run(['glab', 'api', '--method', 'POST', 'projects/{project_enc}/issues', '--hostname', '{host}', '-f', 'title=' + title, '-F', 'description=@{description_file}', '-f', 'labels={label_arg}'], capture_output=True, text=True, check=True).stdout
+print(out.strip())
+" /tmp/issue-title.txt
   STORE: create_result
   PLATFORM: gitlab
-- RUN: gh issue create --title "{title}" --body-file "{description_file}" --label "{label_arg}" -R "{host}/{project}"
+- RUN: uv run --no-project python -c "
+import subprocess, sys
+title = open(sys.argv[1], encoding='utf-8').read().strip()
+out = subprocess.run(['gh', 'issue', 'create', '--title', title, '--body-file', '{description_file}', '--label', '{label_arg}', '-R', '{host}/{project}'], capture_output=True, text=True, check=True).stdout
+print(out.strip())
+" /tmp/issue-title.txt
   STORE: create_result
   PLATFORM: github
-# Extract issue_id from creation result
+# Extract issue_id from creation result.
+# The two CLIs answer in different shapes and only one of them is JSON. `glab api
+# --method POST` prints the created issue as a JSON object, so a FILTER reads `iid`
+# straight off it. `gh issue create` prints ONE LINE: the issue's web URL
+# (https://<host>/<owner>/<repo>/issues/<n>). A FILTER for `number` finds no such field
+# and lang §5 stops the workflow there — after the issue exists — so the status label,
+# the comment and the MR description's issue_ref were all skipped, silently: the next
+# run adopts the issue by exact title, so nothing ever reported the gap. The GitHub
+# branch therefore reads the trailing integer of the URL instead.
 - CHECK: platform eq "gitlab"
   TRUE:
     - FILTER:
@@ -104,7 +139,18 @@ print(','.join(labels))
         select: iid
         store: issue_id
   FALSE:
-    - FILTER:
-        source: create_result
-        select: number
-        store: issue_id
+    - RUN: uv run --no-project python -c "
+import re, sys
+m = re.search(r'([0-9]+)[^0-9]*\Z', sys.argv[1].strip())
+print(m.group(1) if m else '')
+" "{create_result}"
+      STORE: issue_id
+- RUN: rm -f /tmp/issue-title.txt
+# An unreadable create output is a halt WITH a reason, not a silent skip: every caller
+# treats an empty issue_id as "no issue yet" and would go on to label, comment on and
+# link an issue id that is the empty string.
+- CHECK: empty issue_id
+  TRUE:
+    - OUTPUT:
+        message: "Issue created but its id could not be read from the create output: {create_result}"
+        stop: true

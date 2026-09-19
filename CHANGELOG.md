@@ -229,6 +229,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   therefore passed whatever CI did, and a red pipeline was first seen one pass later. The
   issue and the MR are now ensured before the gate. `no_mr` still maps to green: that is the
   flow with no remote MR at all, not a story whose MR had not been created yet.
+- Every issue `common/create-issue.yaml` created on GitHub was orphaned on the spot: the id
+  was taken with `FILTER select: number` from `create_result`, and `gh issue create` prints
+  the issue's web URL, not JSON. lang §5 stops a workflow whose FILTER matches nothing, so
+  the run ended right after the issue existed — no status label, no comment, no `issue_ref`
+  in the MR description — and the next run adopted the issue by exact title, which is why
+  the loss never surfaced. The GitHub branch now reads the trailing integer of the URL, and
+  an unreadable create output stops with a message naming it instead of leaving `issue_id`
+  empty for the callers to treat as "no issue yet".
+- `common/merge-mr.yaml` halted on every merge under the documented semantics, right after
+  the irreversible CLI had run: its last step derives `merged` from `{gl_merge_out}` and
+  `{gh_merge_out}`, and each of the four platform branches sets exactly one of the two, so
+  lang §4.5 stopped the workflow on the other. `merged`, `merge_sha` and `error` were never
+  set and review-finish never reached `git worktree remove .`. Both variables are now seeded
+  with `""` before the branches and passed to the derive step quoted, so an empty one keeps
+  its argv slot instead of shifting the other into it.
+- The CI gate reported green for a run that had not started. `gh run list --branch <src>`
+  answers `[]` for the first seconds after a push, `common/get-mr-pipeline.yaml` reports
+  `none`, and `common/check-mr-ci.yaml` mapped that to `no_ci` — which
+  `common/wait-for-green-ci.yaml` treats as green and STOPs on. The dev-finish and
+  review-finish phases push and gate in the same breath, so `ci-status.json` was written
+  green while the pipeline that would fail was still being registered, and bmad-loop's
+  `[verify]` passed on it. "No run yet" is now told from "this repo has no CI" by the CI
+  definition on the branch (`.gitlab-ci.yml` / `.github/workflows/*.yml`): a CI-less repo
+  is still green immediately, a branch that defines CI waits. Inside the polling rounds an
+  empty list is `no_run`, and only three consecutive rounds of it conclude `no_ci`.
+- A polling round of `common/wait-for-green-ci.yaml` blocked ~200 s (8 polls × 25 s) while
+  the tool cap the round-based shape exists to respect is 120 s by default. Where the
+  interpreter had not raised it, the round was killed before printing, `ci_status` was
+  never stored and `ci-status.json` was never written — the exact symptom the split into
+  rounds had removed. A round is now 4 polls (~100 s) and the LOOP runs 18 of them, so the
+  30-minute budget is unchanged.
+- The GitHub title-shaped lookup in `common/find-issue.yaml` could return a pull request.
+  `search/issues` answers with issues AND pull requests, and unlike the key-shaped branch
+  (and `common/create-issue.yaml`) this one did not drop the items carrying
+  `pull_request` — while `common/ensure-mr.yaml` titles the PRD pull request
+  `PRD: {prd_key}`, the format of the PRD ISSUE, and labels it `prd:{key}`. An exact-title
+  match could therefore hand back the PR's number and `gh issue edit <pr>` edited the pull
+  request instead of the issue. The filter is now on both branches.
+- `common/sync-issues.yaml` labelled every issue `status{sep}` with nothing behind it
+  whenever the interpreter rendered a LOOP map item as its KEY — the rendering lang §4.1
+  actually specifies. The status was split out of the rendered item, so a bare key left
+  `entry_status` empty, `mapped_status` empty and the status update wrong. Only the key
+  still comes from the loop item; the status is read back from `sprint-status.yaml` by
+  that key, so both renderings produce the same answer.
+- A story title holding a double quote, a backtick or a `$(…)` took `common/create-issue.yaml`
+  apart. The title was interpolated inside double quotes three times (`-f "search={title}"`,
+  a python argv, `gh issue create --title "{title}"`), and titles come from user-typed spec
+  frontmatter: a quote made the shell split the command, so the hook halted on every
+  dev-finish of that story, and a `$(…)` was executed before the CLI saw it — the same class
+  as D09, fixed in `common/ensure-mr.yaml` by handing the body to the CLI as a file. The
+  title is now written to `/tmp/issue-title.txt` with `WRITE` (no shell involved) and read
+  back in python, which calls `gh`/`glab` with an argument list. The GitLab lookup dropped
+  its `search=` term with it: it was fuzzy, so the title had to decide locally anyway.
 
 ## [3.0.0] - 2026-09-15
 

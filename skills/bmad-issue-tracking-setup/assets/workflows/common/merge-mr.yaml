@@ -27,6 +27,13 @@
 # `gh -R` and the `repos/…` API path take `owner/repo` whole, so git_project needs no
 # splitting: "{git_host}/{git_project}" is the string the split-and-rejoin produced.
 #
+# Both `gl_merge_out` and `gh_merge_out` are seeded with "" before the branches: each
+# branch sets exactly ONE of them, and the derive step at the bottom names both. lang §4.5
+# stops a workflow on a reference to an undefined variable, so under the documented
+# semantics every merge halted there — after the irreversible CLI had run, with `merged`
+# and `error` never set, so review-finish never reached `git worktree remove .`. An empty
+# string is the honest value: "the branch that did not run printed nothing".
+#
 # `merged` is the merge CLI's EXIT CODE, carried on stdout. `glab mr merge` prints a
 # confirmation of its own; `gh pr merge` succeeds with rc=0 and ZERO bytes of stdout
 # (a re-merge of an already-merged PR is rc=0 too, with its message on stderr), so the
@@ -40,6 +47,8 @@
 # was immediately followed by a halt with merge_sha empty, on every GitHub merge the
 # review-finish prompt performed. `glab api` has always taken its host that way.
 
+- SET: { variable: gl_merge_out, value: "" }
+- SET: { variable: gh_merge_out, value: "" }
 - CHECK: git_platform eq platform
   TRUE:
     # === Same-platform: the git remote IS the issue tracker ===
@@ -94,13 +103,16 @@ print(m.get('merge_commit_sha', '') or '')
 
 # Derive merged/error from the CLI outputs (truth source = exit code, not pipeline_status).
 # Both branches only reach here with stdout when their merge CLI exited 0: glab prints its
-# own confirmation, gh prints the `merged` token the step appends with `&&`.
+# own confirmation, gh prints the `merged` token the step appends with `&&`. The branch
+# that did not run left its variable at the "" seeded at the top, so exactly one of the two
+# arguments can be non-empty — and both are QUOTED, so an empty one still occupies its
+# argv slot instead of shifting the other into it.
 - RUN: uv run --no-project python -c "
 import sys
 gl = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 gh = sys.argv[2].strip() if len(sys.argv) > 2 else ''
 print('true' if (gl or gh) else 'false')
-" {gl_merge_out} {gh_merge_out}
+" "{gl_merge_out}" "{gh_merge_out}"
   STORE: merged
 - CHECK: merged eq "false"
   TRUE:

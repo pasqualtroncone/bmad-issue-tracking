@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1|r3|r7  # GitHub lab (d15/d21/d29 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -16,6 +16,9 @@ set -uo pipefail
 line_of() { grep -n -E -- "$2" "$WF/$1" | sed -n "${3:-1}p" | cut -d: -f1; }
 # run_line_of <rel> <body-regex> — the `- RUN:` line that owns the first line matching the body regex
 run_line_of() { local b; b="$(grep -n -E -- "$2" "$WF/$1" | head -1 | cut -d: -f1)"; [ -n "$b" ] && awk -v n="$b" 'NR<=n && /^ *- RUN:/ {l=NR} END{print l}' "$WF/$1"; }
+# run_line_of_n <rel> <body-regex> <nth> — same, for the nth match (two platform steps can
+# share a STORE name, and only their order tells them apart)
+run_line_of_n() { local b; b="$(grep -n -E -- "$2" "$WF/$1" | sed -n "${3:-1}p" | cut -d: -f1)"; [ -n "$b" ] && awk -v n="$b" 'NR<=n && /^ *- RUN:/ {l=NR} END{print l}' "$WF/$1"; }
 
 # replay <case> <name> <rel> <line> [k=v...] — render the RUN step and execute it in $CONSUMER
 replay() {
@@ -131,9 +134,9 @@ case_d18() {
   awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
-  # (b) one GitHub poll round, polls_per_round 8→2, against a repo whose latest run is complete
+  # (b) one GitHub poll round, polls_per_round shortened to 2, against a repo whose latest run is complete
   # (the round used to be the whole 60-attempt loop; #14 split it, so the knob is the per-round count)
-  sed 's/polls_per_round=8/polls_per_round=2/' "$d/github-loop.cmd" > "$d/github-loop-2.cmd"
+  sed -E 's/polls_per_round=[0-9]+/polls_per_round=2/' "$d/github-loop.cmd" > "$d/github-loop-2.cmd"
   gh run list -R "$REPO_GH" --limit 1 --json status,conclusion,headBranch > "$d/latest-run-before.json"
   log "  (b) full polling round with polls_per_round=2 (≈50 s)…"
   ( cd "$CONSUMER" && time bash "$d/github-loop-2.cmd" ) > "$d/github-loop-2.out" 2> "$d/github-loop-2.err"; echo $? > "$d/github-loop-2.rc"
@@ -276,6 +279,27 @@ case_d16() {
   if [ "$(cat "$d/merge-ok.rc")" = 0 ] && grep -q MERGED "$d/pr-state-after.txt" && [ ! -s "$d/merge-ok.out" ] && [ "$(tr -d '[:space:]' < "$d/derive-ok.out")" = false ]; then
     verdict $c CONFIRMED "merge-mr.yaml:$lm 'gh pr merge --squash --delete-branch' succeeded (rc=0, PR $n MERGED) with EMPTY stdout and stdout-only STORE → merge-mr.yaml:$ld derives merged='$(cat "$d/derive-ok.out")' for a real merge (inverted). Re-merging the merged PR: rc=$(cat "$d/merge-again.rc"), stdout empty, stderr '$(head -c 90 "$d/merge-again.err" | tr '\n' ' ')' → derive='$(cat "$d/derive-again.out")' (indistinguishable)"
   else verdict $c REFUTED "ok rc=$(cat "$d/merge-ok.rc") stdout=$(wc -c < "$d/merge-ok.out")B again rc=$(cat "$d/merge-again.rc") derive=$(cat "$d/derive-ok.out")/$(cat "$d/derive-again.out")"; fi
+  # --- R2 (#48): the derive step names BOTH outputs, each branch sets only one ---
+  # lang §4.5 halts on the reference to the other — after the irreversible merge CLI ran.
+  # The file now SETs both to "" before the platform CHECKs, so the rendered derive command
+  # can carry no unresolved {placeholder}, and an empty output still fills its argv slot.
+  local seeds; seeds="$(grep -c -E '^- SET: \{ variable: g[lh]_merge_out, value: "" \}' "$WF/common/merge-mr.yaml")"
+  local firstcheck; firstcheck="$(grep -n -E '^- CHECK: git_platform' "$WF/common/merge-mr.yaml" | head -1 | cut -d: -f1)"
+  local lastseed; lastseed="$(grep -n -E '^- SET: \{ variable: g[lh]_merge_out, value: "" \}' "$WF/common/merge-mr.yaml" | tail -1 | cut -d: -f1)"
+  grep -o '{[a-z_]*}' "$d/derive-ok.cmd" | sort -u > "$d/derive-unresolved.txt" || true
+  local unres; unres="$(grep -c . "$d/derive-unresolved.txt")"
+  # the GitLab shape of the same step (only gl_merge_out set) must read 'true', not shift
+  # the empty gh argument into slot 1
+  replay $c derive-gl-only common/merge-mr.yaml "$ld" gl_merge_out="Merged merge request !7" gh_merge_out=""
+  local dgl; dgl="$(tr -d '[:space:]' < "$d/derive-gl-only.out")"
+  { echo "merge-mr.yaml seeds gl_merge_out/gh_merge_out with \"\": $seeds (want 2), last seed at line $lastseed, first platform CHECK at line $firstcheck"
+    echo "unresolved placeholders left in the rendered derive: $unres $(tr '\n' ' ' < "$d/derive-unresolved.txt")"
+    echo "derive with only the GitLab output set → '$dgl' (want true)"; } > "$d/r2-summary.txt"; cat "$d/r2-summary.txt" >&2
+  if [ "$seeds" = 2 ] && [ -n "$firstcheck" ] && [ "$lastseed" -lt "$firstcheck" ] && [ "$unres" = 0 ] && [ "$dgl" = true ]; then
+    verdict $c-R2 REFUTED "merge-mr.yaml SETs both gl_merge_out and gh_merge_out to \"\" (lines up to $lastseed) before the first platform CHECK (line $firstcheck), so the derive step at :$ld references no undefined variable: the rendered command leaves 0 placeholders and reads 'true' from the GitLab output alone ('$dgl') as well as from the GitHub one. Under lang §4.5 the pre-fix step halted on every merge, after the irreversible CLI, leaving merged/error unset"
+  else
+    verdict $c-R2 CONFIRMED "merge-mr.yaml:$ld still references an output no branch defines: seeds=$seeds (want 2) lastseed=$lastseed firstcheck=$firstcheck unresolved=$unres ($(tr '\n' ' ' < "$d/derive-unresolved.txt")) gl-only derive='$dgl'"
+  fi
   local sha; sha="$(tr -d '[:space:]' < "$d/merge-sha.out")"
   if [ "$(cat "$d/merge-sha.rc")" = 0 ] && [ -n "$sha" ]; then
     verdict $c-D30 REFUTED "merge-mr.yaml:$lsha reads the merge SHA of the just-merged PR #$n: rc=0, merge_commit_sha=$sha. The host travels in --hostname, not in the path; the pre-fix path shape (repos/github.com/$REPO_GH/pulls/$n) answers rc=$(cat "$d/merge-sha-hostinpath.rc") '$(head -c 90 "$d/merge-sha-hostinpath.err" | tr '\n' ' ')', and with no EXPECT_EXIT: any that 404 halted the workflow after a successful merge"
@@ -315,7 +339,10 @@ case_d19() {
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
   raw "1-1-login-form" > "$d/raw-1-1.txt"; raw "Epic 1:" > "$d/raw-epic-1.txt"; raw "PRD: $key" > "$d/raw-prd.txt"
-  want() { gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:$key" --paginate --jq ".[] | select(.title == \"$1\") | .number" 2>/dev/null | head -1; }
+  # `repos/.../issues` returns pull requests too, and the R5 probe below puts a PR titled
+  # "PRD: $key" on that very list: without `.pull_request == null` the EXPECTED value would
+  # become the PR's number and every verdict here would read the wrong way round.
+  want() { gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:$key" --paginate --jq ".[] | select(.pull_request == null) | select(.title == \"$1\") | .number" 2>/dev/null | head -1; }
   local w11 we1 wprd g11 ge1 gprd
   w11="$(want "Story 1.1: Login Form")"; we1="$(want "Epic 1: Authentication")"; wprd="$(want "PRD: $key")"
   g11="$(tr -d '[:space:]' < "$d/find-1-1.out")"; ge1="$(tr -d '[:space:]' < "$d/find-epic-1.out")"; gprd="$(tr -d '[:space:]' < "$d/find-prd.out")"
@@ -361,6 +388,40 @@ case_d19() {
   else
     verdict $c-D20 CONFIRMED "find-issue.yaml:$lr does not see the issue it was just told about: #$fn key '$fresh' → selected '#${gf:-(empty)}' rc=$(cat "$d/find-fresh.rc") after ${dt}s; search/issues total_count=$(cat "$d/fresh-search-count.txt"). A flow that creates an issue and looks it up in the same minute skips the status update"
   fi
+  # --- R5 (#51): the title-shaped lookup must not adopt a PULL REQUEST ---
+  # ensure-mr titles the PRD pull request "PRD: {prd_key}" — the format of the PRD ISSUE —
+  # and labels it prd:{key}. search/issues returns issues AND pull requests, so an exact
+  # title match could hand back the PR's number and `gh issue edit <pr>` would edit the PR.
+  cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  local pbr="d19-prdpr-$(date +%s)"
+  git checkout -q -b "$pbr" main; git commit -q --allow-empty -m "d19 R5 probe"
+  git push -q -u origin "$pbr" > "$d/r5-push.log" 2>&1 || warn "push $pbr failed"
+  git checkout -q main
+  gh pr create -R "$REPO_GH" --title "PRD: $key" --body "R5 probe: a PR titled like the PRD issue" \
+    --base main --head "$pbr" --label "prd:$key" > "$d/r5-pr-url.txt" 2>&1
+  local pru prn; pru="$(tail -1 "$d/r5-pr-url.txt")"; prn="${pru##*/}"
+  case "$prn" in ''|*[!0-9]*) prn="";; esac
+  # the index has to know about the PR, or there is nothing to be fooled by
+  local rt=0 rn=0
+  while [ $rt -lt 180 ]; do
+    rn="$(gh api "search/issues?q=repo:$REPO_GH+label:prd:$key+is:pr&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
+    [ "${rn:-0}" -ge 1 ] && break; sleep 10; rt=$((rt+10))
+  done
+  echo "PR #${prn:-(none)} indexed after ${rt}s (search is:pr total_count=$rn)" | tee "$d/r5-index.txt" >&2
+  replay $c find-prd-with-pr common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  gh api "search/issues" --method GET -f "q=PRD: $key repo:$REPO_GH label:prd:$key" -f "per_page=100" \
+    --jq '[.items[] | "#\(.number) \(if .pull_request then "PR" else "issue" end) \(.title)"] | join("; ")' > "$d/r5-raw.txt" 2>&1
+  local gpr; gpr="$(tr -d '[:space:]' < "$d/find-prd-with-pr.out")"
+  echo "with the PR present: selected #${gpr:-(empty)} (PRD issue is #$wprd, the PR is #${prn:-?}); raw hits: $(cat "$d/r5-raw.txt")" | tee "$d/r5-summary.txt" >&2
+  [ -n "$prn" ] && gh pr close "$prn" -R "$REPO_GH" --delete-branch >/dev/null 2>&1
+  git branch -D "$pbr" >/dev/null 2>&1 || true
+  if [ -z "$prn" ] || [ "${rn:-0}" -lt 1 ]; then
+    verdict $c-R5 BLOCKED "no indexed PR titled 'PRD: $key' to be fooled by: pr='#$prn' search is:pr total_count=$rn after ${rt}s ($(head -c 160 "$d/r5-pr-url.txt" | tr '\n' ' '))"
+  elif [ "$gpr" = "$wprd" ]; then
+    verdict $c-R5 REFUTED "find-issue.yaml:$lf drops items carrying \`pull_request\`: with PR #$prn titled 'PRD: $key' and labelled prd:$key on the same search ($(cat "$d/r5-raw.txt")), the step still selects the ISSUE #$gpr. Before the filter the exact-title match could return the PR and \`gh issue edit <pr>\` would have edited the pull request instead of the PRD issue"
+  else
+    verdict $c-R5 CONFIRMED "find-issue.yaml:$lf adopts the pull request: search_text 'PRD: $key' selects #${gpr:-(empty)} while the PRD ISSUE is #$wprd and PR #$prn carries the same title and label ($(cat "$d/r5-raw.txt"))"
+  fi
 }
 
 case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not exist yet
@@ -382,10 +443,15 @@ case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not ex
   done
   echo "expected issue number for 'PRD: $key': #$want (after ${t}s)" | tee "$d/expected.txt" >&2
   local l; l="$(line_of common/create-issue.yaml '^- RUN: set -o pipefail; gh api "repos/' 1)"
-  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key" title="Story 1.1: Login Form"
-  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key" title="PRD: $key"
+  # since #53 the lookup reads the title from /tmp/issue-title.txt (written by the WRITE
+  # step at the top of the file) instead of taking it as a rendered argv
+  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
+  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  printf '%s' "PRD: $key" > /tmp/issue-title.txt
+  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   # #33: the same step over the 105-issue label seeded by d4 (>1 page of 100)
-  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd title="Story 1.1: Login Form"
+  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
+  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd
   gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:bulkprd" --paginate 2>/dev/null | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
@@ -405,6 +471,160 @@ print('documents=%d issues=%d bytes=%d newlines=%d' % (len(pages), sum(len(p) fo
     verdict $c REFUTED "create-issue.yaml:$l returns an EMPTY string (rc=0) for the absent title 'Story 1.1: Login Form' instead of halting, and #$p for 'PRD: $key' — the caller's 'CHECK: empty found_issue_id' now reaches the creation branch. Over the 105-issue label prd:bulkprd it is rc=0 and empty too ($pages): on this ARRAY endpoint gh --paginate merges the pages into ONE document, so #33's 'Extra data' is a search/issues shape (already fixed in sync-issues/find-issue); the raw_decode loop parses either"
   else
     verdict $c CONFIRMED "create-issue.yaml:$l did not behave as a lookup: absent rc=$(cat "$d/absent.rc") out='$a' (want empty); present out='$p' (want '$want'); bulk rc=$(cat "$d/bulk-absent.rc") out='$b' (want empty) err='$(head -c 160 "$d/bulk-absent.err" | tr '\n' ' ')'"
+  fi
+}
+
+case_r1() {  # #47 — `gh issue create` prints a URL, not JSON: reading `number` off it halts
+  # The pre-fix step was `FILTER source: create_result select: number`. lang §5 stops the
+  # workflow when a FILTER finds nothing, and it finds nothing in a one-line URL — so the
+  # issue was created and the status label, the comment and the MR's issue_ref were all
+  # skipped. The next run adopts the issue by exact title, which is why nothing reported it.
+  local c=r1; load_lab; local d; d="$(case_dir $c)"; local key=r1prd
+  gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
+  local title="R1 probe $(date +%s)"
+  printf '**Sprint Key:** `%s`\n' "$title" > "$d/desc.md"
+  # locator: the GitHub create step is the SECOND `STORE: create_result` (the first is glab)
+  local lc lx
+  lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
+  lx="$(run_line_of common/create-issue.yaml 'm = re\.search')"
+  [ -n "$lc" ] && [ -n "$lx" ] || { verdict $c BLOCKED "cannot locate the create step ($lc) or the id extraction ($lx) in create-issue.yaml"; return; }
+  # since #53 the title travels in /tmp/issue-title.txt (the WRITE step at the top of the
+  # file), never on the command line — so the case lays the file down instead of
+  # rendering a {title} placeholder
+  printf '%s' "$title" > /tmp/issue-title.txt
+  replay $c create common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH"
+  local url want; url="$(tail -1 "$d/create.out")"; want="${url##*/}"
+  replay $c extract common/create-issue.yaml "$lx" create_result="$(cat "$d/create.out")"
+  local got; got="$(tr -d '[:space:]' < "$d/extract.out")"
+  # the pre-fix shape against the same output, for the record: a `number` field to select
+  uv run --no-project python -c "
+import json, sys
+try:
+    obj = json.loads(open(sys.argv[1], encoding='utf-8').read())
+    print('number=' + str(obj.get('number')))
+except Exception as e:
+    print('not JSON: ' + type(e).__name__)
+" "$d/create.out" > "$d/prefix-filter.txt" 2>&1
+  { echo "create stdout: $(head -c 200 "$d/create.out" | tr '\n' ' ')"
+    echo "issue number from the URL: #${want:-(none)}  extraction step → '#${got:-(empty)}'"
+    echo "what a FILTER select: number had to read: $(cat "$d/prefix-filter.txt")"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  [ -n "$want" ] && gh issue close "$want" -R "$REPO_GH" >/dev/null 2>&1
+  if [ "$(cat "$d/create.rc")" != 0 ] || [ -z "$want" ]; then
+    verdict $c BLOCKED "the create step did not create an issue: rc=$(cat "$d/create.rc") out='$(head -c 160 "$d/create.out")' err='$(head -c 160 "$d/create.err" | tr '\n' ' ')'"
+  elif [ "$got" = "$want" ]; then
+    verdict $c REFUTED "create-issue.yaml:$lc created issue #$want and printed only its URL ($(head -c 60 "$d/create.out" | tr -d '\n')); create-issue.yaml:$lx reads the trailing integer off it → issue_id='$got'. The pre-fix 'FILTER select: number' had nothing to read ($(cat "$d/prefix-filter.txt")) and lang §5 halted the workflow there, after the issue existed"
+  else
+    verdict $c CONFIRMED "create-issue.yaml:$lx does not recover the issue number from the create output: created #$want, extracted '#${got:-(empty)}' (rc=$(cat "$d/extract.rc")) from '$(head -c 80 "$d/create.out" | tr -d '\n')'"
+  fi
+}
+
+case_r3() {  # #49 — an empty run list seconds after a push must not read as "no CI"
+  # review-finish pushes and gates in the same breath. `gh run list --branch <src>` answers
+  # [] until Actions registers the run; get-mr-pipeline reports `none`, the pre-fix
+  # check-mr-ci mapped that to no_ci, wait-for-green-ci STOPped and write-ci-status wrote
+  # ci-status.json GREEN while the run that would fail had not started.
+  local c=r3; load_lab; local d; d="$(case_dir $c)"
+  local ldef lmap lps
+  ldef="$(line_of common/check-mr-ci.yaml '- RUN: ls \.github/workflows' 1)"
+  lmap="$(run_line_of common/check-mr-ci.yaml 'defined = \(sys\.argv\[2\]')"
+  lps="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 2)"
+  [ -n "$ldef" ] && [ -n "$lmap" ] && [ -n "$lps" ] || { verdict $c BLOCKED "cannot locate the ci_defined probe ($ldef), the mapping ($lmap) or the run lookup ($lps)"; return; }
+  cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  git branch -D ci-green >/dev/null 2>&1 || true
+  git checkout -q -b ci-green main; set_outcome . pass
+  git commit -q --allow-empty -m "r3 marker $(date +%s)"
+  git push -q -f -u origin ci-green > "$d/push.log" 2>&1 || warn "push ci-green failed: $(tail -1 "$d/push.log")"
+  # ci-green carries COMPLETED runs from d2, and `gh run list --branch` answers with the
+  # newest one until the push registers its own — a stale answer, not the empty list this
+  # case is about. The probe therefore rides a branch that has never been built, which is
+  # exactly the state a story branch is in on its first dev-finish.
+  local fbr="r3-fresh-$(date +%s)"
+  git checkout -q -b "$fbr" ci-green
+  git commit -q --allow-empty -m "r3 fresh-branch marker"
+  git push -q -u origin "$fbr" >> "$d/push.log" 2>&1 || warn "push $fbr failed: $(tail -1 "$d/push.log")"
+  # --- live: what the module sees in the first seconds after that push ---
+  local t0; t0="$(date +%s)"
+  replay $c pipeline_status common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch="$fbr"
+  replay $c pipeline_status_ci_green common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green
+  replay $c ci_defined common/check-mr-ci.yaml "$ldef"
+  local ps def; ps="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; def="$(tr -d '[:space:]' < "$d/ci_defined.out")"
+  replay $c mapping common/check-mr-ci.yaml "$lmap" pipeline_status="$ps" ci_defined="$def"
+  local dt; dt=$(( $(date +%s) - t0 ))
+  local live; live="$(tr -d '[:space:]' < "$d/mapping.out")"
+  # --- deterministic: the same mapping on the two answers `none` can mean ---
+  replay $c map-none-defined  common/check-mr-ci.yaml "$lmap" pipeline_status=none ci_defined=true
+  replay $c map-none-noci     common/check-mr-ci.yaml "$lmap" pipeline_status=none ci_defined=false
+  replay $c map-failure       common/check-mr-ci.yaml "$lmap" pipeline_status=failure ci_defined=true
+  local mnd mnn mf
+  mnd="$(tr -d '[:space:]' < "$d/map-none-defined.out")"
+  mnn="$(tr -d '[:space:]' < "$d/map-none-noci.out")"
+  mf="$(tr -d '[:space:]' < "$d/map-failure.out")"
+  # the pre-fix rule over the same live answer, for the record
+  uv run --no-project python -c "
+import sys
+ps = sys.argv[1].strip()
+print('passed' if ps == 'success' else 'failed' if ps in ('failed', 'failure') else 'running' if ps in ('running', 'pending', 'queued', 'in_progress') else 'no_ci')
+" "$ps" > "$d/prefix-mapping.txt" 2>&1
+  git checkout -q main
+  git push -q origin --delete "$fbr" >/dev/null 2>&1 || true
+  git branch -D "$fbr" >/dev/null 2>&1 || true
+  { echo "push → first lookup on the never-built branch $fbr after ${dt}s: pipeline_status='$ps', ci_defined='$def' → ci_status='$live' (pre-fix rule: $(cat "$d/prefix-mapping.txt"))"
+    echo "same instant on ci-green (which already carries d2's completed runs): pipeline_status='$(tr -d '[:space:]' < "$d/pipeline_status_ci_green.out")'"
+    echo "mapping(none, defined=true)  → '$mnd' (want running)"
+    echo "mapping(none, defined=false) → '$mnn' (want no_ci)"
+    echo "mapping(failure)             → '$mf'  (want failed)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$def" != true ]; then
+    verdict $c BLOCKED "the consumer has no .github/workflows/*.yml (ci_defined='$def'), so there is no 'run not registered yet' to observe"
+  elif [ "$live" != no_ci ] && [ "$mnd" = running ] && [ "$mnn" = no_ci ] && [ "$mf" = failed ]; then
+    verdict $c REFUTED "check-mr-ci.yaml:$lmap reads an empty run list as a run that has not started: ${dt}s after pushing the never-built branch $fbr the lookup at get-mr-pipeline.yaml:$lps answered pipeline_status='$ps' and the mapping returned '$live', not no_ci (the pre-fix rule returned $(cat "$d/prefix-mapping.txt")). The discriminator is the CI definition on the branch (check-mr-ci.yaml:$ldef → '$def'): mapping(none, defined) = '$mnd' and mapping(none, undefined) = '$mnn', so a genuinely CI-less repo is still green at no cost, and a real failure is still '$mf'"
+  else
+    verdict $c CONFIRMED "check-mr-ci.yaml:$lmap still calls an unregistered run 'no CI': ${dt}s after the push pipeline_status='$ps' ci_defined='$def' → '$live'; mapping(none,true)='$mnd' (want running), mapping(none,false)='$mnn' (want no_ci), mapping(failure)='$mf' (want failed)"
+  fi
+}
+
+case_r7() {  # #53 — a title carrying a quote or $(…) must reach the tracker intact
+  # Same class as D09: the title was interpolated inside double quotes in the lookup, in a
+  # python argv and in `gh issue create --title "{title}"`. Story titles come from
+  # user-typed spec frontmatter, so a double quote split the command (syntax error → the
+  # hook halts on every dev-finish of that story) and a $(…) was EXECUTED.
+  local c=r7; load_lab; local d; d="$(case_dir $c)"; local key=r7prd
+  gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
+  local title
+  title='R7 "quoted" $(echo INJECTED) `backtick` probe '"$(date +%s)"
+  printf '%s' "$title" > /tmp/issue-title.txt
+  printf '**Sprint Key:** `r7probe`\n' > "$d/desc.md"
+  local lc; lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
+  [ -n "$lc" ] || { verdict $c BLOCKED "cannot locate the GitHub create step in create-issue.yaml"; return; }
+  # {title} is still offered to the renderer on purpose: the step must no longer NAME it,
+  # exactly as case_d9 checks for {description_body}. A render that resolved it would put
+  # the hostile text back on the command line and this case would see it.
+  $TT render-step common/create-issue.yaml "$lc" title="$title" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH" > "$d/rendered.cmd"
+  bash -n "$d/rendered.cmd" > "$d/syntax.out" 2> "$d/syntax.err"; echo $? > "$d/syntax.rc"
+  ( cd "$CONSUMER" && bash "$d/rendered.cmd" ) > "$d/create.out" 2> "$d/create.err"; echo $? > "$d/create.rc"
+  local url n; url="$(tail -1 "$d/create.out")"; n="${url##*/}"
+  case "$n" in ''|*[!0-9]*) n="";; esac
+  # raw, not --json: a JSON blob escapes the very quotes this case is about
+  if [ -n "$n" ]; then gh issue view "$n" -R "$REPO_GH" --json title --jq .title > "$d/issue-title.txt" 2>&1; else : > "$d/issue-title.txt"; fi
+  local got; got="$(cat "$d/issue-title.txt")"
+  # the command line must not carry the title at all
+  local online=0; grep -qF 'echo INJECTED' "$d/rendered.cmd" && online=1
+  # the substitution ran exactly when INJECTED shows up without its wrapper
+  local inj=0
+  grep -q INJECTED "$d/create.err" 2>/dev/null && inj=1
+  if grep -q INJECTED "$d/issue-title.txt" 2>/dev/null && ! grep -qF '$(echo INJECTED)' "$d/issue-title.txt" 2>/dev/null; then inj=1; fi
+  { echo "rendered command carries the title text? $online"
+    echo "bash -n rc=$(cat "$d/syntax.rc") $(head -c 120 "$d/syntax.err" | tr '\n' ' ')"
+    echo "create rc=$(cat "$d/create.rc") → #${n:-(none)}; err: $(head -c 160 "$d/create.err" | tr '\n' ' ')"
+    echo "title sent:  [$title]"
+    echo "title stored:[$got]"
+    echo "\$(echo INJECTED) executed? $inj"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  [ -n "$n" ] && gh issue close "$n" -R "$REPO_GH" >/dev/null 2>&1
+  rm -f /tmp/issue-title.txt
+  if [ "$(cat "$d/syntax.rc")" = 0 ] && [ "$(cat "$d/create.rc")" = 0 ] && [ -n "$n" ] \
+     && [ "$got" = "$title" ] && [ "$inj" = 0 ] && [ "$online" = 0 ]; then
+    verdict $c REFUTED "create-issue.yaml:$lc never puts the title on the command line: the render does not name {title} at all (it is read from /tmp/issue-title.txt and handed to gh as one argv element), bash -n accepts the command, and issue #$n came back with the title '[$got]' byte for byte — the literal \$(echo INJECTED), the backtick and the double quotes all survived (executed=$inj)"
+  else
+    verdict $c CONFIRMED "create-issue.yaml:$lc takes the title apart: bash -n rc=$(cat "$d/syntax.rc"), create rc=$(cat "$d/create.rc") → issue '#${n:-(none)}', title stored '[$got]' vs sent '[$title]', \$(echo INJECTED) executed=$inj, title on the command line=$online; err '$(head -c 120 "$d/create.err" | tr '\n' ' ')'"
   fi
 }
 
@@ -572,7 +792,7 @@ case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
   local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
   $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" > "$d/gitlab-loop.cmd"
   # polls_per_round replaced max_attempts when #14 split the 30-min loop into bounded rounds
-  sed 's/polls_per_round=8/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
+  sed -E 's/polls_per_round=[0-9]+/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
   log "  (a) literal GitLab round, polls_per_round=2 (≈50 s), MR !$GREEN_IID (pipeline success)…"
   ( cd "$CONSUMER_GL" && bash "$d/gitlab-loop-2.cmd" ) > "$d/gitlab-loop-2.out" 2> "$d/gitlab-loop-2.err"; echo $? > "$d/gitlab-loop-2.rc"
   sed '/STATUS=\$(uv run --no-project python -c "/a import sys' "$d/gitlab-loop-2.cmd" > "$d/gitlab-loop-2-patched.cmd"
@@ -718,6 +938,9 @@ rows = open(e2e + '/fixtures/triage-rows.md').read().rstrip()
 open(work + '/ia/spec-1-1-login-form.md', 'w').write(t.replace('@STATUS@', 'in-review').replace('@TRIAGE_ROWS@', rows))
 PY
   cp "$E2E_ROOT/fixtures/consumer/implementation-artifacts/spec-1-1-login-form.legacy-h1.md" "$1/legacy-h1.md"
+  # the status step reads sprint-status.yaml by key (#52), so the fixture needs one;
+  # @S11@ is the placeholder lab-up substitutes per scenario
+  sed 's/@S11@/backlog/' "$E2E_ROOT/fixtures/consumer/implementation-artifacts/sprint-status.yaml" > "$1/ia/sprint-status.yaml"
 }
 
 case_d21() {  # #12 — story issue titles come out empty: the 6.12.0 spec template has no H1
@@ -767,14 +990,18 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   lst="$(run_line_of common/sync-issues.yaml 'STORE: entry_status')"
   lt="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
   # both renderings lang §4.1 leaves open: "key: status" (what the interpreter does) and
-  # the bare key (what the language says a map item is)
+  # the bare key (what the language says a map item is). The KEY still comes out of the
+  # rendered item; since #52 the STATUS is read from sprint-status.yaml by that key, so
+  # the status step is replayed with {entry_key}/{implementation_artifacts}, not {entry} —
+  # which is precisely what makes the bare rendering yield 'backlog' instead of ''.
   replay $c key-pair    common/sync-issues.yaml "$lk"  entry="1-1-login-form: backlog"
-  replay $c status-pair common/sync-issues.yaml "$lst" entry="1-1-login-form: backlog"
   replay $c key-bare    common/sync-issues.yaml "$lk"  entry="1-1-login-form"
-  replay $c status-bare common/sync-issues.yaml "$lst" entry="1-1-login-form"
-  local kp sp kb sb
-  kp="$(head -1 "$d/key-pair.out")"; sp="$(head -1 "$d/status-pair.out")"
-  kb="$(head -1 "$d/key-bare.out")"; sb="$(head -1 "$d/status-bare.out")"
+  local kp kb
+  kp="$(head -1 "$d/key-pair.out")"; kb="$(head -1 "$d/key-bare.out")"
+  replay $c status-pair common/sync-issues.yaml "$lst" implementation_artifacts="$work/ia" entry_key="$kp"
+  replay $c status-bare common/sync-issues.yaml "$lst" implementation_artifacts="$work/ia" entry_key="$kb"
+  local sp sb
+  sp="$(head -1 "$d/status-pair.out")"; sb="$(head -1 "$d/status-bare.out")"
   # the derived key feeds the title step and the description file name
   replay $c title common/sync-issues.yaml "$lt" implementation_artifacts="$work/ia" entry_key="$kp"
   local title fname title_leak=0
@@ -789,16 +1016,16 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   grep -n '{entry}' "$WF/common/sync-issues.yaml" | grep -v ':[[:space:]]*#' \
     | awk -F: -v k="$((ka-1))" -v s="$((sa-1))" '$1!=k && $1!=s' > "$d/raw-entry-uses.txt" || true
   local leaks; leaks="$(grep -c . "$d/raw-entry-uses.txt")"
-  { echo "entry='1-1-login-form: backlog' → key='$kp' status='$sp'"
-    echo "entry='1-1-login-form'          → key='$kb' status='$sb'"
+  { echo "entry='1-1-login-form: backlog' → key='$kp' status='$sp' (read from $work/ia/sprint-status.yaml)"
+    echo "entry='1-1-login-form'          → key='$kb' status='$sb' (same file, same key)"
     echo "title step  → '$title' (carries ': $sp'? $title_leak)"
     echo "description file → '$fname'"
     echo "steps still rendering {entry} as a key: $leaks"; cat "$d/raw-entry-uses.txt"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
-  if [ "$kp" = "1-1-login-form" ] && [ "$sp" = "backlog" ] && [ "$kb" = "1-1-login-form" ] && [ -z "$sb" ] \
+  if [ "$kp" = "1-1-login-form" ] && [ "$sp" = "backlog" ] && [ "$kb" = "1-1-login-form" ] && [ "$sb" = "backlog" ] \
      && [ "$title_leak" = 0 ] && [ "$fname" = "/tmp/issue-desc-1-1-login-form.md" ] && [ "$leaks" = 0 ]; then
-    verdict $c REFUTED "sync-issues.yaml:$lk/$lst split the loop item once: 'key: status' → key='$kp' status='$sp', a bare 'key' → key='$kb' status='' (both renderings accepted). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
+    verdict $c REFUTED "sync-issues.yaml:$lk takes the KEY from the loop item under both renderings ('key: status' → '$kp', bare 'key' → '$kb') and sync-issues.yaml:$lst reads the STATUS from sprint-status.yaml by that key → '$sp' / '$sb' (#52: the bare rendering used to leave it empty, so the label was 'status{sep}' with nothing behind it). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
   else
-    verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
+    verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb', want 'backlog'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
   fi
 }
 
@@ -842,10 +1069,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|r3|r7|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
