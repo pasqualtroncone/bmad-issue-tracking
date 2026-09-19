@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `common/merge-mr.yaml` compared the git platform against the tracker platform with `neq`,
+  an operator the workflow language does not define (it has `ne`), on both the GitLab and the
+  GitHub branch.
 - `common/wait-for-green-ci.yaml` reported `timeout` for every running pipeline on both
   platforms: the block mapping the pipeline status onto the `ci_status` enum used `sys.argv`
   without `import sys` and sent its stderr to `/dev/null`, so the status was always empty, the

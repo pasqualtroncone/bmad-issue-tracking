@@ -34,7 +34,7 @@ print(m.get('merge_commit_sha', '') or '')
 # === GitLab — cross-platform (git remote != issue tracker) ===
 - CHECK: platform eq "gitlab"
   TRUE:
-    - CHECK: git_platform neq platform
+    - CHECK: git_platform ne platform
       TRUE:
         - RUN: glab mr merge --yes --squash={squash} -R "{git_host}/{git_project}" {mr_iid}
           STORE: gl_merge_out
@@ -64,7 +64,7 @@ print(m.get('merge_commit_sha', '') or '')
 # === GitHub — cross-platform ===
 - CHECK: platform eq "github"
   TRUE:
-    - CHECK: git_platform neq platform
+    - CHECK: git_platform ne platform
       TRUE:
         - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{git_host}/{git_owner}/{git_repo}"
           STORE: gh_merge_out
