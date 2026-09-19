@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1|r3|r7  # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7  # GitHub lab (d15/d21/d29 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -1201,15 +1201,69 @@ case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually s
   fi
 }
 
+case_d31() {  # #59 — the status label an edit adds has to exist before the edit
+  # `gh issue edit --add-label` fails on a label GitHub has never seen, and the static
+  # `status:*` labels are created by common/ensure-labels, which only issue-sync/prepare
+  # runs. A dev-finish hook on a fresh repo therefore reached the edit with no status
+  # label anywhere; the A1 interpreter improvised a `gh label create` to get past it
+  # (lang section 7 forbids improvising a CLI call). update-issue-status now INCLUDEs
+  # common/create-label for `status{sep}{new_status}` first.
+  local c=d31; load_lab; local d; d="$(case_dir $c)"
+  local st; st="d31-$(date +%s)"          # a status this repo has never carried
+  local lbl="status:$st"
+  # locators
+  local lcl led linc ledl
+  lcl="$(run_line_of common/create-label.yaml 'gh label create "\{label_name\}" -R')"
+  led="$(run_line_of common/update-issue-status.yaml 'gh issue edit \{issue_id\} --add-label')"
+  linc="$(grep -n 'INCLUDE: common/create-label' "$WF/common/update-issue-status.yaml" | head -1 | cut -d: -f1)"
+  # -F, not a regex: `{issue_id}` in a basic-regex grep opens an interval expression
+  ledl="$(grep -nF 'gh issue edit {issue_id} --add-label' "$WF/common/update-issue-status.yaml" | head -1 | cut -d: -f1)"
+  [ -n "$lcl" ] && [ -n "$led" ] || { verdict $c BLOCKED "cannot locate the create-label RUN ($lcl) or the add-label RUN ($led)"; return; }
+  # a probe issue to edit
+  local url num
+  url="$(gh issue create -R "$REPO_GH" --title "D31 probe $st" --body "d31 probe" 2>"$d/probe.err")"
+  num="${url##*/}"
+  [ -n "$num" ] || { verdict $c BLOCKED "could not create the probe issue: $(head -c 200 "$d/probe.err" | tr '\n' ' ')"; return; }
+  # control: the pre-fix path — the edit alone, on a label that does not exist
+  local prerc=0
+  gh issue edit "$num" --add-label "status:$st-pre" -R "$REPO_GH" >"$d/prefix.out" 2>"$d/prefix.err" || prerc=$?
+  echo "$prerc" > "$d/prefix.rc"
+  # the fix: the create-label step, then the edit step, both rendered from the files
+  replay $c create-label common/create-label.yaml "$lcl" label_name="$lbl" host=github.com project="$REPO_GH"
+  replay $c edit common/update-issue-status.yaml "$led" issue_id="$num" new_status="$st" sep=":" host=github.com project="$REPO_GH"
+  # what the tracker says afterwards
+  gh label list -R "$REPO_GH" --limit 300 --json name -q '.[].name' > "$d/labels.txt" 2>&1 || true
+  gh issue view "$num" -R "$REPO_GH" --json labels -q '.labels[].name' > "$d/issue-labels.txt" 2>&1 || true
+  local exists carried; exists=no; carried=no
+  grep -qxF "$lbl" "$d/labels.txt" && exists=yes
+  grep -qxF "$lbl" "$d/issue-labels.txt" && carried=yes
+  gh issue close "$num" -R "$REPO_GH" >/dev/null 2>&1 || true
+  gh label delete "$lbl" -R "$REPO_GH" --yes >/dev/null 2>&1 || true
+  { echo "fresh status: $st"
+    echo "pre-fix control (edit with no create): rc=$prerc err=$(head -c 200 "$d/prefix.err" | tr '\n' ' ')"
+    echo "create-label step rc=$(cat "$d/create-label.rc")  add-label step rc=$(cat "$d/edit.rc") err=$(head -c 200 "$d/edit.err" | tr '\n' ' ')"
+    echo "INCLUDE: common/create-label at update-issue-status.yaml:${linc:-(absent)}; the add-label RUN at :${ledl:-?}"
+    echo "label '$lbl' exists on the repo: $exists; the probe issue carries it: $carried"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ -z "$linc" ] || [ -z "$ledl" ] || [ "$linc" -gt "$ledl" ]; then
+    verdict $c CONFIRMED "update-issue-status.yaml adds 'status{sep}{new_status}' at :${ledl:-?} with no 'INCLUDE: common/create-label' before it (found at :${linc:-absent}); on a fresh repo the edit fails — the control here did, rc=$prerc"
+  elif [ "$(cat "$d/edit.rc")" != 0 ] || [ "$exists" != yes ] || [ "$carried" != yes ]; then
+    verdict $c CONFIRMED "the rendered steps did not get the label onto the issue: create-label rc=$(cat "$d/create-label.rc"), edit rc=$(cat "$d/edit.rc"), label exists=$exists, issue carries it=$carried"
+  elif [ "$prerc" = 0 ]; then
+    verdict $c BLOCKED "the control passed too: 'gh issue edit --add-label status:$st-pre' succeeded on a label that did not exist (rc=0), so this lab cannot show the defect"
+  else
+    verdict $c REFUTED "update-issue-status.yaml:${linc} INCLUDEs common/create-label before the add-label at :${ledl}. Rendered against a status this repo never had: create-label.yaml:$lcl created '$lbl' (rc=$(cat "$d/create-label.rc")) and update-issue-status.yaml:$led added it (rc=$(cat "$d/edit.rc")); the label now exists and issue #$num carries it. The same edit without the create — the pre-fix path — failed: rc=$prerc, $(head -c 120 "$d/prefix.err" | tr '\n' ' ')"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|r3|r7|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d19 d2 d18 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

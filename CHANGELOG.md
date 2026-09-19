@@ -61,6 +61,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `common/mark-mr-ready.yaml` gate their body on the positive condition, and the two
   dead post-poll guards in `common/wait-for-green-ci.yaml` are removed. The five STOPs
   left are real returns and say so.
+- A dev-finish on a fresh repository failed at the issue update. On GitHub
+  `gh issue edit --add-label` errors on a label the repository has never seen, and the
+  static `status:*` labels are created by `common/ensure-labels.yaml`, which only
+  `issue-sync/prepare.yaml` runs — so the first hook to touch an issue before any sync
+  had run hit an unknown label. `common/update-issue-status.yaml` now INCLUDEs
+  `common/create-label` for `status{sep}{new_status}` before the edit (idempotent, both
+  trackers), and the edit itself uses `{sep}` instead of a hardcoded `status:`.
 - One story could end up with two issues. `ensure-issue.yaml` and `sync-issues.yaml` each
   carried their own story-title parser and the copies had drifted: sync-issues let a title
   that already began with `Story ` through untouched, ensure-issue stripped a `Story N.M:`
