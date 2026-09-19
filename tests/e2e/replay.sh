@@ -449,6 +449,9 @@ case_gl-d16() {  # glab mr merge: stdout vs exit code
   git checkout -q -b "$br" main; echo "$br" > "$br.txt"; git add "$br.txt"; git commit -q -m "gl-d16 probe"; git push -q -u origin "$br"; git checkout -q main
   local iid; iid="$(glab mr create --title "gl-d16 probe" --description "probe" --source-branch "$br" --target-branch main -R "$GLH/$REPO_GL" --yes 2>&1 | grep -oE '/merge_requests/[0-9]+' | head -1 | grep -oE '[0-9]+$')"
   echo "mr=$iid" > "$d/mr.txt"; [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR: see mr.txt"; return; }
+  # GitLab computes mergeability asynchronously: merging while detailed_merge_status is still
+  # "checking" answers 405. Wait for the MR to settle (≤120 s) so the replay judges the merge step, not the race.
+  local t=0 ms=""; while [ $t -lt 120 ]; do ms="$(glab api "projects/$ENC/merge_requests/$iid" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; print(json.load(sys.stdin).get("detailed_merge_status",""))')"; [ "$ms" = mergeable ] && break; sleep 5; t=$((t+5)); done; echo "detailed_merge_status=$ms after ${t}s" > "$d/merge-status-wait.txt"
   local lm; lm="$(line_of common/merge-mr.yaml 'RUN: glab mr merge' 1)"
   REPLAY_CWD="$CONSUMER_GL" replay $c merge-ok common/merge-mr.yaml "$lm" squash=true host="$GLH" project="$REPO_GL" mr_iid="$iid"
   glab api "projects/$ENC/merge_requests/$iid" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; m=json.load(sys.stdin); print(m["state"], m.get("merge_commit_sha") or m.get("squash_commit_sha") or "")' > "$d/mr-state-after.txt" 2>&1
