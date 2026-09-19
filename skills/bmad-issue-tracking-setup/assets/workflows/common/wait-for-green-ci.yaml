@@ -36,6 +36,10 @@
 # all (check-mr-ci decides that from the CI definition, not from an empty run list): an
 # empty run list seconds after a push now arrives as `running`, so the rounds below wait
 # for the run instead of reporting the gate green while it is still being registered.
+# These three STOPs are returns, not halts (lang section 2.10): the caller resumes at the
+# step after `INCLUDE: common/wait-for-green-ci` with ci_status set, which is what
+# common/write-ci-status reads next. They stay because the alternative is indenting the
+# 18-round poll and its whole failure path under one more CHECK for no behavioural gain.
 - CHECK: ci_status eq "passed"
   TRUE:
     - STOP
@@ -184,13 +188,10 @@ print(int(sys.argv[1]) + 1)
 - CHECK: ci_status eq "running"
   TRUE:
     - SET: { variable: ci_status, value: "timeout" }
-# After polling — check if passed or failed
-- CHECK: ci_status eq "passed"
-  TRUE:
-    - STOP
-- CHECK: ci_status eq "no_ci"
-  TRUE:
-    - STOP
+# After polling there is nothing left to guard: `passed` and `no_ci` match neither of the
+# two CHECKs below and fall off the end of the file, back to the caller. The two
+# `-> STOP` guards that used to stand here were dead early returns, and a bare STOP is
+# exactly the step an interpreter can read as "halt the whole run" (lang section 2.10).
 # CI timed out after 30 minutes
 - CHECK: ci_status eq "timeout"
   TRUE:

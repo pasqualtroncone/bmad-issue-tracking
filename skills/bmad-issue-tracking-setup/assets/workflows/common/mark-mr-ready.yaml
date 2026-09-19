@@ -27,46 +27,49 @@ for line in content.split('\n'):
 print('yes' if all_done and epic_found else 'no')
 " {entries}
   STORE: all_epics_done
-- CHECK: all_epics_done ne "yes"
+# Not-all-epics-done is the ordinary case on every sync but the last, so it carries no
+# steps at all: the file ends and the caller goes on. The guard used to read
+# `ne "yes" -> STOP`, a bare early return that an interpreter taking lang section 2.10
+# literally turned into a halt of the whole sync.
+- CHECK: all_epics_done eq "yes"
   TRUE:
-    - STOP
-# Resolve PRD branch and default branch
-- READ: _bmad/custom/issue-tracking.yaml
-  EXTRACT:
-    prd_pattern: issue_tracking.branch_patterns.prd
-- RUN: uv run --no-project python -c "
+    # Resolve PRD branch and default branch
+    - READ: _bmad/custom/issue-tracking.yaml
+      EXTRACT:
+        prd_pattern: issue_tracking.branch_patterns.prd
+    - RUN: uv run --no-project python -c "
 import sys
 print(sys.argv[1].replace('{prd_key}', sys.argv[2]))
 " {prd_pattern} {prd_key}
-  STORE: prd_branch
-- RUN: git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'
-  STORE: default_branch
-# mr_repo (the git remote's "host/project") comes from check-config. The block that used
-# to stand here split git_project into an owner and a repo and joined them back with a
-# slash — `gh -R` takes owner/repo whole, so the round trip only produced a second name
-# for the same string, and check-config never defined the git_owner/git_repo it used.
-# Find MR/PR by source branch (atomic returns mr_iid, empty if none)
-- SET: { variable: source_branch, value: "{prd_branch}" }
-- INCLUDE: common/find-mr
-# Mark draft MR/PR ready
-- CHECK: git_platform eq "gitlab"
-  TRUE:
-    - CHECK: empty mr_iid
+      STORE: prd_branch
+    - RUN: git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'
+      STORE: default_branch
+    # mr_repo (the git remote's "host/project") comes from check-config. The block that used
+    # to stand here split git_project into an owner and a repo and joined them back with a
+    # slash — `gh -R` takes owner/repo whole, so the round trip only produced a second name
+    # for the same string, and check-config never defined the git_owner/git_repo it used.
+    # Find MR/PR by source branch (atomic returns mr_iid, empty if none)
+    - SET: { variable: source_branch, value: "{prd_branch}" }
+    - INCLUDE: common/find-mr
+    # Mark draft MR/PR ready
+    - CHECK: git_platform eq "gitlab"
       TRUE:
-        - OUTPUT:
-            message: "All epics done, but no draft MR found."
+        - CHECK: empty mr_iid
+          TRUE:
+            - OUTPUT:
+                message: "All epics done, but no draft MR found."
+          FALSE:
+            - RUN: glab mr update {mr_iid} --ready -R "{mr_repo}"
+              EXPECT_EXIT: 0
+            - OUTPUT:
+                message: "All epics done — draft MR marked as ready for review."
       FALSE:
-        - RUN: glab mr update {mr_iid} --ready -R "{mr_repo}"
-          EXPECT_EXIT: 0
-        - OUTPUT:
-            message: "All epics done — draft MR marked as ready for review."
-  FALSE:
-    - CHECK: empty mr_iid
-      TRUE:
-        - OUTPUT:
-            message: "All epics done, but no draft PR found."
-      FALSE:
-        - RUN: gh pr ready {mr_iid} -R "{mr_repo}"
-          EXPECT_EXIT: 0
-        - OUTPUT:
-            message: "All epics done — draft PR marked as ready for review."
+        - CHECK: empty mr_iid
+          TRUE:
+            - OUTPUT:
+                message: "All epics done, but no draft PR found."
+          FALSE:
+            - RUN: gh pr ready {mr_iid} -R "{mr_repo}"
+              EXPECT_EXIT: 0
+            - OUTPUT:
+                message: "All epics done — draft PR marked as ready for review."

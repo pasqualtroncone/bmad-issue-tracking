@@ -11,9 +11,11 @@
 - READ: {planning_artifacts}/prd.md
   EXTRACT:
     prd_key: frontmatter.prd_key
+# Only the FAILURE branch does anything: prd_key present is the happy path and simply
+# falls off the end of the file, back to the caller. The TRUE branch used to hold a bare
+# `- STOP` meaning "return early", which an interpreter reading lang section 2.10 as
+# "halt everything" turned into a dead sync.
 - CHECK: exists prd_key
-  TRUE:
-    - STOP
   FALSE:
     - OUTPUT:
         message: "prd_key not found in {planning_artifacts}/prd.md frontmatter. Run /bmad-issue-tracking-setup to configure the PRD, or add 'prd_key:' to the PRD frontmatter."

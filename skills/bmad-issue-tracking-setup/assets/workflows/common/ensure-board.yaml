@@ -5,27 +5,28 @@
 # Output variables: (none)
 # Side effects: creates board and columns on GitLab; skipped on GitHub
 
-# GitHub: skip (uses Projects, not issue boards)
-- CHECK: platform ne "gitlab"
+# GitHub uses Projects, not issue boards, so the whole file is one GitLab branch. The
+# guard used to read `platform ne "gitlab" -> STOP`, a bare early return in a file that is
+# only ever INCLUDEd; read as lang section 2.10's literal "halt", it ended the entire sync
+# on GitHub at prepare step 2.
+- CHECK: platform eq "gitlab"
   TRUE:
-    - STOP
-
-# Check if BMAD Sprint Board already exists
-- RUN: glab api "projects/{project_enc}/boards" --hostname {host} | uv run --no-project python -c "
+    # Check if BMAD Sprint Board already exists
+    - RUN: glab api "projects/{project_enc}/boards" --hostname {host} | uv run --no-project python -c "
 import json, sys
 boards = json.load(sys.stdin)
 print(next((b['id'] for b in boards if b['name'] == 'BMAD Sprint Board'), ''))
 "
-  STORE: board_id
-  PLATFORM: gitlab
-- CHECK: empty board_id
-  TRUE:
-    - RUN: glab api --method POST "projects/{project_enc}/boards" --hostname {host} -f "name=BMAD Sprint Board" | uv run --no-project python -c "import json,sys; print(json.load(sys.stdin)['id'])"
       STORE: board_id
       PLATFORM: gitlab
+    - CHECK: empty board_id
+      TRUE:
+        - RUN: glab api --method POST "projects/{project_enc}/boards" --hostname {host} -f "name=BMAD Sprint Board" | uv run --no-project python -c "import json,sys; print(json.load(sys.stdin)['id'])"
+          STORE: board_id
+          PLATFORM: gitlab
 
-# Add columns for active status labels (omit done/closed/deferred/optional)
-- RUN: glab api "projects/{project_enc}/labels" --hostname {host} --paginate | uv run --no-project python -c "
+    # Add columns for active status labels (omit done/closed/deferred/optional)
+    - RUN: glab api "projects/{project_enc}/labels" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys, re
 pages = sys.stdin.read().strip().split('\n')
 labels = []
@@ -36,11 +37,11 @@ for l in labels:
     if re.match(r'status{sep}(backlog|ready-for-dev|in-progress|review)$', l['name']):
         print(l['id'])
 "
-  STORE: status_label_ids
-  PLATFORM: gitlab
-- LOOP:
-    items: status_label_ids
-    as: label_id
-    do:
-      - RUN: glab api --method POST "projects/{project_enc}/boards/{board_id}/lists" --hostname {host} -f "label_id={label_id}" 2>/dev/null || true
-        PLATFORM: gitlab
+      STORE: status_label_ids
+      PLATFORM: gitlab
+    - LOOP:
+        items: status_label_ids
+        as: label_id
+        do:
+          - RUN: glab api --method POST "projects/{project_enc}/boards/{board_id}/lists" --hostname {host} -f "label_id={label_id}" 2>/dev/null || true
+            PLATFORM: gitlab
