@@ -27,7 +27,13 @@ parts = key.split('-')
 print(parts[1])
 " {retro_key}
   STORE: epic_number
-# Write description file (retrospective document content)
+# Write description file (retrospective document content).
+# The **Sprint Key** line is the identity every producer writes and common/find-issue
+# selects on for a key-shaped search: sync-issues looks this issue up as
+# `epic-{n}-retrospective`, and without the marker it found nothing and counted the
+# retrospective as created on every sync, never reconciling its status label. The key is
+# composed from epic_number rather than reused from retro_key because retro_key comes out
+# of the FILTER with trailing whitespace (hence the rstrip() above).
 - RUN: uv run --no-project python -c "
 import sys
 with open(sys.argv[1], 'r', encoding='utf-8') as f:
@@ -36,7 +42,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
   STORE: retrospective_content
 - WRITE:
     file: /tmp/retro-desc.md
-    content: "**Epic:** {epic_number}\n\n---\n\n{retrospective_content}"
+    content: "**Sprint Key:** `epic-{epic_number}-retrospective`\n**Epic:** {epic_number}\n\n---\n\n{retrospective_content}"
     mode: overwrite
 # Create the issue
 - SET: { variable: title, value: "Retrospective: Epic {epic_number}" }

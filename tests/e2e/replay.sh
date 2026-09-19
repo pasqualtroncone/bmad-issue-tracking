@@ -3,7 +3,7 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21 are local)
-#   replay.sh g06|g10|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
+#   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
 # Each case replays the RUN command exactly as written in the workflow file (rendered by
@@ -569,6 +569,49 @@ case_gl-d4() {  # glab api --paginate | json.load
   else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") rows=$(grep -c . "$d/bulk-fetch.out") $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
 }
 
+case_d26() {  # #36 — the retrospective issue carries no **Sprint Key** marker, so sync never finds it
+  local c=d26; gl_setup $c || return; local d; d="$(case_dir $c)"
+  # (a) rendering: the description retrospective/complete.yaml WRITEs for epic 1.
+  # The WRITE content is a double-quoted YAML scalar, so the raw line carries literal \n —
+  # printf '%b' expands them the way the runtime does before the file reaches the tracker.
+  local tmpl; tmpl="$(sed -n 's/^ *content: "\(.*\)"$/\1/p' "$WF/retrospective/complete.yaml" | head -1)"
+  printf '%b\n' "$(render "$tmpl" epic_number=1 retrospective_content="What went well: the lab.")" > "$d/retro-desc.md"
+  # the pre-fix shape of the same description, as the control the search cannot find
+  printf '%b\n' "$(render '**Epic:** {epic_number}\n\n---\n\n{retrospective_content}' epic_number=9 retrospective_content="What went well: the lab.")" > "$d/retro-desc-nomarker.md"
+  cat "$d/retro-desc.md" "$d/retro-desc-nomarker.md" >&2
+  local marker='**Sprint Key:** `epic-1-retrospective`'
+  local has_marker=0; grep -qF "$marker" "$d/retro-desc.md" && has_marker=1
+  # (b) the two issues, shaped exactly like the hook writes them (title + prd label + body)
+  gl_issue_desc() {  # gl_issue_desc <title> <desc-file> → iid (create, or overwrite the body)
+    local iid
+    iid="$(glab api "projects/$ENC/issues?labels=prd::$PRD_KEY&state=all&per_page=100" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; d=json.load(sys.stdin); print(next((str(i["iid"]) for i in d if i["title"]==sys.argv[1]), ""))' "$1")"
+    if [ -n "$iid" ]; then
+      glab api --method PUT "projects/$ENC/issues/$iid" --hostname "$GLH" -F "description=@$2" >/dev/null
+    else
+      iid="$(glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=$1" -F "description=@$2" -f "labels=prd::$PRD_KEY" | uv run --no-project python -c 'import json,sys; print(json.load(sys.stdin)["iid"])')"
+    fi
+    echo "$iid"
+  }
+  local want ctrl_iid
+  want="$(gl_issue_desc "Retrospective: Epic 1" "$d/retro-desc.md")"
+  ctrl_iid="$(gl_issue_desc "Retrospective: Epic 9" "$d/retro-desc-nomarker.md")"
+  echo "seeded !$want (with marker) and !$ctrl_iid (pre-fix body)" | tee "$d/seeded.txt" >&2
+  sleep 5
+  # (c) the selection step sync-issues reaches, with the key-shaped search_text it passes
+  local lf; lf="$(line_of common/find-issue.yaml 'glab api' 1)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-retro    common/find-issue.yaml "$lf" search_text="epic-1-retrospective" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c find-nomarker common/find-issue.yaml "$lf" search_text="epic-9-retrospective" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
+  local got ctrl; got="$(tr -d '[:space:]' < "$d/find-retro.out")"; ctrl="$(tr -d '[:space:]' < "$d/find-nomarker.out")"
+  { echo "marker in the rendered description: $has_marker"
+    echo "search 'epic-1-retrospective' (marker present, !$want) → '${got:-(empty)}'"
+    echo "search 'epic-9-retrospective' (pre-fix body, !$ctrl_iid) → '${ctrl:-(empty)}'"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$has_marker" = 1 ] && [ "$got" = "$want" ] && [ -z "$ctrl" ]; then
+    verdict $c REFUTED "retrospective/complete.yaml writes the same identity every other producer writes: the rendered description carries '$marker', and find-issue.yaml:$lf selects !$got for the key-shaped search_text 'epic-1-retrospective' that sync-issues passes. The pre-fix body (!$ctrl_iid, '**Epic:** 9' and nothing else) is invisible to 'epic-9-retrospective' → '${ctrl:-(empty)}', which is what every sync saw: the retrospective counted as created each time and its status label never reconciled"
+  else
+    verdict $c CONFIRMED "the retrospective issue cannot be found by its key: marker present in the rendered description? $has_marker; find-issue.yaml:$lf on 'epic-1-retrospective' → '${got:-(empty)}' (want !$want); control on the pre-fix body → '${ctrl:-(empty)}' (want empty). create-issue adopts it by exact title, so there is no duplicate — only a sync that never reconciles it"
+  fi
+}
+
 case_g10() {
   local c=g10; local d; load_lab 2>/dev/null || true; d="$(mkdir -p "$E2E_ROOT/evidence/${LAB_ID:-static}/g10" && echo "$E2E_ROOT/evidence/${LAB_ID:-static}/g10")"
   # rendering proof: cross-platform (issues on GitHub, code on GitLab) — which repo do the MR atomics hit?
@@ -696,8 +739,8 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
-    gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d03; do log "=== $k"; "case_$k"; done;;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
     all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21; do log "=== $k"; "case_$k"; done;;

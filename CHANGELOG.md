@@ -139,6 +139,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `common/merge-mr.yaml`, `common/wait-for-green-ci.yaml` and `common/get-failed-jobs.yaml` now
   carry no `PLATFORM:` annotation and are selected by `git_platform` alone; the rule is written
   down in `bmad-workflow-lang.md` §2.4 and enforced by `tests/test_platform_coverage.py`.
+- Issue sync never recognised the retrospective issue it had created: the description written by
+  `retrospective/complete.yaml` lacked the ``**Sprint Key:** `epic-<n>-retrospective` `` marker
+  every other producer writes, and a key-shaped lookup selects on exactly that marker. There was
+  no duplicate — `common/create-issue.yaml` adopts the issue by its exact title — but every sync
+  counted the retrospective as newly created and left its status label unreconciled.
 
 ## [3.0.0] - 2026-09-15
 
