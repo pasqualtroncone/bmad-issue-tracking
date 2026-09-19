@@ -76,6 +76,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `common/find-issue.yaml` and `common/create-issue.yaml` now pass the search text as a `-f`
   request field (`--method GET`), which both CLIs percent-encode, and the GitHub search runs
   under `set -o pipefail` so a failed `gh api` can no longer be read as "no issue found".
+- Issue sync broke on a PRD with more than 100 issues: `gh api --paginate` and
+  `glab api --paginate` concatenate the pages with no separator, so `json.load` raised
+  `JSONDecodeError: Extra data` on the second page. The bulk fetches in `common/sync-issues.yaml`
+  and the GitHub search in `common/find-issue.yaml` now read the stream with
+  `json.JSONDecoder().raw_decode`, which accepts any number of pages.
 
 ## [3.0.0] - 2026-09-15
 

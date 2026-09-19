@@ -426,7 +426,7 @@ case_gl-d4() {  # glab api --paginate | json.load
   glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d objects=%d" % (len(s), s.count(chr(10)), s.count("[{")))' > "$d/paginate-shape.txt" 2>&1; cat "$d/paginate-shape.txt" >&2
   local l; l="$(line_of common/sync-issues.yaml 'glab api "projects' 1)"
   REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/sync-issues.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
-  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path: glab api --paginate yields one parseable document ($(cat "$d/paginate-shape.txt")); $(grep -c . "$d/bulk-fetch.out") rows; D04 is GitHub-only"
+  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: rc=0, $(grep -c . "$d/bulk-fetch.out") rows ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step parsed them anyway"
   else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") rows=$(grep -c . "$d/bulk-fetch.out") $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
 }
 
