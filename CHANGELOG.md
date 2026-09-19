@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `tests/conftest.py` dropped every step of `common/sync-issues.yaml` that follows the first
+  `    else:` line of a `python -c` body: the parser accepted any indented `word:` line as a
+  YAML sub-field, so the command body ended the enclosing `do:` block and 52 steps — the
+  whole status-mapping and issue-creation nest, `sync-issues.yaml:316` among them — were
+  invisible to every test in the suite. Steps now come out of a recursive scan of the file
+  itself, so nested steps also report FILE-relative line numbers instead of branch-relative
+  ones, and `RUN: |` bodies are captured (as `block_scalar`) for the checks that need them.
 - `{spec_file}` is read by `common/post-build-dispatch.yaml`, `common/ensure-issue.yaml` and
   `common/post-dev-complete.yaml` but was absent from the predefined-variables table in
   `assets/bmad-workflow-lang.md` §4.4, so by §4.5 the spec said those workflows stop on an

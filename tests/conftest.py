@@ -33,127 +33,185 @@ PREDEFINED_VARS = {
     "branch_patterns",
 }
 
-# Regex: matches a top-level YAML step "- STEP_TYPE:" at column 0 or 2
+# Regex: matches a YAML step "- STEP_TYPE:" at any indentation
 STEP_RE = re.compile(r"^(\s*)- (\w+):\s*(.*)")
 
+# The sub-field and branch keys a step may carry. The set is CLOSED on purpose: the
+# previous parser accepted any `^\s+\w+:` line as a sub-field, so a `python -c` body
+# line such as `    else:` (sync-issues.yaml) or `    try:` (merge-mr.yaml) read as one.
+# That ended the enclosing `do:` block in the middle of a command body and made every
+# step after it — the whole LOOP -> CHECK -> RUN nest, including the `sync_created`
+# increment — invisible to flatten_steps, so no test ever inspected them.
+SUBFIELD_KEYS = (
+    "EXTRACT", "STORE", "EXPECT_EXIT", "CAPTURE", "PLATFORM", "FILTER",
+    "TRUE", "FALSE", "do", "items", "as",
+    "message", "stop", "store", "file", "content", "mode",
+    "source", "select", "where",
+)
+SUBFIELD_RE = re.compile(r"^(\s+)(" + "|".join(SUBFIELD_KEYS) + r"):\s*(.*)$")
 
-def _is_top_level_step(line, base_indent):
-    """Check if a line is a top-level step (not nested inside CHECK/LOOP)."""
+# Which sub-field keys hold a nested step list, per step type.
+BRANCH_KEYS = {"CHECK": ("TRUE", "FALSE"), "LOOP": ("do",)}
+
+
+def _quote_open(text):
+    """True while an unescaped `"` opened by `python -c "` is still unclosed.
+
+    Everything up to the closing quote belongs to the command body, including lines
+    that look like YAML (`    else:`) and column-0 `#` comments.
+    """
+    return (text.count('"') - text.count('\\"')) % 2 == 1
+
+
+def _is_step_line(line, max_indent):
+    """The `- TYPE:` match when `line` starts a step at indent <= max_indent."""
     m = STEP_RE.match(line)
-    if not m:
-        return None
-    indent = len(m.group(1))
-    # Top-level steps have the same or less indentation than the base
-    if indent <= base_indent:
+    if m and m.group(2) in VALID_STEP_TYPES and len(m.group(1)) <= max_indent:
         return m
     return None
 
 
-def _parse_steps_from_lines(lines, base_indent=0):
-    """Parse top-level steps from raw YAML lines.
+def _skippable(line):
+    return (not line.strip()) or line.lstrip().startswith("#")
 
-    Args:
-        lines: list of raw YAML lines
-        base_indent: expected indentation for top-level steps (0 for root, 2 for nested)
 
-    Returns list of dicts, one per step. Each dict has:
-      - 'type': the step type keyword
-      - 'raw_value': the raw string value after the colon (first line only)
-      - 'block': list of (indent, key, value) tuples for sub-fields
-      - 'start_line': 0-based line number
+def _parse_step(lines, i, indent):
+    """Parse the step starting at lines[i]; return (step, next_index).
+
+    `start_line` is a 0-based FILE line at every nesting depth: the parser walks the
+    file itself instead of re-splitting a captured branch string, so a nested step no
+    longer reports a line number relative to its branch.
     """
+    m = STEP_RE.match(lines[i])
+    step_type, raw_value = m.group(2), m.group(3).strip()
+    start_line = i
+    block = []          # (indent, key, value)
+    children = {}
+    cur = None          # index in `block` of the sub-field taking continuation lines
+    i += 1
+    block_scalar = ""
+    if raw_value == "|":
+        # A `RUN: |` body is kept OUT of raw_value — it is a bash script and shell
+        # variables are the point there, which is the exemption
+        # test_no_unresolved_shell_vars has always relied on. It is still captured, in
+        # `block_scalar`, so the checks that must see every `python -c` body (the
+        # import-sys one) reach the pipelines written inside a block.
+        block_scalar, i = _parse_block_scalar(lines, i, indent)
+    else:
+        # A `python -c "` body runs to its closing quote.
+        while i < len(lines) and _quote_open(raw_value):
+            raw_value += "\n" + lines[i].rstrip()
+            i += 1
+    while i < len(lines):
+        line = lines[i]
+        if _skippable(line):
+            i += 1
+            continue
+        if _is_step_line(line, indent):
+            break
+        fm = SUBFIELD_RE.match(line)
+        if fm and len(fm.group(1)) <= indent:
+            # A key of an ENCLOSING step: the `FALSE:` that follows a `TRUE:` branch
+            # sits two columns left of the branch's own items. Taking it as a
+            # continuation line swallowed the whole else-branch.
+            break
+        if fm and len(fm.group(1)) > indent:
+            key_indent, key, value = len(fm.group(1)), fm.group(2), fm.group(3).strip()
+            if cur is not None and key_indent > block[cur][0]:
+                # A key nested inside the current sub-field (EXTRACT body, LOOP FILTER).
+                ci, ck, cv = block[cur]
+                block[cur] = (ci, ck, cv + "\n" + line.rstrip())
+                i += 1
+                continue
+            if not value and key in BRANCH_KEYS.get(step_type, ()):
+                block.append((key_indent, key, ""))
+                cur = None
+                children[key], i = _parse_branch(lines, i + 1, key_indent)
+                continue
+            block.append((key_indent, key, value))
+            cur = len(block) - 1
+            i += 1
+            continue
+        if cur is not None:
+            ci, ck, cv = block[cur]
+            block[cur] = (ci, ck, cv + "\n" + line.rstrip())
+        i += 1
+    step = {
+        "type": step_type,
+        "raw_value": raw_value,
+        "block_scalar": block_scalar,
+        "block": block,
+        "start_line": start_line,
+    }
+    if step_type in BRANCH_KEYS:
+        step["children"] = children
+    return step, i
+
+
+def _parse_block_scalar(lines, i, indent):
+    """Read a `RUN: |` body; return (dedented text, next_index).
+
+    The body is every following line indented deeper than the first one that is not
+    blank; a sub-field (`STORE:`, two columns in from the `- RUN:` item) ends it.
+    """
+    body = []
+    while i < len(lines):
+        line = lines[i]
+        if _is_step_line(line, indent):
+            break
+        fm = SUBFIELD_RE.match(line)
+        if fm and len(fm.group(1)) <= indent + 2:
+            break
+        body.append(line)
+        i += 1
+    while body and not body[-1].strip():
+        body.pop()
+    # Dedent by the shallowest line, never by the item's own column: a `python -c "`
+    # heredoc inside the block puts its body at column 0 and cutting that off would
+    # delete the very lines this capture exists for.
+    ind = min((len(l) - len(l.lstrip()) for l in body if l.strip()), default=0)
+    return "\n".join(l[ind:] if l.strip() else "" for l in body), i
+
+
+def _parse_branch(lines, i, key_indent):
+    """Parse the step list of a TRUE/FALSE/do branch whose key sits at key_indent."""
+    j = i
+    while j < len(lines) and _skippable(lines[j]):
+        j += 1
+    if j >= len(lines):
+        return [], j
+    m = STEP_RE.match(lines[j])
+    if not m or m.group(2) not in VALID_STEP_TYPES or len(m.group(1)) <= key_indent:
+        return [], i
+    return _parse_block(lines, i, len(m.group(1)))
+
+
+def _parse_block(lines, i, indent):
+    """Parse consecutive steps written as list items at exactly `indent`."""
+    steps = []
+    while i < len(lines):
+        if _skippable(lines[i]):
+            i += 1
+            continue
+        m = STEP_RE.match(lines[i])
+        if not m or m.group(2) not in VALID_STEP_TYPES or len(m.group(1)) != indent:
+            break
+        step, i = _parse_step(lines, i, indent)
+        steps.append(step)
+    return steps, i
+
+
+def _parse_steps_from_lines(lines, base_indent=0):
+    """Parse a whole workflow file into a step tree with file-relative line numbers."""
     steps = []
     i = 0
     while i < len(lines):
-        m = _is_top_level_step(lines[i], base_indent)
-        if m:
-            step_type = m.group(2)
-            raw_value = m.group(3).strip()
-            start_line = i
-            block = []
-            i += 1
-            # Collect sub-fields (indented under the step)
-            while i < len(lines):
-                line = lines[i]
-                # Check for next top-level step
-                next_m = _is_top_level_step(line, base_indent)
-                if next_m and next_m.group(2) in {
-                    "INCLUDE", "READ", "FILTER", "RUN", "OUTPUT", "WRITE",
-                    "CHECK", "LOOP", "SET", "STOP", "CD",
-                }:
-                    break
-                if not line.strip() or line.strip().startswith("#"):
-                    i += 1
-                    continue
-                # Sub-field: "  KEY: value" (indented under the step)
-                sub_m = re.match(r"^(\s+)(\w+):\s*(.*)", line)
-                if sub_m:
-                    sub_indent = len(sub_m.group(1))
-                    block.append((sub_indent, sub_m.group(2), sub_m.group(3).strip()))
-                    i += 1
-                    # Collect continuation lines
-                    while i < len(lines):
-                        cl = lines[i]
-                        if not cl.strip() or cl.strip().startswith("#"):
-                            i += 1
-                            continue
-                        # New sub-field at same indent
-                        nm = re.match(r"^(\s+)(\w+):", cl)
-                        if nm and len(nm.group(1)) <= sub_indent:
-                            break
-                        # Next top-level step
-                        next_m2 = _is_top_level_step(cl, base_indent)
-                        if next_m2:
-                            break
-                        if block:
-                            _, key, val = block[-1]
-                            block[-1] = (sub_indent, key, val + "\n" + cl.rstrip())
-                        i += 1
-                else:
-                    # Continuation of a `uv run python -c "..."` body. Keep the
-                    # full body in raw_value so tests can inspect it. Other
-                    # multi-line blocks (e.g. `RUN: |` bash scripts with shell
-                    # vars) stay as-is and are not captured.
-                    if "python -c" in raw_value:
-                        raw_value += "\n" + line.rstrip()
-                    i += 1
-            steps.append({
-                "type": step_type,
-                "raw_value": raw_value,
-                "block": block,
-                "start_line": start_line,
-            })
+        if _is_step_line(lines[i], base_indent):
+            step, i = _parse_step(lines, i, base_indent)
+            steps.append(step)
         else:
             i += 1
     return steps
-
-
-def _parse_branches(step, parent_base_indent):
-    """Recursively parse CHECK TRUE/FALSE and LOOP do branches into children."""
-    if step["type"] not in ("CHECK", "LOOP"):
-        return
-    children = {}
-    branch_keys = {"TRUE", "FALSE"} if step["type"] == "CHECK" else {"do"}
-    for _, key, value in step["block"]:
-        if key not in branch_keys or not value:
-            continue
-        branch_lines = value.lstrip("\n").split("\n")
-        branch_lines = [l for l in branch_lines if l.strip()]
-        if not branch_lines:
-            children[key] = []
-            continue
-        # Detect base indent from first step-like line
-        branch_base_indent = parent_base_indent + 2
-        for line in branch_lines:
-            m = STEP_RE.match(line)
-            if m:
-                branch_base_indent = len(m.group(1))
-                break
-        parsed = _parse_steps_from_lines(branch_lines, branch_base_indent)
-        for child_step in parsed:
-            _parse_branches(child_step, branch_base_indent)
-        children[key] = parsed
-    step["children"] = children
 
 
 def flatten_steps(steps):
@@ -246,8 +304,6 @@ def load_all_workflows():
             content = f.read()
         lines = content.split("\n")
         steps = _parse_steps_from_lines(lines)
-        for step in steps:
-            _parse_branches(step, 0)
         workflows[str(rel)] = {
             "path": yaml_file,
             "rel": str(rel),
@@ -265,8 +321,6 @@ def load_workflow(rel_path):
         content = f.read()
     lines = content.split("\n")
     steps = _parse_steps_from_lines(lines)
-    for step in steps:
-        _parse_branches(step, 0)
     return {
         "path": full,
         "rel": rel_path,
