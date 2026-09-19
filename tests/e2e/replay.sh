@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d16|d19|d9   # GitHub lab
+#   replay.sh d17|d18|d2|d4|d7|d8|d16|d19|d24|d9   # GitHub lab
 #   replay.sh g06|g10               # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -42,9 +42,12 @@ case_static() {
   # S1 neq
   item="$(grep -n ' neq ' "$WF/common/merge-mr.yaml")"; say '```'; say "$item"; say '```'
   if [ -n "$item" ] && ! grep -q '`neq`' "$ASSETS/bmad-workflow-lang.md"; then mark S1 CONFIRMED "merge-mr.yaml uses 'neq' $(printf '%s\n' "$item" | wc -l)×; the language table (lang §3) defines only 'ne'"; else mark S1 REFUTED "neq absent or defined"; fi
-  # S2 create-issue indentation
-  item="$(sed -n 36,42p "$WF/common/create-issue.yaml")"; say '```'; say "$item"; say '```'
-  if sed -n 36p "$WF/common/create-issue.yaml" | grep -q '^    - CHECK: empty issue_id' && sed -n 37p "$WF/common/create-issue.yaml" | grep -q '^    TRUE:'; then mark S2 CONFIRMED "create-issue.yaml:36-42 TRUE:/FALSE: sit at the same indent as '- CHECK' (not under it); both branches STOP so behaviour survives by luck"; else mark S2 REFUTED "indentation is regular"; fi
+  # S2 create-issue indentation — the block is located by grep, not by a fixed line number:
+  # it moved from 36-42 to 62-68 when the GitHub lookup became a parsing RUN (#2/#33) and a
+  # hardcoded `sed -n 36,42p` would have quietly reported REFUTED for the wrong reason.
+  local s2l; s2l="$(grep -n '^    - CHECK: empty issue_id' "$WF/common/create-issue.yaml" | head -1 | cut -d: -f1)"
+  item="$(sed -n "${s2l:-1},$(( ${s2l:-1} + 6 ))p" "$WF/common/create-issue.yaml")"; say '```'; say "$item"; say '```'
+  if [ -n "$s2l" ] && sed -n "$((s2l+1))p" "$WF/common/create-issue.yaml" | grep -q '^    TRUE:'; then mark S2 CONFIRMED "create-issue.yaml:$s2l-$((s2l+6)) TRUE:/FALSE: sit at the same indent as '- CHECK' (not under it); both branches STOP so behaviour survives by luck"; else mark S2 REFUTED "indentation is regular"; fi
   # S3 env vars in sync SKILL.md
   local envs; envs="$(grep -c 'BMAD_[A-Z_]*ACTION' "$MOD/skills/bmad-issue-tracking-sync/SKILL.md")"; local inwf; inwf="$(grep -rl 'BMAD_MR_ACTION\|BMAD_ISSUE_ACTION' "$WF" | wc -l)"
   say "sync SKILL.md references BMAD_*_ACTION env vars on $envs lines; workflow files reading them: $inwf"
@@ -134,21 +137,27 @@ case_d2() {
   local c=d2; load_lab; local d; d="$(case_dir $c)"
   cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
   git branch -D ci-green ci-red >/dev/null 2>&1 || true
+  # t0 discards the completed runs a previous d2 left on these branches (see wait_run)
+  local t0; t0="$(date -u +%FT%TZ)"
   git checkout -q -b ci-green main; set_outcome . pass; git commit -q --allow-empty -m "ci-green marker"; git push -q -f -u origin ci-green
-  log "  waiting for ci-green run…"; echo "ci-green: $(wait_run ci-green)" | tee "$d/runs.txt" >&2
+  log "  waiting for ci-green run…"; echo "ci-green: $(wait_run ci-green 600 "$t0")" | tee "$d/runs.txt" >&2
   git checkout -q -b ci-red main; set_outcome . fail; git push -q -f -u origin ci-red
-  log "  waiting for ci-red run…"; echo "ci-red: $(wait_run ci-red)" | tee -a "$d/runs.txt" >&2
+  log "  waiting for ci-red run…"; echo "ci-red: $(wait_run ci-red 600 "$t0")" | tee -a "$d/runs.txt" >&2
   git checkout -q ci-green
   gh run list -R "$REPO_GH" --limit 3 --json headBranch,conclusion,createdAt,databaseId > "$d/gh-run-list.json"
-  local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml 'gh run list' 1)"; l2="$(line_of common/get-mr-pipeline.yaml 'gh run list' 2)"
-  replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" host=github.com project="$REPO_GH"
-  replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" host=github.com project="$REPO_GH"
+  # locator: anchored on '- RUN:' — the fixed step now carries a '# … gh run list …' comment
+  # above it, which a bare 'gh run list' grep would return as step 1.
+  # variables: the step reads {mr_repo}/{source_branch} (set by check-mr-ci) where it used to
+  # read {host}/{project} and no branch at all.
+  local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml '^- RUN: gh run list' 1)"; l2="$(line_of common/get-mr-pipeline.yaml '^- RUN: gh run list' 2)"
+  replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green
+  replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green
   gh run list -R "$REPO_GH" --branch ci-green --limit 1 --json conclusion,headBranch,databaseId > "$d/control-branch-filter.json"
   local got ctrl; got="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; ctrl="$(uv run --no-project python -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["conclusion"])' "$d/control-branch-filter.json")"
   git checkout -q main
   if [ "$got" = failure ] && [ "$ctrl" = success ]; then
     verdict $c CONFIRMED "on branch ci-green (CI green) get-mr-pipeline.yaml:$l2 'gh run list --limit 1' reports pipeline_status=$got — the latest run of the WHOLE repo (ci-red); with --branch ci-green it is $ctrl. Same shape in wait-for-green-ci.yaml (poll + failure path)"
-  else verdict $c REFUTED "got=$got control=$ctrl (see runs.txt)"; fi
+  else verdict $c REFUTED "got=$got control=$ctrl (see runs.txt) — on branch ci-green get-mr-pipeline.yaml:$l2 reads the run of THAT branch ('--branch ci-green -R mr_repo'), not the repo's newest run (ci-red)"; fi
 }
 
 case_d4() {
@@ -223,7 +232,9 @@ case_d16() {
   git checkout -q -b "$br" main; echo "$br" > "$br.txt"; git add "$br.txt"; git commit -q -m "d16 probe"; git push -q -u origin "$br"
   local url; url="$(gh pr create --title "d16 probe" --body "probe PR for D16 (merge exit code vs stdout)" --base main --head "$br" -R "$REPO_GH")"; echo "$url" > "$d/pr-url.txt"
   local n="${url##*/}"; git checkout -q main
-  local lm; lm="$(line_of common/merge-mr.yaml 'gh pr merge' 1)"
+  # locator anchored on 'RUN:' — the file header now names `gh pr merge` while explaining why
+  # its stdout cannot be the signal, and a bare grep would return that comment as step 1
+  local lm; lm="$(line_of common/merge-mr.yaml 'RUN: gh pr merge' 1)"
   # positive: merge succeeds — capture stdout and stderr separately, exactly as STORE would (stdout only)
   replay $c merge-ok common/merge-mr.yaml "$lm" mr_iid="$n" host=github.com project="$REPO_GH"
   gh pr view "$n" -R "$REPO_GH" --json state,mergedAt --jq '.state + " " + (.mergedAt // "")' > "$d/pr-state-after.txt"
@@ -280,6 +291,51 @@ case_d19() {
     verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) is a fuzzy search with no title check: search_text '1-1-login-form' returns $n11 issues ($(titles "$d/find-1-1.out" | cut -d' ' -f2- | tr '\n' ';')) and the FILTER takes item 0 — whichever the search index ranks first. Search-index latency measured ≈${t}s (first run: 5 s) → an issue created seconds earlier can be invisible to the next find-issue"
   elif [ "$n11" = 0 ] && [ "$ne1" = 0 ]; then verdict $c BLOCKED "search returned nothing (rc=$(cat "$d/find-1-1.rc"); see summary.txt) — label qualifier or index"
   else verdict $c REFUTED "exact hits only: 1-1→$n11, Epic 1→$ne1 (latency ${t}s; PRD rc=$(cat "$d/find-prd.rc"))"; fi
+}
+
+case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not exist yet
+  # Before the fix there was nothing to replay at level 1: the step was a bare
+  # `gh api repos/.../issues --paginate` and the decision was a FILTER `where: title matches`.
+  # Its no-match behaviour is a language rule, not a command: lang §5 "FILTER no match on
+  # where → Stop workflow", confirmed live by scenario A1 (the hook halted on the first
+  # story issue) and reported as #2. #33 is the second half: past 100 issues `--paginate`
+  # hands the FILTER concatenated JSON documents it cannot parse.
+  local c=d24; load_lab; local d; d="$(case_dir $c)"; local key=d24prd
+  gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
+  gh issue list -R "$REPO_GH" --state all --label "prd:$key" --json title --jq '.[].title' | grep -qxF "PRD: $key" \
+    || gh issue create -R "$REPO_GH" --title "PRD: $key" --body "**PRD:** $key" --label "prd:$key" >/dev/null
+  # REST (not `gh issue list`, whose GraphQL index lags a just-created issue by seconds)
+  local want t=0
+  while [ $t -lt 60 ]; do
+    want="$(gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:$key" --jq '.[] | select(.title == "PRD: '"$key"'") | .number' 2>/dev/null | head -1)"
+    [ -n "$want" ] && break; sleep 5; t=$((t+5))
+  done
+  echo "expected issue number for 'PRD: $key': #$want (after ${t}s)" | tee "$d/expected.txt" >&2
+  local l; l="$(line_of common/create-issue.yaml '^- RUN: set -o pipefail; gh api "repos/' 1)"
+  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key" title="Story 1.1: Login Form"
+  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key" title="PRD: $key"
+  # #33: the same step over the 105-issue label seeded by d4 (>1 page of 100)
+  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd title="Story 1.1: Login Form"
+  gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:bulkprd" --paginate 2>/dev/null | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+print('documents=%d issues=%d bytes=%d newlines=%d' % (len(pages), sum(len(p) for p in pages), len(text), text.count(chr(10))))
+" > "$d/paginate-shape.txt" 2>&1
+  local pages; pages="$(cat "$d/paginate-shape.txt")"; echo "prd:bulkprd --paginate shape: $pages" >&2
+  local a p b; a="$(tr -d '[:space:]' < "$d/absent.out")"; p="$(tr -d '[:space:]' < "$d/present.out")"; b="$(tr -d '[:space:]' < "$d/bulk-absent.out")"
+  if [ "$(cat "$d/absent.rc")" = 0 ] && [ -z "$a" ] && [ "$p" = "$want" ] && [ "$(cat "$d/bulk-absent.rc")" = 0 ] && [ -z "$b" ]; then
+    verdict $c REFUTED "create-issue.yaml:$l returns an EMPTY string (rc=0) for the absent title 'Story 1.1: Login Form' instead of halting, and #$p for 'PRD: $key' — the caller's 'CHECK: empty found_issue_id' now reaches the creation branch. Over the 105-issue label prd:bulkprd it is rc=0 and empty too ($pages): on this ARRAY endpoint gh --paginate merges the pages into ONE document, so #33's 'Extra data' is a search/issues shape (already fixed in sync-issues/find-issue); the raw_decode loop parses either"
+  else
+    verdict $c CONFIRMED "create-issue.yaml:$l did not behave as a lookup: absent rc=$(cat "$d/absent.rc") out='$a' (want empty); present out='$p' (want '$want'); bulk rc=$(cat "$d/bulk-absent.rc") out='$b' (want empty) err='$(head -c 160 "$d/bulk-absent.err" | tr '\n' ' ')'"
+  fi
 }
 
 case_d9() {
@@ -353,7 +409,7 @@ case_gl-d16() {  # glab mr merge: stdout vs exit code
   git checkout -q -b "$br" main; echo "$br" > "$br.txt"; git add "$br.txt"; git commit -q -m "gl-d16 probe"; git push -q -u origin "$br"; git checkout -q main
   local iid; iid="$(glab mr create --title "gl-d16 probe" --description "probe" --source-branch "$br" --target-branch main -R "$GLH/$REPO_GL" --yes 2>&1 | grep -oE '/merge_requests/[0-9]+' | head -1 | grep -oE '[0-9]+$')"
   echo "mr=$iid" > "$d/mr.txt"; [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR: see mr.txt"; return; }
-  local lm; lm="$(line_of common/merge-mr.yaml 'glab mr merge' 1)"
+  local lm; lm="$(line_of common/merge-mr.yaml 'RUN: glab mr merge' 1)"
   REPLAY_CWD="$CONSUMER_GL" replay $c merge-ok common/merge-mr.yaml "$lm" squash=true host="$GLH" project="$REPO_GL" mr_iid="$iid"
   glab api "projects/$ENC/merge_requests/$iid" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; m=json.load(sys.stdin); print(m["state"], m.get("merge_commit_sha") or m.get("squash_commit_sha") or "")' > "$d/mr-state-after.txt" 2>&1
   local ld; ld="$(run_line_of common/merge-mr.yaml '^gl = sys.argv\[1\]')"
@@ -433,15 +489,16 @@ case_gl-d4() {  # glab api --paginate | json.load
 case_g10() {
   local c=g10; local d; load_lab 2>/dev/null || true; d="$(mkdir -p "$E2E_ROOT/evidence/${LAB_ID:-static}/g10" && echo "$E2E_ROOT/evidence/${LAB_ID:-static}/g10")"
   # rendering proof: cross-platform (issues on GitHub, code on GitLab) — which repo do the MR atomics hit?
-  local l1; l1="$(line_of common/get-mr-pipeline.yaml 'gh run list' 1)"
-  $TT render-step common/get-mr-pipeline.yaml "$l1" host=github.com project=acme/issues-repo mr_repo=gitlab.com/acme/code-repo > "$d/get-mr-pipeline.cmd"
-  local l2; l2="$(line_of common/merge-mr.yaml 'gh pr merge' 2)"
+  # locator anchored on '- RUN:' for the same reason as case_d2 (a comment now names the CLI)
+  local l1; l1="$(line_of common/get-mr-pipeline.yaml '^- RUN: gh run list' 1)"
+  $TT render-step common/get-mr-pipeline.yaml "$l1" host=github.com project=acme/issues-repo mr_repo=gitlab.com/acme/code-repo source_branch=feat/x/1-1 > "$d/get-mr-pipeline.cmd"
+  local l2; l2="$(line_of common/merge-mr.yaml 'RUN: gh pr merge' 2)"
   $TT render-step common/merge-mr.yaml "$l2" mr_iid=7 git_host=gitlab.com > "$d/merge-mr-cross.cmd"
   grep -n 'git_owner\|git_repo' "$WF/common/check-config.yaml" > "$d/check-config-defines.txt" || echo "(check-config defines neither git_owner nor git_repo)" > "$d/check-config-defines.txt"
   cat "$d/get-mr-pipeline.cmd" "$d/merge-mr-cross.cmd" "$d/check-config-defines.txt" >&2
   if grep -q 'github.com/acme/issues-repo' "$d/get-mr-pipeline.cmd" && grep -q '{git_owner}' "$d/merge-mr-cross.cmd"; then
     verdict $c CONFIRMED "get-mr-pipeline.yaml:$l1 renders 'gh run list -R github.com/acme/issues-repo' (the ISSUE tracker) although the MR lives in mr_repo=gitlab.com/acme/code-repo; merge-mr.yaml:$l2 leaves {git_owner}/{git_repo} unresolved (check-config sets neither) → lang §4.5 halts the workflow"
-  else verdict $c REFUTED "rendering did not show the cross-platform mix-up"; fi
+  else verdict $c REFUTED "the condition needs BOTH halves of D10. get-mr-pipeline.yaml:$l1 now renders '-R {mr_repo}' ($(grep -o -- '-R "[^"]*"' "$d/get-mr-pipeline.cmd" | head -1)) — the GitHub half is fixed (#15); merge-mr.yaml:$l2 still leaves $(grep -o '{git_owner}\|{git_repo}' "$d/merge-mr-cross.cmd" | tr '\n' ' ')unresolved, so #15's remaining half is the cross-platform merge"; fi
 }
 
 # ============================================================================
@@ -449,10 +506,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d16|d19|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d16|d19|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d19 d2 d18 d4; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

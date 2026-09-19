@@ -9,6 +9,13 @@
 # Side effects: MERGES the MR/PR on the tracker (irreversible from here), then reads
 #   the resulting merge SHA from the API. Callers must treat a non-zero exit or a
 #   non-empty error as "not merged", never as "merge attempted".
+#
+# `merged` is the merge CLI's EXIT CODE, carried on stdout. `glab mr merge` prints a
+# confirmation of its own; `gh pr merge` succeeds with rc=0 and ZERO bytes of stdout
+# (a re-merge of an already-merged PR is rc=0 too, with its message on stderr), so the
+# gh steps append `&& echo merged` and their stdout is empty exactly when the merge
+# failed. Reading `merge_commit_sha` instead would not work on GitHub: the API returns
+# a test-merge SHA for an OPEN PR, so a failed merge would still look merged.
 
 # Internal routing: determine target repo (same-platform uses host/project, cross-platform uses git_host/git_project)
 # Trigger on platform match first; fall back to git_platform for cross-platform case.
@@ -53,7 +60,7 @@ print(m.get('merge_commit_sha', '') or '')
   TRUE:
     - CHECK: git_platform eq platform
       TRUE:
-        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{host}/{project}"
+        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{host}/{project}" && echo merged
           STORE: gh_merge_out
           PLATFORM: github
           EXPECT_EXIT: any
@@ -66,7 +73,7 @@ print(m.get('merge_commit_sha', '') or '')
   TRUE:
     - CHECK: git_platform ne platform
       TRUE:
-        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{git_host}/{git_owner}/{git_repo}"
+        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{git_host}/{git_owner}/{git_repo}" && echo merged
           STORE: gh_merge_out
           PLATFORM: github
           EXPECT_EXIT: any
@@ -74,15 +81,16 @@ print(m.get('merge_commit_sha', '') or '')
           STORE: merge_sha
           PLATFORM: github
 
-# Derive merged/error from CLI outputs (truth source = exit code, not pipeline_status)
+# Derive merged/error from the CLI outputs (truth source = exit code, not pipeline_status).
+# Both branches only reach here with stdout when their merge CLI exited 0: glab prints its
+# own confirmation, gh prints the `merged` token the step appends with `&&`.
 - RUN: uv run --no-project python -c "
 import sys
 gl = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 gh = sys.argv[2].strip() if len(sys.argv) > 2 else ''
-# If either CLI produced output (stdout captured by the shell), the merge ran
 print('true' if (gl or gh) else 'false')
 " {gl_merge_out} {gh_merge_out}
   STORE: merged
 - CHECK: merged eq "false"
   TRUE:
-    - SET: { variable: error, value: "merge CLI failed (no stdout captured)" }
+    - SET: { variable: error, value: "merge CLI exited non-zero (no stdout captured)" }

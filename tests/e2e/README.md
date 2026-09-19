@@ -71,6 +71,7 @@ Cases and what they prove:
 | `d8` | 1 | D08 (+D22) | `bmad-loop/r1/…` branch without upstream → `git push` exit 128; module's `story_branch` absent on origin |
 | `d16` | 1 | D16 | `gh pr merge` rc=0, stdout empty → `merged=false` |
 | `d19` | 1 | D19/D20 | `find-issue` on `1-1-login-form` also returns `Story 1.10`; index latency; space in URL |
+| `d24` | 1 | D24/D25 | `create-issue` lookup: absent title → empty + rc=0 (not a FILTER halt), present title → its number, and the same over 105 issues (2 `--paginate` pages) |
 | `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |
 | `g06` | 1 | D06 | GitLab `search=1-1-login-form` returns 1.1, 1.10 and 11.1 newest-first; FILTER takes 11.1 |
 | `gl-d23`, `gl-d4`, `gl-d16`, `gl-d2`, `gl-d18` | 1 | D23, D04, D16, D02, D18 on GitLab | same replays as the GitHub cases against the GitLab consumer (D16 and D02 are GitHub-only; the rest hit both) |
