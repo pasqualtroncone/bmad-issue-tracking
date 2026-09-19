@@ -64,12 +64,12 @@ print(str(match[0]['number']) if match else '')
   FALSE:
     - SET: { variable: issue_id, value: "{found_issue_id}" }
     - CHECK: empty issue_id
-    TRUE:
-      - STOP
-    FALSE:
-      - OUTPUT:
-          message: "Issue already exists (#{issue_id}). Skipping creation."
-      - STOP
+      TRUE:
+        - STOP
+      FALSE:
+        - OUTPUT:
+            message: "Issue already exists (#{issue_id}). Skipping creation."
+        - STOP
 # Create the issue
 # Ensure all labels exist (static + dynamic like prd:{prd_key}, {prd_key}:epic-N)
 - RUN: uv run --no-project python -c "

@@ -269,9 +269,9 @@ Two things NOT to do here, both tried and reverted:
 Halt only on a missing spec FILE (`SPEC_NOT_FOUND`): that case is unambiguous and is the
 one that actually killed story 2-1, whose phase read the spec from an invented path
 (`{implementation_artifacts}/{story_key}.md`) with no error handling. The spec is now read
-from `{spec_file}` — the path the runtime resolves, per `bmad-workflow-lang.md:443-455`
-and BMAD's `tools/skill-validator.md:37` — with the legacy path kept as a second
-candidate so existing consumers do not regress.
+from `{spec_file}` — the path the runtime resolves, per the predefined-variables table
+in `bmad-workflow-lang.md` §4.4 and BMAD's `tools/skill-validator.md:37` — with the
+legacy path kept as a second candidate so existing consumers do not regress.
 
 ## Caller negotiation (both current channels)
 

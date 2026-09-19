@@ -3,10 +3,26 @@
 # Purpose: Creates a single label on the issue tracker (idempotent).
 # Input variables:
 #   - label_name: the label to create (e.g. "prd:loyalty-points")
+#   - label_color: optional 6-digit hex WITHOUT the leading '#' (e.g. "428BCA").
+#       `gh label create --color` takes exactly that form; `glab label create --color`
+#       wants the '#', which the GitLab branch adds. Empty (the common case) means
+#       "let the tracker choose": gh picks a random colour, glab defaults to #428BCA.
 # Output variables: (none)
 # Side effects: creates the label on the tracker if it doesn't exist
+#
+# The colour is an input and not a constant because the epic labels are meant to be
+# distinguishable at a glance: common/ensure-dynamic-labels assigns each epic number a
+# colour from a fixed palette and passes it here. Callers that do not care leave
+# label_color empty and get the pre-colour behaviour unchanged.
 
-- RUN: glab label create --name "{label_name}" -R "{host}/{project}" 2>/dev/null || true
-  PLATFORM: gitlab
-- RUN: gh label create "{label_name}" -R "{host}/{project}" 2>/dev/null || true
-  PLATFORM: github
+- CHECK: empty label_color
+  TRUE:
+    - RUN: glab label create --name "{label_name}" -R "{host}/{project}" 2>/dev/null || true
+      PLATFORM: gitlab
+    - RUN: gh label create "{label_name}" -R "{host}/{project}" 2>/dev/null || true
+      PLATFORM: github
+  FALSE:
+    - RUN: glab label create --name "{label_name}" --color "#{label_color}" -R "{host}/{project}" 2>/dev/null || true
+      PLATFORM: gitlab
+    - RUN: gh label create "{label_name}" --color "{label_color}" -R "{host}/{project}" 2>/dev/null || true
+      PLATFORM: github

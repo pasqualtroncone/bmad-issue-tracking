@@ -17,22 +17,7 @@ description: 'Sync sprint-status.yaml entries to GitLab/GitHub Issues. Use when 
 
 1. Read `_bmad/_config/custom/bmad-workflow-lang.md` for the workflow language specification.
 2. Execute the prepare workflow: `_bmad/_config/custom/workflows/issue-sync/prepare.yaml`
-3. **Step 2c — scoped MR ops (preferred for orchestrator hooks):**
-   a. Route on `BMAD_MR_ACTION` env var:
-      - `BMAD_MR_ACTION=ensure-mr` → require env `BMAD_MR_SOURCE_BRANCH`, `BMAD_MR_TARGET_BRANCH`, `BMAD_MR_TITLE`, `BMAD_MR_DESCRIPTION_FILE`, `BMAD_MR_REPO`; then `INCLUDE: common/ensure-mr`.
-      - `BMAD_MR_ACTION=find-mr` → require `BMAD_MR_SOURCE_BRANCH`, `BMAD_MR_REPO`; then `INCLUDE: common/find-mr`.
-      - `BMAD_MR_ACTION=get-mr-pipeline` → require `BMAD_MR_IID`; then `INCLUDE: common/get-mr-pipeline`.
-      - `BMAD_MR_ACTION=get-failed-jobs` → require `BMAD_PIPELINE_ID`; then `INCLUDE: common/get-failed-jobs`.
-      - `BMAD_MR_ACTION=merge-mr` → require `BMAD_MR_IID`, `BMAD_MR_SQUASH` (default "false"); then `INCLUDE: common/merge-mr`.
-   b. Same env-var-driven parallel-safe pattern as Step 2a — no platform-specific CLI.
-   c. Cleanup: the Skill caller's agent does `rm -f` on `BMAD_MR_DESCRIPTION_FILE` after Skill returns (best-effort).
-4. **Step 2d — scoped issue ops (preferred for orchestrator hooks):**
-   a. Route on `BMAD_ISSUE_ACTION` env var (skip when env var unset — Step 5 sync.yaml runs as normal):
-      - `BMAD_ISSUE_ACTION=set-status` → require env `BMAD_ISSUE_KEY` (the issue label text — works for story keys like `1-3-login-form` OR epic keys like `epic-1` / `1`), `BMAD_ISSUE_PRD_KEY`, `BMAD_ISSUE_NEW_STATUS` (e.g. `in-progress`, `review`, `done`), `BMAD_ISSUE_CLOSE` (default `false`); then `INCLUDE: common/set-story-status` (the atomic's `story_key` input accepts any issue label — the atomic sets `search_text = "{story_key}"` then INCLUDEs find-issue, so epic keys work because find-issue searches by text not by issue type).
-      - `BMAD_ISSUE_ACTION=find` → require `BMAD_ISSUE_KEY`, `BMAD_ISSUE_PRD_KEY`; then `SET: { variable: search_text, value: "{BMAD_ISSUE_KEY}" }` and `INCLUDE: common/find-issue`. Output: `{ issue_id }` (the env label text maps to find-issue's `search_text` input — not to `story_key`).
-   b. Same env-var-driven parallel-safe pattern as Step 2a/2c — no platform-specific CLI.
-   c. Cleanup: none (no temp files for issue ops).
-5. Execute the sync workflow: `_bmad/_config/custom/workflows/issue-sync/sync.yaml`
+3. Execute the sync workflow: `_bmad/_config/custom/workflows/issue-sync/sync.yaml`
 
 ## Unattended usage (after a bmad-loop run)
 

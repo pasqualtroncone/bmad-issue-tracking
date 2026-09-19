@@ -117,7 +117,7 @@ being deferred. The merge has already succeeded.
 
 ## Installation
 
-The plugin is deployed automatically by `bmad-issue-tracking-setup` step 3d.
+The plugin is deployed automatically by `bmad-issue-tracking-setup` step 5.
 For manual install:
 
 ```bash

@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `/bmad-issue-tracking-sync` runs the prepare and sync workflows and nothing else. Its
+  steps 3 and 4 described routing on `BMAD_MR_ACTION` / `BMAD_ISSUE_ACTION` environment
+  variables to reach single atomics; no workflow file ever read them, the workflow language
+  has no environment channel, and `test_command_patterns.py` rejects `$var` in any step, so
+  a caller following those steps got the full sync instead of the scoped operation.
 - README and `CLAUDE.md` describe both install routes truthfully: BMAD 6.12.0 ships only the classic installer with the `_bmad/{bmm,core,...}/` layout; the Skills CLI /
   `module-manifest.toml` distribution is BMAD `main` (6.13.0-next), unreleased, and the two
   routes never coexist in one project. Previous text claimed 6.12.0 had adopted
@@ -30,6 +35,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `TestPythonImportCompliance` never inspected a single command: it skipped any step whose
+  text lacked `uv run python`, and every RUN in the module spells it `uv run --no-project
+  python`. The check the D17/D18 halts should have been caught by was dead from the day it
+  was written. It now selects on `python -c`, extracts each body and applies the import
+  rule `tests/e2e/trace-tools.py lint-sys` uses, over the same bodies (nested steps and
+  `RUN: |` blocks included).
+- `tests/conftest.py` dropped every step of `common/sync-issues.yaml` that follows the first
+  `    else:` line of a `python -c` body: the parser accepted any indented `word:` line as a
+  YAML sub-field, so the command body ended the enclosing `do:` block and 52 steps — the
+  whole status-mapping and issue-creation nest, `sync-issues.yaml:316` among them — were
+  invisible to every test in the suite. Steps now come out of a recursive scan of the file
+  itself, so nested steps also report FILE-relative line numbers instead of branch-relative
+  ones, and `RUN: |` bodies are captured (as `block_scalar`) for the checks that need them.
+- `{spec_file}` is read by `common/post-build-dispatch.yaml`, `common/ensure-issue.yaml` and
+  `common/post-dev-complete.yaml` but was absent from the predefined-variables table in
+  `assets/bmad-workflow-lang.md` §4.4, so by §4.5 the spec said those workflows stop on an
+  undefined variable. The table now names it, its source and the fact that it can be empty;
+  `CLAUDE.md` cites the section instead of line numbers that never carried it.
+- `assets/bmad-workflow-lang.md` defined `expect_exit` as a numeric code only while eleven
+  RUN steps across six workflows say `EXPECT_EXIT: any`, so the spec called a step every
+  hook relies on (`cat` on an absent marker, `gh pr merge` on an unmergeable PR, a comment
+  post that must not take the hook down) an error. §2.4 and §5 now describe `any`.
+- Every epic label came out in the tracker's default colour although
+  `common/ensure-dynamic-labels.yaml` computed one per epic number from a ten-colour
+  palette: the value was stored in `epic_color` and never passed on, because
+  `common/create-label.yaml` took no colour. It now takes an optional `label_color`
+  (6-digit hex, no `#`) and renders `gh label create --color` / `glab label create
+  --color "#…"`; callers that leave it empty keep the previous behaviour.
+- The setup skill's `references/help.md` sent readers to `_bmad/_config/custom/issue-tracking.yaml`
+  for the sidecar config; `common/check-config.yaml` reads `_bmad/custom/issue-tracking.yaml`.
+  Its title also named the module `issue-tracking` instead of `bmad-issue-tracking`, and the
+  close-trace-mr README credited the deploy to setup "step 3d", which is step 5.
+- `common/create-issue.yaml`: the `TRUE:`/`FALSE:` branches of the inner
+  `CHECK: empty issue_id` sat at the same indentation as the `- CHECK` item itself, so the
+  block only read as a conditional by luck (both branches `STOP`, so either reading ended the
+  workflow). They are now nested under the CHECK.
 - The MR for a story named a source branch that does not exist on the remote: the create-story and
   dev-finish phases derived it from `branch_patterns.story` (`feat/<prd_key>/<story_key>`) while the
   work sits on the branch the run is actually on, so `gh pr create --head` failed and the step's

@@ -6,7 +6,8 @@
 # Output variables: (none)
 # Side effects: creates labels on the issue tracker
 
-# PRD label
+# PRD label — no colour, the tracker picks one
+- SET: { variable: label_color, value: "" }
 - SET: { variable: label_name, value: "prd{sep}{prd_key}" }
 - INCLUDE: common/create-label
 # Epic labels — extract unique epic numbers from sprint-status.yaml
@@ -31,10 +32,14 @@ for n in sorted(epics):
     do:
       - RUN: uv run --no-project python -c "
 import sys
-colors = ['#428BCA', '#44AD8E', '#F0AD4E', '#D9534F', '#6B5CE7', '#1ABC9C', '#E74C8B', '#95A5A6', '#3498DB', '#E67E22']
+colors = ['428BCA', '44AD8E', 'F0AD4E', 'D9534F', '6B5CE7', '1ABC9C', 'E74C8B', '95A5A6', '3498DB', 'E67E22']
 idx = (int(sys.argv[1]) - 1) % len(colors)
 print(colors[idx])
 " {epic_num}
         STORE: epic_color
+      - SET: { variable: label_color, value: "{epic_color}" }
       - SET: { variable: label_name, value: "{prd_key}{sep}epic-{epic_num}" }
       - INCLUDE: common/create-label
+# The palette belongs to the epic labels only: leave nothing behind for the next
+# create-label caller in the same run (ensure-labels, create-issue) to inherit.
+- SET: { variable: label_color, value: "" }
