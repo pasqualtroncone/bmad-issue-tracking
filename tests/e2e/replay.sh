@@ -452,6 +452,9 @@ case_gl-d16() {  # glab mr merge: stdout vs exit code
   # GitLab computes mergeability asynchronously: merging while detailed_merge_status is still
   # "checking" answers 405. Wait for the MR to settle (≤120 s) so the replay judges the merge step, not the race.
   local t=0 ms=""; while [ $t -lt 120 ]; do ms="$(glab api "projects/$ENC/merge_requests/$iid" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; print(json.load(sys.stdin).get("detailed_merge_status",""))')"; [ "$ms" = mergeable ] && break; sleep 5; t=$((t+5)); done; echo "detailed_merge_status=$ms after ${t}s" > "$d/merge-status-wait.txt"
+  # the probe branch triggers CI; merging while it runs makes glab schedule "merge when pipeline
+  # succeeds" (rc 0, MR still open). Wait for that pipeline so the replay judges an immediate merge.
+  echo "probe pipeline: $(gl_wait_pipeline "$br" 600)" >> "$d/merge-status-wait.txt"
   local lm; lm="$(line_of common/merge-mr.yaml 'RUN: glab mr merge' 1)"
   REPLAY_CWD="$CONSUMER_GL" replay $c merge-ok common/merge-mr.yaml "$lm" squash=true host="$GLH" project="$REPO_GL" mr_iid="$iid"
   glab api "projects/$ENC/merge_requests/$iid" --hostname "$GLH" | uv run --no-project python -c 'import json,sys; m=json.load(sys.stdin); print(m["state"], m.get("merge_commit_sha") or m.get("squash_commit_sha") or "")' > "$d/mr-state-after.txt" 2>&1
