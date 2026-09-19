@@ -232,13 +232,13 @@ case_d8() {
   git ls-remote --heads origin "$sb" > "$d/ls-remote-story-branch.txt"
   local le; le="$(line_of common/ensure-mr.yaml 'gh pr create' 2)"
   echo "Sprint key: 1-1-login-form" > /tmp/e2e-d8-desc.md
-  replay $c ensure-mr-head common/ensure-mr.yaml "$le" mr_title="Story 1.1: 1-1-login-form" description_body="Sprint key: 1-1-login-form" target_branch="feat/$PRD_KEY/prd" source_branch="$sb" mr_repo="github.com/$REPO_GH"
+  replay $c ensure-mr-head common/ensure-mr.yaml "$le" mr_title="Story 1.1: 1-1-login-form" mr_description_file=/tmp/e2e-d8-desc.md target_branch="feat/$PRD_KEY/prd" source_branch="$sb" mr_repo="github.com/$REPO_GH"
   sed 's/ 2>&1 | grep .*$//' "$d/ensure-mr-head.cmd" > "$d/ensure-mr-head-gh-only.cmd"
   ( cd "$CONSUMER" && bash "$d/ensure-mr-head-gh-only.cmd" ) > "$d/ensure-mr-head-gh-only.out" 2> "$d/ensure-mr-head-gh-only.err"; echo $? > "$d/ensure-mr-head-gh-only.rc"
   rm -f /tmp/e2e-d8-desc.md
   git checkout -q main; git branch -D bmad-loop/r1/1-1-login-form >/dev/null 2>&1 || true
   if [ "$(cat "$d/push.rc")" = 128 ] && grep -q 'no upstream\|has no upstream branch' "$d/push.err"; then
-    local d22=""; [ ! -s "$d/ls-remote-story-branch.txt" ] && d22="; D22: module-derived story_branch '$sb' does not exist on origin, and ensure-mr.yaml:$le --head $sb fails (gh rc=$(cat "$d/ensure-mr-head-gh-only.rc")): '$(grep -m1 -iE 'head|not found|error|could not' "$d/ensure-mr-head-gh-only.err" | cut -c1-110)' — the step's '2>&1 | grep https://' swallows it and stores an empty mr_url"
+    local d22=""; [ ! -s "$d/ls-remote-story-branch.txt" ] && d22="; D22: module-derived story_branch '$sb' does not exist on origin, and ensure-mr.yaml:$le --head $sb fails (gh rc=$(cat "$d/ensure-mr-head-gh-only.rc")): '$(grep -m1 -iE 'head|not found|error|could not' "$d/ensure-mr-head-gh-only.err" | cut -c1-110)' — the create is the step's own exit code now, so the caller halts instead of storing an empty mr_url"
     verdict $c CONFIRMED "post-dev-complete.yaml:$l2 'git push' on bmad-loop/r1/1-1-login-form (no upstream; push.autoSetupRemote $(cat "$d/push-autosetupremote.txt" | head -1)) → exit 128 '$(grep -o 'fatal:.*' "$d/push.err" | head -1 | cut -c1-70)'; dev-finish/review-finish halt there$d22"
   else verdict $c REFUTED "push rc=$(cat "$d/push.rc") $(head -c 200 "$d/push.err")"; fi
 }
@@ -382,11 +382,16 @@ print('documents=%d issues=%d bytes=%d newlines=%d' % (len(pages), sum(len(p) fo
 
 case_d9() {
   local c=d9; load_lab; local d; d="$(case_dir $c)"
+  # a previous run's PR dump would answer the title/body questions for this one
+  rm -f "$d/pr.json" "$d/pr-title.txt" "$d/pr-body.txt"
   cd "$CONSUMER"; git checkout -q main; local br="d9-quote-$(date +%s)"
   git checkout -q -b "$br" main; git commit -q --allow-empty -m "d9 probe"; git push -q -u origin "$br"; git checkout -q main
   local le; le="$(line_of common/ensure-mr.yaml 'gh pr create' 2)"
   local body; body="$(cat "$E2E_ROOT/fixtures/quoting-body.md")"
-  $TT render-step common/ensure-mr.yaml "$le" mr_title='Story 1.1: Login "Form"' description_body="$body" target_branch=main source_branch="$br" mr_repo="github.com/$REPO_GH" > "$d/rendered.cmd"
+  # description_body is still passed: the step must no longer name that placeholder at
+  # all (the body travels as a FILE now), so a render that still resolved it would put
+  # the quoting-hostile text back on the command line and this case would see it.
+  $TT render-step common/ensure-mr.yaml "$le" mr_title='Story 1.1: Login "Form"' description_body="$body" mr_description_file="$E2E_ROOT/fixtures/quoting-body.md" target_branch=main source_branch="$br" mr_repo="github.com/$REPO_GH" > "$d/rendered.cmd"
   bash -n "$d/rendered.cmd" > "$d/syntax.out" 2> "$d/syntax.err"; echo $? > "$d/syntax.rc"
   ( cd "$CONSUMER" && bash "$d/rendered.cmd" ) > "$d/run.out" 2> "$d/run.err"; echo $? > "$d/run.rc"
   # the literal step hides gh's own error behind `2>&1 | grep`; run the gh part alone for the record
@@ -394,13 +399,25 @@ case_d9() {
   ( cd "$CONSUMER" && bash "$d/gh-only.cmd" ) > "$d/gh-only.out" 2> "$d/gh-only.err"; echo $? > "$d/gh-only.rc"
   grep -o 'pull/[0-9]*' "$d/gh-only.out" | head -1 | cut -d/ -f2 | xargs -r -I{} gh pr close {} -R "$REPO_GH" --delete-branch >/dev/null 2>&1
   local n=""; n="$(grep -o 'pull/[0-9]*' "$d/run.out" | head -1 | cut -d/ -f2)"
-  if [ -n "$n" ]; then gh pr view "$n" -R "$REPO_GH" --json title,body > "$d/pr.json"; gh pr close "$n" -R "$REPO_GH" --delete-branch >/dev/null 2>&1 || true; fi
+  # title and body are also read RAW (--jq): `--json title,body` escapes the quotes of
+  # the very title this case is about, so the JSON blob cannot answer "did it survive?"
+  if [ -n "$n" ]; then
+    gh pr view "$n" -R "$REPO_GH" --json title,body > "$d/pr.json"
+    gh pr view "$n" -R "$REPO_GH" --json title --jq .title > "$d/pr-title.txt"
+    gh pr view "$n" -R "$REPO_GH" --json body --jq .body > "$d/pr-body.txt"
+    gh pr close "$n" -R "$REPO_GH" --delete-branch >/dev/null 2>&1 || true
+  fi
   git branch -D "$br" >/dev/null 2>&1 || true
-  local inj=0; grep -q INJECTED "$d/pr.json" "$d/gh-only.err" 2>/dev/null && inj=1
-  local titleok=0; grep -q 'Login "Form"' "$d/pr.json" 2>/dev/null && titleok=1
+  # "the shell ran $(echo INJECTED)" is not "the word INJECTED is somewhere": a body
+  # delivered intact CONTAINS the literal $(echo INJECTED). The substitution executed
+  # exactly when INJECTED appears without its wrapper — or when gh choked on it.
+  local inj=0
+  grep -q INJECTED "$d/gh-only.err" 2>/dev/null && inj=1
+  if grep -q INJECTED "$d/pr-body.txt" 2>/dev/null && ! grep -qF '$(echo INJECTED)' "$d/pr-body.txt" 2>/dev/null; then inj=1; fi
+  local titleok=0; grep -q 'Login "Form"' "$d/pr-title.txt" 2>/dev/null && titleok=1
   if [ "$(cat "$d/syntax.rc")" != 0 ] || [ "$inj" = 1 ] || [ "$titleok" = 0 ]; then
     verdict $c LATENT "ensure-mr.yaml:$le interpolates --title/--body inline: with a body holding quotes, a backtick and \$(…) the literal step 'succeeds' (pipeline rc=$(cat "$d/run.rc") — the '2>&1 | grep https' hides gh's exit) but creates $( [ -n "$n" ] && echo "a PR" || echo "NO PR"); gh alone rc=$(cat "$d/gh-only.rc"): '$(grep -m1 'unknown argument' "$d/gh-only.err" | cut -c1-110)'; the shell ran \$(echo INJECTED)=$inj and tried to execute the backtick ('$(grep -o 'backtick: command not found' "$d/run.err" | head -1)'); quoted title preserved=$titleok. Current callers pass benign bodies/titles, so LATENT"
-  else verdict $c REFUTED "rendered command survived quotes, backticks and \$(…) intact"; fi
+  else verdict $c REFUTED "ensure-mr.yaml:$le hands the body to gh as a FILE and quotes the title as one argument: the render no longer names {description_body} at all, bash -n accepts the command, PR #$n was created with the title '$(cat "$d/pr-title.txt")' intact and a body that still carries the literal \$(echo INJECTED) (executed=$inj), and the create's own exit code (rc=$(cat "$d/run.rc")) is what the caller sees"; fi
 }
 
 # --- GitLab (self-hosted or gitlab.com; host from lab.env GL_HOST) --------------------------

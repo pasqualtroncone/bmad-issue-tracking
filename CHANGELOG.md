@@ -149,6 +149,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which answers 404, and the step carries no `EXPECT_EXIT: any`. The host now travels in
   `--hostname`, the shape the rest of the module uses, on both the same-platform and the
   cross-platform branch.
+- An MR/PR description holding a double quote, a backtick or a `$(...)` substitution was
+  taken apart by the shell before the CLI saw it: `common/ensure-mr.yaml` interpolated the
+  body into `--body`/`--description`, so the shell ran the substitution, `gh` answered
+  `unknown argument` and created nothing — and the step's trailing `2>&1 | grep https` gave
+  that exit 0 and an empty MR URL, so the caller carried on as if the MR existed. The body
+  now travels as a file (`--body-file` / `--description-file`), the title is one
+  single-quoted argument, and the create's own exit code reaches the caller.
 
 ## [3.0.0] - 2026-09-15
 
