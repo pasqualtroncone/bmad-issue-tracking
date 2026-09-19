@@ -483,6 +483,7 @@ These variables are resolved at workflow execution time:
 | `{git_host}` | Issue tracking config | `issue_tracking.git_host` — git remote hostname (only when `git_platform != platform`) |
 | `{git_project}` | Issue tracking config | `issue_tracking.git_project` — git remote project path (only when `git_platform != platform`) |
 | `{worktree_base}` | Issue tracking config | `issue_tracking.worktree_base` — base directory for worktrees |
+| `{spec_file}` | Calling BMM skill | The story spec path the skill run already resolved, in whichever mode applies (sprint: `spec-<storyId>-<slug>.md`; stories: `stories/<id>-<slug>.md`). Left in scope by the skill whose `on_complete` hook runs the workflow; **empty when no skill set it** — a workflow that uses it must tolerate the empty string rather than re-derive the path from `{story_key}`, whose slug is not the title slug |
 
 ### 4.5 Resolution Failure
 

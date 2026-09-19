@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `{spec_file}` is read by `common/post-build-dispatch.yaml`, `common/ensure-issue.yaml` and
+  `common/post-dev-complete.yaml` but was absent from the predefined-variables table in
+  `assets/bmad-workflow-lang.md` §4.4, so by §4.5 the spec said those workflows stop on an
+  undefined variable. The table now names it, its source and the fact that it can be empty;
+  `CLAUDE.md` cites the section instead of line numbers that never carried it.
 - `assets/bmad-workflow-lang.md` defined `expect_exit` as a numeric code only while eleven
   RUN steps across six workflows say `EXPECT_EXIT: any`, so the spec called a step every
   hook relies on (`cat` on an absent marker, `gh pr merge` on an unmergeable PR, a comment
