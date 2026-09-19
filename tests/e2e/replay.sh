@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d16|d19|d24|d9   # GitHub lab
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d24|d9   # GitHub lab (d15 is local)
 #   replay.sh g06|g10               # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -523,16 +523,73 @@ case_g10() {
   else verdict $c REFUTED "the condition needs BOTH halves of D10. get-mr-pipeline.yaml:$l1 now renders '-R {mr_repo}' ($(grep -o -- '-R "[^"]*"' "$d/get-mr-pipeline.cmd" | head -1)) — the GitHub half is fixed (#15); merge-mr.yaml:$l2 still leaves $(grep -o '{git_owner}\|{git_repo}' "$d/merge-mr-cross.cmd" | tr '\n' ' ')unresolved, so #15's remaining half is the cross-platform merge"; fi
 }
 
+# spec_fixtures <dir> — render the 6.12.0-shaped spec (frontmatter title, no H1) and the
+# legacy H1 variant into <dir>, the way write_spec does for the level-2 scenarios
+spec_fixtures() {
+  mkdir -p "$1/ia"
+  uv run --no-project python - "$E2E_ROOT" "$1" <<'PY'
+import sys
+e2e, work = sys.argv[1], sys.argv[2]
+t = open(e2e + '/fixtures/consumer/implementation-artifacts/spec-1-1-login-form.md.tmpl').read()
+rows = open(e2e + '/fixtures/triage-rows.md').read().rstrip()
+open(work + '/ia/spec-1-1-login-form.md', 'w').write(t.replace('@STATUS@', 'in-review').replace('@TRIAGE_ROWS@', rows))
+PY
+  cp "$E2E_ROOT/fixtures/consumer/implementation-artifacts/spec-1-1-login-form.legacy-h1.md" "$1/legacy-h1.md"
+}
+
+case_d15() {  # #13 — the loop item renders as "key: status" and the key leaked everywhere
+  local c=d15; load_lab; local d; d="$(case_dir $c)"
+  local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
+  local lk lst lt
+  lk="$(run_line_of common/sync-issues.yaml 'STORE: entry_key')"
+  lst="$(run_line_of common/sync-issues.yaml 'STORE: entry_status')"
+  lt="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
+  # both renderings lang §4.1 leaves open: "key: status" (what the interpreter does) and
+  # the bare key (what the language says a map item is)
+  replay $c key-pair    common/sync-issues.yaml "$lk"  entry="1-1-login-form: backlog"
+  replay $c status-pair common/sync-issues.yaml "$lst" entry="1-1-login-form: backlog"
+  replay $c key-bare    common/sync-issues.yaml "$lk"  entry="1-1-login-form"
+  replay $c status-bare common/sync-issues.yaml "$lst" entry="1-1-login-form"
+  local kp sp kb sb
+  kp="$(head -1 "$d/key-pair.out")"; sp="$(head -1 "$d/status-pair.out")"
+  kb="$(head -1 "$d/key-bare.out")"; sb="$(head -1 "$d/status-bare.out")"
+  # the derived key feeds the title step and the description file name
+  replay $c title common/sync-issues.yaml "$lt" implementation_artifacts="$work/ia" entry_key="$kp"
+  local title fname title_leak=0
+  title="$(head -1 "$d/title.out")"
+  # D15 is about the STATUS leaking into the title, not about which title is read (D21):
+  # the assertion is that ': backlog' is absent, not that the title is the right one.
+  case "$title" in *": $sp"*) title_leak=1;; esac
+  fname="$(render "$(grep -o '/tmp/issue-desc-{entry[_a-z]*}\.md' "$WF/common/sync-issues.yaml" | head -1)" "entry=1-1-login-form: backlog" "entry_key=$kp")"
+  # no step may still use {entry} as a key: the only survivors allowed are the two argv
+  # lines of the split steps themselves (the line just above each STORE)
+  local ka sa; ka="$(grep -n 'STORE: entry_key' "$WF/common/sync-issues.yaml" | cut -d: -f1)"; sa="$(grep -n 'STORE: entry_status' "$WF/common/sync-issues.yaml" | cut -d: -f1)"
+  grep -n '{entry}' "$WF/common/sync-issues.yaml" | grep -v ':[[:space:]]*#' \
+    | awk -F: -v k="$((ka-1))" -v s="$((sa-1))" '$1!=k && $1!=s' > "$d/raw-entry-uses.txt" || true
+  local leaks; leaks="$(grep -c . "$d/raw-entry-uses.txt")"
+  { echo "entry='1-1-login-form: backlog' → key='$kp' status='$sp'"
+    echo "entry='1-1-login-form'          → key='$kb' status='$sb'"
+    echo "title step  → '$title' (carries ': $sp'? $title_leak)"
+    echo "description file → '$fname'"
+    echo "steps still rendering {entry} as a key: $leaks"; cat "$d/raw-entry-uses.txt"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$kp" = "1-1-login-form" ] && [ "$sp" = "backlog" ] && [ "$kb" = "1-1-login-form" ] && [ -z "$sb" ] \
+     && [ "$title_leak" = 0 ] && [ "$fname" = "/tmp/issue-desc-1-1-login-form.md" ] && [ "$leaks" = 0 ]; then
+    verdict $c REFUTED "sync-issues.yaml:$lk/$lst split the loop item once: 'key: status' → key='$kp' status='$sp', a bare 'key' → key='$kb' status='' (both renderings accepted). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
+  else
+    verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d16|d19|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
-    all-quick) case_static; for k in d17 d7 d8 d16 d9; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
+    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
 }

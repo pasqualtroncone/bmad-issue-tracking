@@ -58,6 +58,23 @@ for item in [i for page in pages for i in page.get('items', [])]:
     items: entries
     as: entry
     do:
+      # --- Split the loop item into key and status ---
+      # `entries` is a YAML MAP. lang §4.1 says a map item is {key, value}, but the
+      # interpreter renders {entry} as the single string "key: status" — so every step
+      # that used {entry} as a key put "1-1-login-form: backlog" into issue titles and
+      # into /tmp/issue-desc-*.md names. Both renderings are accepted here, once, and the
+      # rest of the loop body uses {entry_key} / {entry_status} only.
+      - RUN: uv run --no-project python -c "
+import sys
+print(sys.argv[1].strip().split(':', 1)[0].strip())
+" "{entry}"
+        STORE: entry_key
+      - RUN: uv run --no-project python -c "
+import sys
+parts = sys.argv[1].strip().split(':', 1)
+print(parts[1].strip() if len(parts) > 1 else '')
+" "{entry}"
+        STORE: entry_status
       # --- Classify entry ---
       - RUN: uv run --no-project python -c "
 import sys
@@ -68,7 +85,7 @@ elif key.endswith('-retrospective'):
     print('retrospective')
 else:
     print('story')
-" {entry}
+" "{entry_key}"
         STORE: entry_type
       # --- Extract epic number ---
       - RUN: uv run --no-project python -c "
@@ -83,7 +100,7 @@ else:
         print(parts[0])
     else:
         print('')
-" {entry}
+" "{entry_key}"
         STORE: epic_num
       # --- Extract title ---
       - CHECK: entry_type eq "epic"
@@ -152,19 +169,9 @@ else:
         print('Story ' + parts[0] + '.' + parts[1] + ': ' + title_part)
     else:
         print(entry)
-" {implementation_artifacts} {entry}
+" {implementation_artifacts} "{entry_key}"
                 STORE: entry_title
-      # --- Parse status from sprint-status (format: "key: status") ---
-      - RUN: uv run --no-project python -c "
-import sys
-parts = sys.argv[1].strip().split(':')
-if len(parts) >= 2:
-    print(parts[-1].strip())
-else:
-    print('')
-" {entry}
-        STORE: entry_status
-      # Map status names
+      # Map status names (entry_status came from the split at the top of the loop body)
       - CHECK: entry_status eq "drafted"
         TRUE:
           - SET: { variable: mapped_status, value: "ready-for-dev" }
@@ -175,7 +182,7 @@ else:
             FALSE:
               - SET: { variable: mapped_status, value: "{entry_status}" }
       # --- Find existing issue (3-tier matching) ---
-      - SET: { variable: search_text, value: "{entry}" }
+      - SET: { variable: search_text, value: "{entry_key}" }
       - INCLUDE: common/find-issue
       - CHECK: empty issue_id
         FALSE:
@@ -249,8 +256,8 @@ print(n)
       - CHECK: empty issue_id
         TRUE:
           - WRITE:
-              file: /tmp/issue-desc-{entry}.md
-              content: "**Sprint Key:** `{entry}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{entry_title}"
+              file: /tmp/issue-desc-{entry_key}.md
+              content: "**Sprint Key:** `{entry_key}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{entry_title}"
               mode: overwrite
           - CHECK: entry_type eq "epic"
             TRUE:
@@ -272,12 +279,12 @@ else:
               - CHECK: empty epic_body
                 FALSE:
                   - WRITE:
-                      file: /tmp/issue-desc-{entry}.md
-                      content: "**Sprint Key:** `{entry}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{epic_body}"
+                      file: /tmp/issue-desc-{entry_key}.md
+                      content: "**Sprint Key:** `{entry_key}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{epic_body}"
                       mode: overwrite
           - SET: { variable: title, value: "{entry_title}" }
           - SET: { variable: labels, value: "type{sep}{entry_type}\nstatus{sep}{mapped_status}\nprd{sep}{prd_key}\n{prd_key}{sep}epic-{epic_num}" }
-          - SET: { variable: description_file, value: "/tmp/issue-desc-{entry}.md" }
+          - SET: { variable: description_file, value: "/tmp/issue-desc-{entry_key}.md" }
           - INCLUDE: common/create-issue
           - CHECK: mapped_status eq "done"
             TRUE:
@@ -286,7 +293,7 @@ else:
               - CHECK: mapped_status eq "closed"
                 TRUE:
                   - INCLUDE: common/update-issue-status
-          - RUN: rm -f /tmp/issue-desc-{entry}.md
+          - RUN: rm -f /tmp/issue-desc-{entry_key}.md
           - RUN: uv run --no-project python -c "
 import sys
 n = int(sys.argv[1]) + 1

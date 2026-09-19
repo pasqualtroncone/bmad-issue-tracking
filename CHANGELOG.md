@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts with, the search text (`PRD: <key>`, `Epic <n>:`), and returns nothing when no
   issue matches. `common/create-issue.yaml`'s GitLab lookup adopted `issues[0]` for the same
   reason and now compares titles like its GitHub counterpart.
+- The sprint-status entry leaked into every issue title and temp file: the interpreter
+  renders a map item as `key: status`, so `common/sync-issues.yaml` produced titles like
+  `Story 1.1: Login Form: Backlog` and files like `/tmp/issue-desc-epic-1: in-progress.md`.
+  The loop body now derives `entry_key` and `entry_status` once, accepting both the
+  `"key: status"` rendering and the bare key the language specifies.
 - `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
   clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
   folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)
