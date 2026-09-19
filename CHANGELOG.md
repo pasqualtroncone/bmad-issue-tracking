@@ -244,6 +244,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set and review-finish never reached `git worktree remove .`. Both variables are now seeded
   with `""` before the branches and passed to the derive step quoted, so an empty one keeps
   its argv slot instead of shifting the other into it.
+- The CI gate reported green for a run that had not started. `gh run list --branch <src>`
+  answers `[]` for the first seconds after a push, `common/get-mr-pipeline.yaml` reports
+  `none`, and `common/check-mr-ci.yaml` mapped that to `no_ci` — which
+  `common/wait-for-green-ci.yaml` treats as green and STOPs on. The dev-finish and
+  review-finish phases push and gate in the same breath, so `ci-status.json` was written
+  green while the pipeline that would fail was still being registered, and bmad-loop's
+  `[verify]` passed on it. "No run yet" is now told from "this repo has no CI" by the CI
+  definition on the branch (`.gitlab-ci.yml` / `.github/workflows/*.yml`): a CI-less repo
+  is still green immediately, a branch that defines CI waits. Inside the polling rounds an
+  empty list is `no_run`, and only three consecutive rounds of it conclude `no_ci`.
 
 ## [3.0.0] - 2026-09-15
 

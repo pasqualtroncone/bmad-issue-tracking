@@ -76,6 +76,7 @@ Cases and what they prove:
 | `d24` | 1 | D24/D25 | `create-issue` lookup: absent title → empty + rc=0 (not a FILTER halt), present title → its number, and the same over 105 issues (2 `--paginate` pages) |
 | `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |
 | `r1` | 1 | #47 | `gh issue create` on the lab repo: its stdout is a URL, and the id-extraction step must yield that issue's number |
+| `r3` | 1 | #49 | push `ci-green`, then read the run list and render `check-mr-ci`'s mapping at once: an empty list must not come out `no_ci` while a CI-less branch still does |
 | `g06` | 1 | D06 | GitLab `search=1-1-login-form` still returns 1.1, 1.10 and 11.1 newest-first; the verdict reads which iid the step SELECTS (and that `Epic 1:` does not resolve to `Epic 10:`) |
 | `gl-d23`, `gl-d4`, `gl-d16`, `gl-d2`, `gl-d18` | 1 | D23, D04, D16, D02, D18 on GitLab | same replays as the GitHub cases against the GitLab consumer (D16 and D02 are GitHub-only; the rest hit both) |
 | `d03` | 1 | D03 | GitLab MR on `ci/outcome=sleep:400`: one rendered poll round is timed while the pipeline runs (must print `running` well under 240 s) and again once it is green (`passed` in one poll); also asserts the rendered round's `sleep × polls` bound |

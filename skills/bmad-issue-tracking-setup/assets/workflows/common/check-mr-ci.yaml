@@ -9,6 +9,9 @@
 #       remote's coordinates once — they are the tracker's whenever the platforms agree)
 # Output variables:
 #   - ci_status: "passed", "failed", "running", "no_ci", "no_mr"
+#   - ci_defined: "true" when the branch carries a CI definition (.gitlab-ci.yml /
+#       .github/workflows/*.yml), "false" otherwise — what tells "no run YET" from
+#       "this repo has no CI"
 # Side effects: none
 
 # mr_repo comes from check-config, which resolves the git remote's coordinates once
@@ -21,19 +24,32 @@
 - SET: { variable: source_branch, value: "{current_branch}" }
 - INCLUDE: common/find-mr
 - INCLUDE: common/get-mr-pipeline
-# Map atomic outputs to the unified ci_status enum (preserves original behavior):
-# empty mr_iid -> no_mr; empty pipeline_id -> no_ci; raw pipeline_status -> enum.
+# Map atomic outputs to the unified ci_status enum: empty mr_iid -> no_mr; otherwise the
+# raw pipeline_status decides, with "no pipeline at all" resolved by ci_defined.
+# "The run list is empty" is NOT "this repo has no CI". `gh run list --branch <src>`
+# answers [] for the first seconds after a push, before Actions registers the run, and a
+# GitLab MR has no pipeline until the hook fires; get-mr-pipeline reports `none` and an
+# empty pipeline_id for both. Mapping that to `no_ci` made wait-for-green-ci STOP green —
+# and review-finish pushes and gates in the same breath, so ci-status.json was written
+# green while the run that would fail had not started yet.
+# The discriminator is the CI DEFINITION on the branch, read from the worktree the hook
+# is running in: a repo with no `.gitlab-ci.yml` / `.github/workflows/*.yml` is genuinely
+# CI-less and stays green at no cost, while a repo that has one waits for its run.
 - CHECK: empty mr_iid
   TRUE:
     - SET: { variable: ci_status, value: "no_mr" }
   FALSE:
-    - CHECK: empty pipeline_id
+    - CHECK: git_platform eq "gitlab"
       TRUE:
-        - SET: { variable: ci_status, value: "no_ci" }
+        - RUN: test -f .gitlab-ci.yml && echo true || echo false
+          STORE: ci_defined
       FALSE:
-        - RUN: uv run --no-project python -c "
+        - RUN: ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 | grep -q . && echo true || echo false
+          STORE: ci_defined
+    - RUN: uv run --no-project python -c "
 import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+defined = (sys.argv[2].strip() if len(sys.argv) > 2 else '') == 'true'
 # GitLab pipeline.status: success/failed/running/pending/canceled/skipped/created/manual
 # GitHub conclusion/status: success/failure/cancelled/skipped/timed_out/queued/in_progress/...
 if ps == 'success':
@@ -42,7 +58,10 @@ elif ps in ('failed', 'failure'):
     print('failed')
 elif ps in ('running', 'pending', 'queued', 'in_progress'):
     print('running')
+elif ps in ('none', ''):
+    # no run at all: still coming if this branch defines CI, absent for good if it does not
+    print('running' if defined else 'no_ci')
 else:
     print('no_ci')
-" {pipeline_status}
-          STORE: ci_status
+" "{pipeline_status}" "{ci_defined}"
+      STORE: ci_status

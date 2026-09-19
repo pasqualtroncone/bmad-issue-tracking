@@ -16,6 +16,7 @@
 #       of the whole repo, i.e. some other branch's pipeline.
 # Output variables:
 #   - ci_status: "passed", "no_ci", "no_mr", "running", "failed", "timeout"
+#   - no_run_rounds: how many consecutive rounds saw no pipeline at all (internal)
 #   - pipeline_id: id of the failed pipeline (set on failure-path, passed to get-failed-jobs)
 #   - jobs: failed-job diagnostics from get-failed-jobs (TSV on gitlab, raw text on github)
 # Side effects: polls CI every 25s while running, in 9 bounded rounds of 8 polls each
@@ -31,7 +32,10 @@
 
 # Initial check (atomic; produces mr_iid + pipeline_id + pipeline_status + ci_status)
 - INCLUDE: common/check-mr-ci
-# Already green or no CI — proceed
+# Already green or no CI — proceed. `no_ci` here means the branch defines no pipeline at
+# all (check-mr-ci decides that from the CI definition, not from an empty run list): an
+# empty run list seconds after a push now arrives as `running`, so the rounds below wait
+# for the run instead of reporting the gate green while it is still being registered.
 - CHECK: ci_status eq "passed"
   TRUE:
     - STOP
@@ -60,6 +64,7 @@
 # atomic remains the canonical source for the single-fetch case (e.g. the check-mr-ci
 # initial check). mr_iid is reused from the initial check-mr-ci INCLUDE above (the MR is
 # not re-resolved per poll).
+- SET: { variable: no_run_rounds, value: "0" }
 - SET: { variable: poll_rounds, value: "1\n2\n3\n4\n5\n6\n7\n8\n9" }
 - LOOP:
     items: poll_rounds
@@ -83,7 +88,8 @@ import json, sys
 ps = json.load(sys.stdin)
 print(ps[0]['status'] if ps else 'none')
 " 2>/dev/null)
-                    # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci L41-54)
+                    # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci's mapping step;
+                    # `none` is `no_run` here, because the initial check already proved CI is defined)
                     STATUS=$(uv run --no-project python -c "
 import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
@@ -93,6 +99,8 @@ elif ps in ('failed', 'failure'):
     print('failed')
 elif ps in ('running', 'pending', 'queued', 'in_progress'):
     print('running')
+elif ps in ('none', ''):
+    print('no_run')
 else:
     print('no_ci')
 " "$pipeline_status")
@@ -100,7 +108,7 @@ else:
                     # not a parse error, decides when to give up. An empty STATUS would
                     # store an empty ci_status matching none of the branches below.
                     [ -n "$STATUS" ] || STATUS=running
-                    if [ "$STATUS" != "running" ]; then
+                    if [ "$STATUS" != "running" ] && [ "$STATUS" != "no_run" ]; then
                       break
                     fi
                   done
@@ -124,7 +132,8 @@ import json, sys
 rs = json.load(sys.stdin)
 print((rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else 'none')
 " 2>/dev/null)
-                        # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci L41-54)
+                        # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci's mapping step;
+                        # `none` is `no_run` here, because the initial check already proved CI is defined)
                         STATUS=$(uv run --no-project python -c "
 import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
@@ -134,18 +143,37 @@ elif ps in ('failed', 'failure'):
     print('failed')
 elif ps in ('running', 'pending', 'queued', 'in_progress'):
     print('running')
+elif ps in ('none', ''):
+    print('no_run')
 else:
     print('no_ci')
 " "$pipeline_status")
                         # An unreadable answer counts as "still running" (see the gitlab branch)
                         [ -n "$STATUS" ] || STATUS=running
-                        if [ "$STATUS" != "running" ]; then
+                        if [ "$STATUS" != "running" ] && [ "$STATUS" != "no_run" ]; then
                           break
                         fi
                       done
                       echo "$STATUS"
                     STORE: ci_status
-# Still "running" after the ninth round — the 30-minute budget is spent
+      # A round that never saw a run is not proof that the repo has no CI — the initial
+      # check already established that this branch DEFINES one, so the run is still being
+      # registered. Three such rounds in a row (a few minutes) is where "still coming"
+      # becomes "configured but never triggered for this branch", and the flow then ends
+      # green as it always did for a CI-less repo, well inside the 30-minute budget.
+      - CHECK: ci_status eq "no_run"
+        TRUE:
+          - RUN: uv run --no-project python -c "
+import sys
+print(int(sys.argv[1]) + 1)
+" {no_run_rounds}
+            STORE: no_run_rounds
+          - CHECK: no_run_rounds gt 2
+            TRUE:
+              - SET: { variable: ci_status, value: "no_ci" }
+            FALSE:
+              - SET: { variable: ci_status, value: "running" }
+# Still "running" after the last round — the 30-minute budget is spent
 - CHECK: ci_status eq "running"
   TRUE:
     - SET: { variable: ci_status, value: "timeout" }

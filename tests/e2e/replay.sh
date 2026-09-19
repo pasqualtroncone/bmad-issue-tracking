@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1  # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1|r3  # GitHub lab (d15/d21/d29 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -473,6 +473,58 @@ except Exception as e:
   fi
 }
 
+case_r3() {  # #49 — an empty run list seconds after a push must not read as "no CI"
+  # review-finish pushes and gates in the same breath. `gh run list --branch <src>` answers
+  # [] until Actions registers the run; get-mr-pipeline reports `none`, the pre-fix
+  # check-mr-ci mapped that to no_ci, wait-for-green-ci STOPped and write-ci-status wrote
+  # ci-status.json GREEN while the run that would fail had not started.
+  local c=r3; load_lab; local d; d="$(case_dir $c)"
+  local ldef lmap lps
+  ldef="$(line_of common/check-mr-ci.yaml '- RUN: ls \.github/workflows' 1)"
+  lmap="$(run_line_of common/check-mr-ci.yaml 'defined = \(sys\.argv\[2\]')"
+  lps="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 2)"
+  [ -n "$ldef" ] && [ -n "$lmap" ] && [ -n "$lps" ] || { verdict $c BLOCKED "cannot locate the ci_defined probe ($ldef), the mapping ($lmap) or the run lookup ($lps)"; return; }
+  cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  git branch -D ci-green >/dev/null 2>&1 || true
+  git checkout -q -b ci-green main; set_outcome . pass
+  git commit -q --allow-empty -m "r3 marker $(date +%s)"
+  git push -q -f -u origin ci-green > "$d/push.log" 2>&1 || warn "push ci-green failed: $(tail -1 "$d/push.log")"
+  # --- live: what the module sees in the first seconds after that push ---
+  local t0; t0="$(date +%s)"
+  replay $c pipeline_status common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green
+  replay $c ci_defined common/check-mr-ci.yaml "$ldef"
+  local ps def; ps="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; def="$(tr -d '[:space:]' < "$d/ci_defined.out")"
+  replay $c mapping common/check-mr-ci.yaml "$lmap" pipeline_status="$ps" ci_defined="$def"
+  local dt; dt=$(( $(date +%s) - t0 ))
+  local live; live="$(tr -d '[:space:]' < "$d/mapping.out")"
+  # --- deterministic: the same mapping on the two answers `none` can mean ---
+  replay $c map-none-defined  common/check-mr-ci.yaml "$lmap" pipeline_status=none ci_defined=true
+  replay $c map-none-noci     common/check-mr-ci.yaml "$lmap" pipeline_status=none ci_defined=false
+  replay $c map-failure       common/check-mr-ci.yaml "$lmap" pipeline_status=failure ci_defined=true
+  local mnd mnn mf
+  mnd="$(tr -d '[:space:]' < "$d/map-none-defined.out")"
+  mnn="$(tr -d '[:space:]' < "$d/map-none-noci.out")"
+  mf="$(tr -d '[:space:]' < "$d/map-failure.out")"
+  # the pre-fix rule over the same live answer, for the record
+  uv run --no-project python -c "
+import sys
+ps = sys.argv[1].strip()
+print('passed' if ps == 'success' else 'failed' if ps in ('failed', 'failure') else 'running' if ps in ('running', 'pending', 'queued', 'in_progress') else 'no_ci')
+" "$ps" > "$d/prefix-mapping.txt" 2>&1
+  git checkout -q main
+  { echo "push → first lookup after ${dt}s: pipeline_status='$ps', ci_defined='$def' → ci_status='$live' (pre-fix rule: $(cat "$d/prefix-mapping.txt"))"
+    echo "mapping(none, defined=true)  → '$mnd' (want running)"
+    echo "mapping(none, defined=false) → '$mnn' (want no_ci)"
+    echo "mapping(failure)             → '$mf'  (want failed)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$def" != true ]; then
+    verdict $c BLOCKED "the consumer has no .github/workflows/*.yml on ci-green (ci_defined='$def'), so there is no 'run not registered yet' to observe"
+  elif [ "$live" != no_ci ] && [ "$mnd" = running ] && [ "$mnn" = no_ci ] && [ "$mf" = failed ]; then
+    verdict $c REFUTED "check-mr-ci.yaml:$lmap reads an empty run list as a run that has not started: ${dt}s after pushing ci-green the lookup at get-mr-pipeline.yaml:$lps answered pipeline_status='$ps' and the mapping returned '$live', not no_ci (the pre-fix rule returned $(cat "$d/prefix-mapping.txt")). The discriminator is the CI definition on the branch (check-mr-ci.yaml:$ldef → '$def'): mapping(none, defined) = '$mnd' and mapping(none, undefined) = '$mnn', so a genuinely CI-less repo is still green at no cost, and a real failure is still '$mf'"
+  else
+    verdict $c CONFIRMED "check-mr-ci.yaml:$lmap still calls an unregistered run 'no CI': ${dt}s after the push pipeline_status='$ps' ci_defined='$def' → '$live'; mapping(none,true)='$mnd' (want running), mapping(none,false)='$mnn' (want no_ci), mapping(failure)='$mf' (want failed)"
+  fi
+}
+
 case_d9() {
   local c=d9; load_lab; local d; d="$(case_dir $c)"
   # a previous run's PR dump would answer the title/body questions for this one
@@ -907,10 +959,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|r3|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1 r3; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
