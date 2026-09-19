@@ -237,6 +237,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the loss never surfaced. The GitHub branch now reads the trailing integer of the URL, and
   an unreadable create output stops with a message naming it instead of leaving `issue_id`
   empty for the callers to treat as "no issue yet".
+- `common/merge-mr.yaml` halted on every merge under the documented semantics, right after
+  the irreversible CLI had run: its last step derives `merged` from `{gl_merge_out}` and
+  `{gh_merge_out}`, and each of the four platform branches sets exactly one of the two, so
+  lang §4.5 stopped the workflow on the other. `merged`, `merge_sha` and `error` were never
+  set and review-finish never reached `git worktree remove .`. Both variables are now seeded
+  with `""` before the branches and passed to the derive step quoted, so an empty one keeps
+  its argv slot instead of shifting the other into it.
 
 ## [3.0.0] - 2026-09-15
 

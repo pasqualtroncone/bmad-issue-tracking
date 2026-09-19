@@ -279,6 +279,27 @@ case_d16() {
   if [ "$(cat "$d/merge-ok.rc")" = 0 ] && grep -q MERGED "$d/pr-state-after.txt" && [ ! -s "$d/merge-ok.out" ] && [ "$(tr -d '[:space:]' < "$d/derive-ok.out")" = false ]; then
     verdict $c CONFIRMED "merge-mr.yaml:$lm 'gh pr merge --squash --delete-branch' succeeded (rc=0, PR $n MERGED) with EMPTY stdout and stdout-only STORE → merge-mr.yaml:$ld derives merged='$(cat "$d/derive-ok.out")' for a real merge (inverted). Re-merging the merged PR: rc=$(cat "$d/merge-again.rc"), stdout empty, stderr '$(head -c 90 "$d/merge-again.err" | tr '\n' ' ')' → derive='$(cat "$d/derive-again.out")' (indistinguishable)"
   else verdict $c REFUTED "ok rc=$(cat "$d/merge-ok.rc") stdout=$(wc -c < "$d/merge-ok.out")B again rc=$(cat "$d/merge-again.rc") derive=$(cat "$d/derive-ok.out")/$(cat "$d/derive-again.out")"; fi
+  # --- R2 (#48): the derive step names BOTH outputs, each branch sets only one ---
+  # lang §4.5 halts on the reference to the other — after the irreversible merge CLI ran.
+  # The file now SETs both to "" before the platform CHECKs, so the rendered derive command
+  # can carry no unresolved {placeholder}, and an empty output still fills its argv slot.
+  local seeds; seeds="$(grep -c -E '^- SET: \{ variable: g[lh]_merge_out, value: "" \}' "$WF/common/merge-mr.yaml")"
+  local firstcheck; firstcheck="$(grep -n -E '^- CHECK: git_platform' "$WF/common/merge-mr.yaml" | head -1 | cut -d: -f1)"
+  local lastseed; lastseed="$(grep -n -E '^- SET: \{ variable: g[lh]_merge_out, value: "" \}' "$WF/common/merge-mr.yaml" | tail -1 | cut -d: -f1)"
+  grep -o '{[a-z_]*}' "$d/derive-ok.cmd" | sort -u > "$d/derive-unresolved.txt" || true
+  local unres; unres="$(grep -c . "$d/derive-unresolved.txt")"
+  # the GitLab shape of the same step (only gl_merge_out set) must read 'true', not shift
+  # the empty gh argument into slot 1
+  replay $c derive-gl-only common/merge-mr.yaml "$ld" gl_merge_out="Merged merge request !7" gh_merge_out=""
+  local dgl; dgl="$(tr -d '[:space:]' < "$d/derive-gl-only.out")"
+  { echo "merge-mr.yaml seeds gl_merge_out/gh_merge_out with \"\": $seeds (want 2), last seed at line $lastseed, first platform CHECK at line $firstcheck"
+    echo "unresolved placeholders left in the rendered derive: $unres $(tr '\n' ' ' < "$d/derive-unresolved.txt")"
+    echo "derive with only the GitLab output set → '$dgl' (want true)"; } > "$d/r2-summary.txt"; cat "$d/r2-summary.txt" >&2
+  if [ "$seeds" = 2 ] && [ -n "$firstcheck" ] && [ "$lastseed" -lt "$firstcheck" ] && [ "$unres" = 0 ] && [ "$dgl" = true ]; then
+    verdict $c-R2 REFUTED "merge-mr.yaml SETs both gl_merge_out and gh_merge_out to \"\" (lines up to $lastseed) before the first platform CHECK (line $firstcheck), so the derive step at :$ld references no undefined variable: the rendered command leaves 0 placeholders and reads 'true' from the GitLab output alone ('$dgl') as well as from the GitHub one. Under lang §4.5 the pre-fix step halted on every merge, after the irreversible CLI, leaving merged/error unset"
+  else
+    verdict $c-R2 CONFIRMED "merge-mr.yaml:$ld still references an output no branch defines: seeds=$seeds (want 2) lastseed=$lastseed firstcheck=$firstcheck unresolved=$unres ($(tr '\n' ' ' < "$d/derive-unresolved.txt")) gl-only derive='$dgl'"
+  fi
   local sha; sha="$(tr -d '[:space:]' < "$d/merge-sha.out")"
   if [ "$(cat "$d/merge-sha.rc")" = 0 ] && [ -n "$sha" ]; then
     verdict $c-D30 REFUTED "merge-mr.yaml:$lsha reads the merge SHA of the just-merged PR #$n: rc=0, merge_commit_sha=$sha. The host travels in --hostname, not in the path; the pre-fix path shape (repos/github.com/$REPO_GH/pulls/$n) answers rc=$(cat "$d/merge-sha-hostinpath.rc") '$(head -c 90 "$d/merge-sha-hostinpath.err" | tr '\n' ' ')', and with no EXPECT_EXIT: any that 404 halted the workflow after a successful merge"
