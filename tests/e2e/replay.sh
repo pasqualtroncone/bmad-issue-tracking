@@ -2,7 +2,8 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -232,13 +233,13 @@ case_d8() {
   git ls-remote --heads origin "$sb" > "$d/ls-remote-story-branch.txt"
   local le; le="$(line_of common/ensure-mr.yaml 'gh pr create' 2)"
   echo "Sprint key: 1-1-login-form" > /tmp/e2e-d8-desc.md
-  replay $c ensure-mr-head common/ensure-mr.yaml "$le" mr_title="Story 1.1: 1-1-login-form" description_body="Sprint key: 1-1-login-form" target_branch="feat/$PRD_KEY/prd" source_branch="$sb" mr_repo="github.com/$REPO_GH"
+  replay $c ensure-mr-head common/ensure-mr.yaml "$le" mr_title="Story 1.1: 1-1-login-form" mr_description_file=/tmp/e2e-d8-desc.md target_branch="feat/$PRD_KEY/prd" source_branch="$sb" mr_repo="github.com/$REPO_GH"
   sed 's/ 2>&1 | grep .*$//' "$d/ensure-mr-head.cmd" > "$d/ensure-mr-head-gh-only.cmd"
   ( cd "$CONSUMER" && bash "$d/ensure-mr-head-gh-only.cmd" ) > "$d/ensure-mr-head-gh-only.out" 2> "$d/ensure-mr-head-gh-only.err"; echo $? > "$d/ensure-mr-head-gh-only.rc"
   rm -f /tmp/e2e-d8-desc.md
   git checkout -q main; git branch -D bmad-loop/r1/1-1-login-form >/dev/null 2>&1 || true
   if [ "$(cat "$d/push.rc")" = 128 ] && grep -q 'no upstream\|has no upstream branch' "$d/push.err"; then
-    local d22=""; [ ! -s "$d/ls-remote-story-branch.txt" ] && d22="; D22: module-derived story_branch '$sb' does not exist on origin, and ensure-mr.yaml:$le --head $sb fails (gh rc=$(cat "$d/ensure-mr-head-gh-only.rc")): '$(grep -m1 -iE 'head|not found|error|could not' "$d/ensure-mr-head-gh-only.err" | cut -c1-110)' — the step's '2>&1 | grep https://' swallows it and stores an empty mr_url"
+    local d22=""; [ ! -s "$d/ls-remote-story-branch.txt" ] && d22="; D22: module-derived story_branch '$sb' does not exist on origin, and ensure-mr.yaml:$le --head $sb fails (gh rc=$(cat "$d/ensure-mr-head-gh-only.rc")): '$(grep -m1 -iE 'head|not found|error|could not' "$d/ensure-mr-head-gh-only.err" | cut -c1-110)' — the create is the step's own exit code now, so the caller halts instead of storing an empty mr_url"
     verdict $c CONFIRMED "post-dev-complete.yaml:$l2 'git push' on bmad-loop/r1/1-1-login-form (no upstream; push.autoSetupRemote $(cat "$d/push-autosetupremote.txt" | head -1)) → exit 128 '$(grep -o 'fatal:.*' "$d/push.err" | head -1 | cut -c1-70)'; dev-finish/review-finish halt there$d22"
   else verdict $c REFUTED "push rc=$(cat "$d/push.rc") $(head -c 200 "$d/push.err")"; fi
 }
@@ -256,6 +257,15 @@ case_d16() {
   # positive: merge succeeds — capture stdout and stderr separately, exactly as STORE would (stdout only)
   replay $c merge-ok common/merge-mr.yaml "$lm" mr_iid="$n" host=github.com project="$REPO_GH"
   gh pr view "$n" -R "$REPO_GH" --json state,mergedAt --jq '.state + " " + (.mergedAt // "")' > "$d/pr-state-after.txt"
+  # D30 (#43): the SHA lookup the atomic runs right after the merge. `gh api` takes the
+  # host through --hostname; with the host inside the path it answers 404, and the step
+  # carries no EXPECT_EXIT: any — so a REAL merge was followed by a halt with merge_sha
+  # empty. Rendered here against the PR that was just merged: the SHA must come back.
+  local lsha; lsha="$(line_of common/merge-mr.yaml 'RUN: gh api "repos/' 1)"
+  replay $c merge-sha common/merge-mr.yaml "$lsha" mr_iid="$n" host=github.com project="$REPO_GH"
+  # the pre-fix shape against the same merged PR, for the record
+  gh api "repos/github.com/$REPO_GH/pulls/$n" --jq .merge_commit_sha > "$d/merge-sha-hostinpath.out" 2> "$d/merge-sha-hostinpath.err"
+  echo $? > "$d/merge-sha-hostinpath.rc"
   # negative: merge the already-merged PR
   replay $c merge-again common/merge-mr.yaml "$lm" mr_iid="$n" host=github.com project="$REPO_GH"
   # the derivation step, fed what STORE would hold (stdout) in both cases
@@ -266,6 +276,12 @@ case_d16() {
   if [ "$(cat "$d/merge-ok.rc")" = 0 ] && grep -q MERGED "$d/pr-state-after.txt" && [ ! -s "$d/merge-ok.out" ] && [ "$(tr -d '[:space:]' < "$d/derive-ok.out")" = false ]; then
     verdict $c CONFIRMED "merge-mr.yaml:$lm 'gh pr merge --squash --delete-branch' succeeded (rc=0, PR $n MERGED) with EMPTY stdout and stdout-only STORE → merge-mr.yaml:$ld derives merged='$(cat "$d/derive-ok.out")' for a real merge (inverted). Re-merging the merged PR: rc=$(cat "$d/merge-again.rc"), stdout empty, stderr '$(head -c 90 "$d/merge-again.err" | tr '\n' ' ')' → derive='$(cat "$d/derive-again.out")' (indistinguishable)"
   else verdict $c REFUTED "ok rc=$(cat "$d/merge-ok.rc") stdout=$(wc -c < "$d/merge-ok.out")B again rc=$(cat "$d/merge-again.rc") derive=$(cat "$d/derive-ok.out")/$(cat "$d/derive-again.out")"; fi
+  local sha; sha="$(tr -d '[:space:]' < "$d/merge-sha.out")"
+  if [ "$(cat "$d/merge-sha.rc")" = 0 ] && [ -n "$sha" ]; then
+    verdict $c-D30 REFUTED "merge-mr.yaml:$lsha reads the merge SHA of the just-merged PR #$n: rc=0, merge_commit_sha=$sha. The host travels in --hostname, not in the path; the pre-fix path shape (repos/github.com/$REPO_GH/pulls/$n) answers rc=$(cat "$d/merge-sha-hostinpath.rc") '$(head -c 90 "$d/merge-sha-hostinpath.err" | tr '\n' ' ')', and with no EXPECT_EXIT: any that 404 halted the workflow after a successful merge"
+  else
+    verdict $c-D30 CONFIRMED "merge-mr.yaml:$lsha does not read the merge SHA of the merged PR #$n: rc=$(cat "$d/merge-sha.rc") out='$sha' err='$(head -c 120 "$d/merge-sha.err" | tr '\n' ' ')' — the step has no EXPECT_EXIT: any, so the workflow halts right after a successful merge with merge_sha empty"
+  fi
 }
 
 case_d19() {
@@ -285,11 +301,16 @@ case_d19() {
   echo "search index latency for a just-created issue: ~${t}s (total_count=$n)" | tee "$d/index-latency.txt" >&2
   sleep 20
   local lf; lf="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
+  # Since #44 the two search_text shapes live in two steps: a key-shaped lookup goes to
+  # the REST list endpoint (read-your-writes consistent), a title shape keeps the
+  # index-backed search API. Each replay below targets the step the runtime would pick
+  # for the search_text it passes.
+  local lr; lr="$(line_of common/find-issue.yaml 'gh api "repos/' 1)"
   # The step searches AND chooses: its stdout is the selected issue number, or empty. The
   # raw search is captured separately (raw-*.txt) because the QUERY is deliberately
   # unchanged — it is still fuzzy, and the evidence has to keep showing that. The verdict
   # therefore reads the selected id, not the number of hits: "the wrong issue is picked".
-  replay $c find-1-1 common/find-issue.yaml "$lf" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  replay $c find-1-1 common/find-issue.yaml "$lr" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
@@ -314,9 +335,31 @@ case_d19() {
   if [ -z "$w11" ] || [ -z "$we1" ]; then
     verdict $c BLOCKED "the seeded issues are not on the repo (want Story 1.1='$w11' Epic 1='$we1'); raw search: $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt")"
   elif [ "$g11" != "$w11" ] || [ "$ge1" != "$we1" ]; then
-    verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) picks the wrong issue: search_text '1-1-login-form' selects #${g11:-(empty)} but Story 1.1 is #$w11, and 'Epic 1:' selects #${ge1:-(empty)} but Epic 1 is #$we1. The query returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt") and the choice follows the index rank. Search-index latency measured ≈${t}s"
+    verdict $c CONFIRMED "find-issue.yaml:$lr/$lf (GitHub) picks the wrong issue: search_text '1-1-login-form' selects #${g11:-(empty)} but Story 1.1 is #$w11, and 'Epic 1:' selects #${ge1:-(empty)} but Epic 1 is #$we1. The query returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt") and the choice follows the index rank. Search-index latency measured ≈${t}s"
   else
-    verdict $c REFUTED "find-issue.yaml:$lf (GitHub) picks by identity, not by index rank: '1-1-login-form' → #$g11 'Story 1.1: Login Form' (its **Sprint Key** body marker) and 'Epic 1:' → #$ge1 'Epic 1: Authentication' (exact title prefix, 'Epic 10:' excluded), although the unchanged query still returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt"). Search-index latency measured ≈${t}s"
+    verdict $c REFUTED "find-issue.yaml:$lr/$lf (GitHub) picks by identity, not by index rank: '1-1-login-form' → #$g11 'Story 1.1: Login Form' (its **Sprint Key** body marker) and 'Epic 1:' → #$ge1 'Epic 1: Authentication' (exact title prefix, 'Epic 10:' excluded), although the unchanged query still returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt"). Search-index latency measured ≈${t}s"
+  fi
+  # --- D20 (#44): an issue created NOW must be findable by its key on the next call ---
+  # This is the half the three lookups above cannot show: they run against issues the
+  # index has long since absorbed. The probe creates one and asks for it immediately.
+  local fresh="9-9-fresh-$(date +%s)"
+  gh issue create -R "$REPO_GH" --title "Story 9.9: Fresh probe ${fresh##*-}" \
+    --body "**Sprint Key:** \`$fresh\`" --label "prd:$key" > "$d/fresh-url.txt" 2>&1
+  local fu fn; fu="$(tail -1 "$d/fresh-url.txt")"; fn="${fu##*/}"
+  local t0 dt; t0="$(date +%s)"
+  replay $c find-fresh common/find-issue.yaml "$lr" search_text="$fresh" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  dt=$(( $(date +%s) - t0 ))
+  # what the index-backed search API knows about the same issue at the same instant
+  gh api "search/issues?q=$fresh+repo:$REPO_GH+label:prd:$key&per_page=5" --jq .total_count > "$d/fresh-search-count.txt" 2>&1
+  local gf; gf="$(tr -d '[:space:]' < "$d/find-fresh.out")"
+  echo "fresh issue #$fn key=$fresh -> selected '#${gf:-(empty)}' in ${dt}s; search/issues total_count right after: $(cat "$d/fresh-search-count.txt")" | tee "$d/fresh.txt" >&2
+  gh issue close "$fn" -R "$REPO_GH" >/dev/null 2>&1 || true
+  if [ -z "$fn" ]; then
+    verdict $c-D20 BLOCKED "could not create the probe issue: $(head -c 200 "$d/fresh-url.txt" | tr '\n' ' ')"
+  elif [ "$(cat "$d/find-fresh.rc")" = 0 ] && [ "$gf" = "$fn" ]; then
+    verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
+  else
+    verdict $c-D20 CONFIRMED "find-issue.yaml:$lr does not see the issue it was just told about: #$fn key '$fresh' → selected '#${gf:-(empty)}' rc=$(cat "$d/find-fresh.rc") after ${dt}s; search/issues total_count=$(cat "$d/fresh-search-count.txt"). A flow that creates an issue and looks it up in the same minute skips the status update"
   fi
 }
 
@@ -367,11 +410,16 @@ print('documents=%d issues=%d bytes=%d newlines=%d' % (len(pages), sum(len(p) fo
 
 case_d9() {
   local c=d9; load_lab; local d; d="$(case_dir $c)"
+  # a previous run's PR dump would answer the title/body questions for this one
+  rm -f "$d/pr.json" "$d/pr-title.txt" "$d/pr-body.txt"
   cd "$CONSUMER"; git checkout -q main; local br="d9-quote-$(date +%s)"
   git checkout -q -b "$br" main; git commit -q --allow-empty -m "d9 probe"; git push -q -u origin "$br"; git checkout -q main
   local le; le="$(line_of common/ensure-mr.yaml 'gh pr create' 2)"
   local body; body="$(cat "$E2E_ROOT/fixtures/quoting-body.md")"
-  $TT render-step common/ensure-mr.yaml "$le" mr_title='Story 1.1: Login "Form"' description_body="$body" target_branch=main source_branch="$br" mr_repo="github.com/$REPO_GH" > "$d/rendered.cmd"
+  # description_body is still passed: the step must no longer name that placeholder at
+  # all (the body travels as a FILE now), so a render that still resolved it would put
+  # the quoting-hostile text back on the command line and this case would see it.
+  $TT render-step common/ensure-mr.yaml "$le" mr_title='Story 1.1: Login "Form"' description_body="$body" mr_description_file="$E2E_ROOT/fixtures/quoting-body.md" target_branch=main source_branch="$br" mr_repo="github.com/$REPO_GH" > "$d/rendered.cmd"
   bash -n "$d/rendered.cmd" > "$d/syntax.out" 2> "$d/syntax.err"; echo $? > "$d/syntax.rc"
   ( cd "$CONSUMER" && bash "$d/rendered.cmd" ) > "$d/run.out" 2> "$d/run.err"; echo $? > "$d/run.rc"
   # the literal step hides gh's own error behind `2>&1 | grep`; run the gh part alone for the record
@@ -379,13 +427,25 @@ case_d9() {
   ( cd "$CONSUMER" && bash "$d/gh-only.cmd" ) > "$d/gh-only.out" 2> "$d/gh-only.err"; echo $? > "$d/gh-only.rc"
   grep -o 'pull/[0-9]*' "$d/gh-only.out" | head -1 | cut -d/ -f2 | xargs -r -I{} gh pr close {} -R "$REPO_GH" --delete-branch >/dev/null 2>&1
   local n=""; n="$(grep -o 'pull/[0-9]*' "$d/run.out" | head -1 | cut -d/ -f2)"
-  if [ -n "$n" ]; then gh pr view "$n" -R "$REPO_GH" --json title,body > "$d/pr.json"; gh pr close "$n" -R "$REPO_GH" --delete-branch >/dev/null 2>&1 || true; fi
+  # title and body are also read RAW (--jq): `--json title,body` escapes the quotes of
+  # the very title this case is about, so the JSON blob cannot answer "did it survive?"
+  if [ -n "$n" ]; then
+    gh pr view "$n" -R "$REPO_GH" --json title,body > "$d/pr.json"
+    gh pr view "$n" -R "$REPO_GH" --json title --jq .title > "$d/pr-title.txt"
+    gh pr view "$n" -R "$REPO_GH" --json body --jq .body > "$d/pr-body.txt"
+    gh pr close "$n" -R "$REPO_GH" --delete-branch >/dev/null 2>&1 || true
+  fi
   git branch -D "$br" >/dev/null 2>&1 || true
-  local inj=0; grep -q INJECTED "$d/pr.json" "$d/gh-only.err" 2>/dev/null && inj=1
-  local titleok=0; grep -q 'Login "Form"' "$d/pr.json" 2>/dev/null && titleok=1
+  # "the shell ran $(echo INJECTED)" is not "the word INJECTED is somewhere": a body
+  # delivered intact CONTAINS the literal $(echo INJECTED). The substitution executed
+  # exactly when INJECTED appears without its wrapper — or when gh choked on it.
+  local inj=0
+  grep -q INJECTED "$d/gh-only.err" 2>/dev/null && inj=1
+  if grep -q INJECTED "$d/pr-body.txt" 2>/dev/null && ! grep -qF '$(echo INJECTED)' "$d/pr-body.txt" 2>/dev/null; then inj=1; fi
+  local titleok=0; grep -q 'Login "Form"' "$d/pr-title.txt" 2>/dev/null && titleok=1
   if [ "$(cat "$d/syntax.rc")" != 0 ] || [ "$inj" = 1 ] || [ "$titleok" = 0 ]; then
     verdict $c LATENT "ensure-mr.yaml:$le interpolates --title/--body inline: with a body holding quotes, a backtick and \$(…) the literal step 'succeeds' (pipeline rc=$(cat "$d/run.rc") — the '2>&1 | grep https' hides gh's exit) but creates $( [ -n "$n" ] && echo "a PR" || echo "NO PR"); gh alone rc=$(cat "$d/gh-only.rc"): '$(grep -m1 'unknown argument' "$d/gh-only.err" | cut -c1-110)'; the shell ran \$(echo INJECTED)=$inj and tried to execute the backtick ('$(grep -o 'backtick: command not found' "$d/run.err" | head -1)'); quoted title preserved=$titleok. Current callers pass benign bodies/titles, so LATENT"
-  else verdict $c REFUTED "rendered command survived quotes, backticks and \$(…) intact"; fi
+  else verdict $c REFUTED "ensure-mr.yaml:$le hands the body to gh as a FILE and quotes the title as one argument: the render no longer names {description_body} at all, bash -n accepts the command, PR #$n was created with the title '$(cat "$d/pr-title.txt")' intact and a body that still carries the literal \$(echo INJECTED) (executed=$inj), and the create's own exit code (rc=$(cat "$d/run.rc")) is what the caller sees"; fi
 }
 
 # --- GitLab (self-hosted or gitlab.com; host from lab.env GL_HOST) --------------------------
@@ -498,8 +558,10 @@ case_gl-ci() {  # shared setup for gl-d2 / gl-d18: a green MR and a red MR with 
 case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the project's latest)?
   local c=gl-d2; case_gl-ci || return; local d; d="$(case_dir $c)"
   local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml 'glab api' 1)"; l2="$(line_of common/get-mr-pipeline.yaml 'glab api' 2)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH"
-  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH"
+  # since #40 the GitLab steps address the GIT REMOTE's project (git_project_enc/git_host,
+  # resolved by check-config), not the tracker's — on this lab the two are the same project
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH"
   local got latest; got="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; latest="$(uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d[0]["ref"]+"="+d[0]["status"])' "$(case_dir gl-ci)/latest-pipelines.json")"
   if [ "$got" = success ]; then verdict $c REFUTED "GitLab path is per-MR and correct: get-mr-pipeline.yaml:$l2 for the green MR !$GREEN_IID → '$got' while the project's latest pipeline is $latest. D02 is GitHub-only"
   else verdict $c CONFIRMED "GitLab path also wrong: green MR reports '$got' (latest project pipeline $latest)"; fi
@@ -508,7 +570,7 @@ case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the proj
 case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
   local c=gl-d18; case_gl-ci || return; local d; d="$(case_dir $c)"
   local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
-  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH" > "$d/gitlab-loop.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" > "$d/gitlab-loop.cmd"
   # polls_per_round replaced max_attempts when #14 split the 30-min loop into bounded rounds
   sed 's/polls_per_round=8/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
   log "  (a) literal GitLab round, polls_per_round=2 (≈50 s), MR !$GREEN_IID (pipeline success)…"
@@ -531,7 +593,7 @@ case_d03() {  # #14 — does ONE poll round return long before the Bash tool cap
   git push -q -f -u origin "$br"; git checkout -q main
   local iid; iid="$(gl_mr_for "$br")"; echo "mr=$iid" > "$d/mr.txt"
   [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR for $br"; cd - >/dev/null; return; }
-  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$iid" host="$GLH" > "$d/poll.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" > "$d/poll.cmd"
   # static half: the rendered round must be bounded — no 60-attempt (30-min) RUN left
   local sl po worst
   sl="$(grep -o 'sleep [0-9]*' "$d/poll.cmd" | awk '{print $2}' | sort -n | tail -1)"
@@ -740,16 +802,51 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   fi
 }
 
+case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually see
+  # Static (no lab, no API): the defect IS the order of the dev-finish INCLUDEs. With the
+  # CI gate ahead of ensure-mr there is no PR on a story's first dev-finish, check-mr-ci
+  # maps `no_mr`, write-ci-status writes green, and only then is the PR created — so
+  # bmad-loop's first [verify] passes whatever CI did.
+  local c=d29 d
+  load_lab 2>/dev/null || true
+  d="$(mkdir -p "$E2E_ROOT/evidence/${LAB_ID:-static}/d29" && echo "$E2E_ROOT/evidence/${LAB_ID:-static}/d29")"
+  local f="$WF/common/post-dev-complete.yaml"
+  local from to
+  from="$(grep -n 'CHECK: phase eq "dev-finish"' "$f" | head -1 | cut -d: -f1)"
+  to="$(grep -n 'CHECK: phase eq "review-finish"' "$f" | head -1 | cut -d: -f1)"
+  if [ -z "$from" ] || [ -z "$to" ]; then
+    verdict $c BLOCKED "cannot delimit the dev-finish phase in post-dev-complete.yaml (from='$from' to='$to')"; return
+  fi
+  sed -n "${from},$((to-1))p" "$f" | grep -oE '^[[:space:]]*- INCLUDE: common/[a-z-]+' | sed 's#.*common/##' > "$d/includes.txt"
+  pos() { grep -nxF "$1" "$d/includes.txt" | head -1 | cut -d: -f1; }
+  local p_issue p_mr p_ci p_write
+  p_issue="$(pos ensure-issue)"; p_mr="$(pos ensure-mr)"; p_ci="$(pos wait-for-green-ci)"; p_write="$(pos write-ci-status)"
+  # the `no_mr` -> green mapping must survive: it is the flow with no remote MR AT ALL
+  grep -n 'ci_status eq "no_mr"' "$WF/common/write-ci-status.yaml" > "$d/no-mr-green.txt" || true
+  { echo "dev-finish INCLUDE order: $(tr '\n' ' ' < "$d/includes.txt")"
+    echo "ensure-issue=#${p_issue:-?} ensure-mr=#${p_mr:-?} wait-for-green-ci=#${p_ci:-?} write-ci-status=#${p_write:-?}"
+    echo "write-ci-status still maps no_mr -> green: $(cat "$d/no-mr-green.txt")"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ -z "$p_issue" ] || [ -z "$p_mr" ] || [ -z "$p_ci" ] || [ -z "$p_write" ]; then
+    verdict $c BLOCKED "the dev-finish phase does not include all four atomics: $(cat "$d/summary.txt" | head -2 | tr '\n' ' ')"
+  elif [ "$p_ci" -lt "$p_mr" ]; then
+    verdict $c CONFIRMED "post-dev-complete.yaml dev-finish gates on CI (#$p_ci) BEFORE it ensures the MR (#$p_mr): on a story's first dev-finish there is no PR, check-mr-ci maps no_mr, write-ci-status (#$p_write) writes green, and the PR is created afterwards. bmad-loop's first [verify] passes whatever CI did; a red pipeline is only seen on the next pass"
+  elif [ "$p_issue" -lt "$p_mr" ] && [ "$p_mr" -lt "$p_ci" ] && [ "$p_ci" -lt "$p_write" ] && [ -s "$d/no-mr-green.txt" ]; then
+    verdict $c REFUTED "post-dev-complete.yaml dev-finish ensures the issue (#$p_issue) and the MR (#$p_mr) BEFORE the CI gate (#$p_ci) and the ci-status.json write (#$p_write), so the FIRST dev-finish of a story is gated on a pipeline that exists. no_mr still maps to green ($(cat "$d/no-mr-green.txt")) — that is the flow with no remote MR at all, not a story whose MR had simply not been created yet"
+  else
+    verdict $c BLOCKED "neither shape: ensure-issue=#$p_issue ensure-mr=#$p_mr wait-for-green-ci=#$p_ci write-ci-status=#$p_write; no_mr mapping: $(cat "$d/no-mr-green.txt")"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
-    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
+    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
 }

@@ -144,6 +144,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every other producer writes, and a key-shaped lookup selects on exactly that marker. There was
   no duplicate — `common/create-issue.yaml` adopts the issue by its exact title — but every sync
   counted the retrospective as newly created and left its status label unreconciled.
+- A successful GitHub merge halted the workflow one step later: `common/merge-mr.yaml` read the
+  merge commit with the host inside the API path (`gh api repos/github.com/<owner>/<repo>/pulls/<n>`),
+  which answers 404, and the step carries no `EXPECT_EXIT: any`. The host now travels in
+  `--hostname`, the shape the rest of the module uses, on both the same-platform and the
+  cross-platform branch.
+- An MR/PR description holding a double quote, a backtick or a `$(...)` substitution was
+  taken apart by the shell before the CLI saw it: `common/ensure-mr.yaml` interpolated the
+  body into `--body`/`--description`, so the shell ran the substitution, `gh` answered
+  `unknown argument` and created nothing — and the step's trailing `2>&1 | grep https` gave
+  that exit 0 and an empty MR URL, so the caller carried on as if the MR existed. The body
+  now travels as a file (`--body-file` / `--description-file`), the title is one
+  single-quoted argument, and the create's own exit code reaches the caller.
+- A failed bulk fetch made the tracker look empty and the whole sprint look unsynced: the
+  two bulk fetches of `common/sync-issues.yaml` piped `glab api` / `gh api --paginate` into
+  python without `set -o pipefail`, so a CLI failure (auth, network, rate limit) still
+  exited 0 with an empty `issue_index`. Every entry then looked new — `create-issue` adopts
+  by exact title, so no duplicates, but no status was reconciled and the counters lied.
+- On GitHub a just-created issue was invisible to the next lookup for several seconds, so
+  sync-issues walking a sprint — or a create-story phase followed by dev-finish in the same
+  minute — read an empty `issue_id` and skipped the status update. A key-shaped lookup
+  (`1-1-login-form`, `epic-1`, `epic-1-retrospective`) now reads the REST list endpoint
+  scoped by the PRD label, the one `create-issue.yaml` uses, and selects on the
+  `**Sprint Key:**` marker locally instead of taking the search index's top hit; and
+  because NEITHER GitHub endpoint is read-your-writes — measured on the lab, 3.7-7.7 s for
+  the issue list and about as long for `search/issues` — a miss is re-checked up to three
+  times, 3 s apart, within the same step. The `PRD: <key>` / `Epic <n>:` title shapes keep
+  the search API. GitLab is unaffected.
+- With code on a GitLab remote and issues on GitHub, the CI atomics polled the issue
+  tracker's project: the GitLab steps of `common/get-mr-pipeline.yaml`,
+  `common/wait-for-green-ci.yaml` and `common/get-failed-jobs.yaml` addressed
+  `projects/{project_enc}` with `--hostname {host}`, and the dev-finish and create-story
+  phases of `common/post-dev-complete.yaml` set `mr_repo` to `{host}/{project}` outright.
+  `common/check-config.yaml` now resolves the git remote's coordinates once
+  (`git_host`, `git_project`, `git_project_enc`, `mr_repo`) beside the tracker's, and every
+  MR/PR and CI step reads them from there. The four private copies of that resolution are
+  gone, and with them the `git_owner`/`git_repo` split-and-rejoin of
+  `bmad-prd/complete.yaml`, `create-prd/complete.yaml` and `common/mark-mr-ready.yaml`.
+- The first dev-finish of a story wrote `ci-status.json` green without checking any CI: the
+  dev-finish phase of `common/post-dev-complete.yaml` ran the CI gate before `ensure-mr`, so
+  on the first pass there was no PR yet, `check-mr-ci` mapped `no_mr` and `write-ci-status`
+  wrote green — and only then was the PR created. Under bmad-loop the first `[verify]`
+  therefore passed whatever CI did, and a red pipeline was first seen one pass later. The
+  issue and the MR are now ensured before the gate. `no_mr` still maps to green: that is the
+  flow with no remote MR at all, not a story whose MR had not been created yet.
 
 ## [3.0.0] - 2026-09-15
 

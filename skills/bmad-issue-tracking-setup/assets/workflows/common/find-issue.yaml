@@ -10,16 +10,19 @@
 # Output variables:
 #   - issue_id: the issue IID (GitLab) or number (GitHub); empty string if not found
 # Side effects: none
-
+#
 # Both trackers answer `search=` with a FUZZY, index-ranked list: "1-1-login-form" also
 # returns Story 1.10 and Story 11.1, and "Epic 1:" also returns "Epic 10: ...". Taking
 # item 0 adopted whichever issue the index happened to rank first, so a story's status
-# landed on another story's issue. The search is unchanged — the CHOICE is made here, on
-# the exact identity the module writes into every issue it creates:
-#   - a key-shaped search_text ("1-1-login-form", "epic-1") must match the body marker
-#     **Sprint Key: <key>** written by ensure-issue.yaml / sync-issues.yaml;
+# landed on another story's issue. The CHOICE is made here, on the exact identity the
+# module writes into every issue it creates:
+#   - a key-shaped search_text ("1-1-login-form", "epic-1", "epic-1-retrospective") must
+#     match the body marker **Sprint Key: <key>** written by ensure-issue.yaml /
+#     sync-issues.yaml;
 #   - a "PRD: <key>" / "Epic <n>:" search_text must match the TITLE, equality first and
 #     the literal prefix second (the colon is what keeps "Epic 1:" off "Epic 10: ...").
+# The colon is what tells the two shapes apart — every key the module mints is
+# `<n>-<m>-<slug>` or `epic-<n>[-retrospective]`, and every title shape carries one.
 # No match prints an EMPTY id — never a consolation hit: the callers' `CHECK: empty
 # issue_id` then goes to create-issue.yaml, whose own exact-title lookup adopts an issue
 # that does exist under the right title instead of duplicating it.
@@ -48,7 +51,25 @@ print(str(match[0]['iid']) if match else '')
 " "{search_text}"
   STORE: issue_id
   PLATFORM: gitlab
-- RUN: set -o pipefail; gh api "search/issues" --method GET -f "q={search_text} repo:{project} label:prd{sep}{prd_key}" -f "per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
+# GitHub splits the two shapes across two endpoints. A key-shaped lookup reads the REST
+# list endpoint — the same one create-issue.yaml uses — scoped by the PRD label, and the
+# **Sprint Key:** marker decides locally; the title shapes keep `search/issues`, whose
+# index ranking they survive because the choice is an exact title match.
+#
+# The retry is the other half, and it is why this body calls `gh` itself. NEITHER GitHub
+# endpoint is read-your-writes: measured on the lab, an issue takes 3.7-7.7 s to appear
+# in `repos/<o>/<r>/issues` (with or without the `labels=` filter) and about as long in
+# `search/issues`. Any flow that creates an issue and looks it up again in the same
+# minute — a create-story phase followed by dev-finish, sync-issues walking several
+# entries — read an empty issue_id, skipped the status update and went back to
+# create-issue, whose own lookup reads the same lagging list. So a miss is re-checked up
+# to three times, 3 s apart: ~9 s at worst, paid once per issue that genuinely does not
+# exist yet, and nothing at all when the issue is found on the piped first page.
+# A `gh` failure raises (check=True) and the step exits non-zero, as #32 requires.
+# GitLab's REST `search=` is not index-backed and needs none of this.
+- CHECK: search_text contains ":"
+  TRUE:
+    - RUN: set -o pipefail; gh api "search/issues" --method GET -f "q={search_text} repo:{project} label:prd{sep}{prd_key}" -f "per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
 text = sys.stdin.read()
@@ -61,12 +82,44 @@ while pos < len(text):
     pages.append(page)
 issues = [item for page in pages for item in page.get('items', [])]
 needle = sys.argv[1]
-if ':' in needle:
-    match = [i for i in issues if (i.get('title') or '') == needle] or [i for i in issues if (i.get('title') or '').startswith(needle)]
-else:
-    marker = '**Sprint Key:** ' + chr(96) + needle + chr(96)
-    match = [i for i in issues if marker in (i.get('body') or '')]
+match = [i for i in issues if (i.get('title') or '') == needle] or [i for i in issues if (i.get('title') or '').startswith(needle)]
 print(str(match[0]['number']) if match else '')
 " "{search_text}"
-  STORE: issue_id
-  PLATFORM: github
+      STORE: issue_id
+      PLATFORM: github
+  FALSE:
+    - RUN: set -o pipefail; gh api "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" --hostname {host} --paginate | uv run --no-project python -c "
+import json, subprocess, sys, time
+
+
+def parse(text):
+    dec = json.JSONDecoder()
+    pos, pages = 0, []
+    while pos < len(text):
+        if text[pos].isspace():
+            pos += 1
+            continue
+        page, pos = dec.raw_decode(text, pos)
+        pages.append(page)
+    return [i for page in pages for i in page if 'pull_request' not in i]
+
+
+marker = '**Sprint Key:** ' + chr(96) + sys.argv[1] + chr(96)
+text = sys.stdin.read()
+found = ''
+for attempt in range(4):
+    match = [i for i in parse(text) if marker in (i.get('body') or '')]
+    if match:
+        found = str(match[0]['number'])
+        break
+    if attempt == 3:
+        break
+    time.sleep(3)
+    text = subprocess.run(
+        ['gh', 'api', sys.argv[2], '--hostname', sys.argv[3], '--paginate'],
+        capture_output=True, text=True, check=True
+    ).stdout
+print(found)
+" "{search_text}" "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" {host}
+      STORE: issue_id
+      PLATFORM: github

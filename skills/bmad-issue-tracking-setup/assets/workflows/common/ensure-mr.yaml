@@ -18,35 +18,50 @@
 #               is responsible for assembling the cross-platform issue reference
 #               ("Sprint key: ...\n\nRelated to #N" for story atomic; "Closes #N" for PRD)
 #   - mr_draft: "true" to create as draft, "false" for ready-to-merge (default "false")
-# Output variables: (none — call common/find-mr after to resolve mr_iid if needed)
+# Output variables:
+#   - mr_create_out: raw stdout of the create CLI when an MR/PR was created (it carries
+#               the web URL); unset when one already existed. Call common/find-mr
+#               afterwards to resolve mr_iid.
 # Side effects: creates the MR/PR on the tracker if not found
+#
+# Quoting: the description NEVER travels through the command line. It used to be read
+# into {description_body} and interpolated inside double quotes, so a body holding a
+# double quote, a backtick or a $(…) substitution was taken apart by the shell before
+# gh/glab saw it: the shell executed the substitution, gh answered `unknown argument`
+# and created nothing — and the trailing `2>&1 | grep https` turned that into exit 0
+# with an empty mr_url, so the caller went on believing the MR existed. The body is now
+# handed to the CLI as a FILE (`--body-file` on gh, `--description-file` on glab) and
+# the pipeline is gone, so a failed create is a non-zero exit and the workflow halts.
+# The title is a single argument in SINGLE quotes: it is the one value neither CLI has a
+# file form for, and single quotes are what stops a `$(…)`, a backtick or a double quote
+# in a user-typed PRD title from reaching the shell. A title carrying an apostrophe is
+# the residual case and is not supported.
+#
+# `glab mr create` asks for confirmation unless told otherwise, and a prompt inside a
+# non-interactive hook blocks instead of failing — `--yes` is what makes the exit code
+# the whole answer.
 
-# Read description body from caller-supplied file (single source of truth — caller
-# composes the cross-platform reference; atomic just transports the text).
-- RUN: cat {mr_description_file}
-  STORE: description_body
 # Check if an MR/PR already exists for this source branch (via atomic find-mr)
 - INCLUDE: common/find-mr
 - CHECK: empty mr_iid
   TRUE:
     # No MR exists — create the trace MR (caller-supplied title/description/draft).
     # --draft flag is conditional: emit only when mr_draft eq "true" so story callers
-    # (default mr_draft="false") keep a byte-identical command shape to the pre-refactor
-    # inline code.
+    # (default mr_draft="false") keep the command shape of the pre-refactor inline code.
     - CHECK: git_platform eq "gitlab"
       TRUE:
         - CHECK: mr_draft eq "true"
           TRUE:
-            - RUN: glab mr create --title "{mr_title}" --description "{description_body}" --target-branch {target_branch} --source-branch {source_branch} --draft -R "{mr_repo}" 2>&1 | tee /dev/stderr | grep -oE 'https://[^ ]+' | head -1
-              STORE: mr_url
+            - RUN: glab mr create --title '{mr_title}' --description-file "{mr_description_file}" --target-branch {target_branch} --source-branch {source_branch} --draft --yes -R "{mr_repo}"
+              STORE: mr_create_out
           FALSE:
-            - RUN: glab mr create --title "{mr_title}" --description "{description_body}" --target-branch {target_branch} --source-branch {source_branch} -R "{mr_repo}" 2>&1 | tee /dev/stderr | grep -oE 'https://[^ ]+' | head -1
-              STORE: mr_url
+            - RUN: glab mr create --title '{mr_title}' --description-file "{mr_description_file}" --target-branch {target_branch} --source-branch {source_branch} --yes -R "{mr_repo}"
+              STORE: mr_create_out
       FALSE:
         - CHECK: mr_draft eq "true"
           TRUE:
-            - RUN: gh pr create --title "{mr_title}" --body "{description_body}" --base {target_branch} --head {source_branch} --draft -R "{mr_repo}" 2>&1 | grep -oE 'https://github\.com/[^ ]+/pull/[0-9]+' | head -1
-              STORE: mr_url
+            - RUN: gh pr create --title '{mr_title}' --body-file "{mr_description_file}" --base {target_branch} --head {source_branch} --draft -R "{mr_repo}"
+              STORE: mr_create_out
           FALSE:
-            - RUN: gh pr create --title "{mr_title}" --body "{description_body}" --base {target_branch} --head {source_branch} -R "{mr_repo}" 2>&1 | grep -oE 'https://github\.com/[^ ]+/pull/[0-9]+' | head -1
-              STORE: mr_url
+            - RUN: gh pr create --title '{mr_title}' --body-file "{mr_description_file}" --base {target_branch} --head {source_branch} -R "{mr_repo}"
+              STORE: mr_create_out

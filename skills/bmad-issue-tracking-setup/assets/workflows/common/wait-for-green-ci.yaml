@@ -8,8 +8,9 @@
 #   - platform: issue tracker platform (from check-config)
 #   - host: issue tracker host (from check-config)
 #   - project: issue tracker project (from check-config)
-#   - project_enc: URL-encoded project path (from check-config)
-#   - mr_repo: resolved MR repo (set by check-mr-ci)
+#   - git_host, git_project_enc: the GIT REMOTE's hostname and URL-encoded project path
+#       (from check-config) — the pipeline belongs to the remote, not to the tracker
+#   - mr_repo: the GIT REMOTE's "host/project" (from check-config)
 #   - source_branch: source branch (set by check-mr-ci, defaults to current_branch). On GitHub
 #       it is also the `gh run list --branch` filter: without it the poll reads the newest run
 #       of the whole repo, i.e. some other branch's pipeline.
@@ -76,7 +77,7 @@
                     sleep 25
                     poll=$((poll + 1))
                     # get-mr-pipeline equivalent: fetch latest pipeline for the existing mr_iid
-                    raw=$(glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate 2>/dev/null)
+                    raw=$(glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate 2>/dev/null)
                     pipeline_status=$(echo "$raw" | uv run --no-project python -c "
 import json, sys
 ps = json.load(sys.stdin)
@@ -168,7 +169,7 @@ else:
   TRUE:
     - CHECK: git_platform eq "gitlab"
       TRUE:
-        - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
+        - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate | uv run --no-project python -c "
 import json, sys
 ps = json.load(sys.stdin)
 print(str(ps[0]['id']) if ps else '')

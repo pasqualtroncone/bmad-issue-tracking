@@ -33,6 +33,12 @@
 # gh steps append `&& echo merged` and their stdout is empty exactly when the merge
 # failed. Reading `merge_commit_sha` instead would not work on GitHub: the API returns
 # a test-merge SHA for an OPEN PR, so a failed merge would still look merged.
+#
+# The SHA lookup addresses the host through `--hostname`, never inside the path: `gh api
+# repos/github.com/<owner>/<repo>/pulls/<n>` answers 404 "Not Found" (the path segment is
+# read as the owner), and this step expects exit 0 like any other — so a SUCCESSFUL merge
+# was immediately followed by a halt with merge_sha empty, on every GitHub merge the
+# review-finish prompt performed. `glab api` has always taken its host that way.
 
 - CHECK: git_platform eq platform
   TRUE:
@@ -53,7 +59,7 @@ print(m.get('merge_commit_sha', '') or '')
         - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{host}/{project}" && echo merged
           STORE: gh_merge_out
           EXPECT_EXIT: any
-        - RUN: gh api repos/{host}/{project}/pulls/{mr_iid} --jq .merge_commit_sha
+        - RUN: gh api "repos/{project}/pulls/{mr_iid}" --hostname {host} --jq .merge_commit_sha
           STORE: merge_sha
   FALSE:
     # === Cross-platform: the MR/PR lives on the git remote, not on the issue tracker ===
@@ -83,7 +89,7 @@ print(m.get('merge_commit_sha', '') or '')
         - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{git_host}/{git_project}" && echo merged
           STORE: gh_merge_out
           EXPECT_EXIT: any
-        - RUN: gh api repos/{git_host}/{git_project}/pulls/{mr_iid} --jq .merge_commit_sha
+        - RUN: gh api "repos/{git_project}/pulls/{mr_iid}" --hostname {git_host} --jq .merge_commit_sha
           STORE: merge_sha
 
 # Derive merged/error from the CLI outputs (truth source = exit code, not pipeline_status).

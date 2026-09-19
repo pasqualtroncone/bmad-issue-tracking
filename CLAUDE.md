@@ -78,7 +78,7 @@ Branch setup happens in activation (before BMM workflow runs). The BMM workflow 
 | correct-course | Switch to PRD worktree | Update issue descriptions if artifacts modified | (PRD worktree) |
 | retrospective | Switch to PRD worktree | Create retrospective issue + close | (PRD worktree) |
 | create-story (shim) | Ask story key, create/switch to story worktree (from PRD) | Commit + push + issue + MR | story → PRD |
-| dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + update issue | (MR from create-story) |
+| dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + issue + MR, then the CI gate, then update issue (the MR is ensured BEFORE the gate: with no MR the gate has nothing to read and writes green) | (MR from create-story) |
 | code-review | Find story with status `review`, switch to worktree | Commit + push + post review + optional merge | story → PRD |
 | sprint-status (shim) | Switch to PRD worktree | Trigger issue sync (steps 4-6) | (none) |
 
@@ -111,12 +111,17 @@ empty value as "no MR" / "no CI". `tests/test_platform_coverage.py` enforces bot
 
 **Git remote vs issue tracker:** The git remote (origin) and issue tracker can be on different platforms (e.g., code on GitLab, issues on GitHub). `issue_tracking.platform` is the issue tracker; `issue_tracking.git_platform` (set during setup) is the git remote. Issue operations (create/update/close issues, labels, comments) use `platform`. MR/PR operations (list, create, merge, mark ready) use `git_platform`. When they differ, `host`/`project` apply to the issue tracker and `git_host`/`git_project` apply to the git remote. Issue references in MR descriptions use `Closes #X` for same-platform, full URL for cross-platform.
 
-`check-config` exports `host`/`project`/`project_enc` for the TRACKER only, so an atomic that
-needs the git remote reads `git_host`/`git_project` from `_bmad/custom/issue-tracking.yaml`
-itself (`check-mr-ci`, `merge-mr`) instead of expecting a caller to seed them — callers
-disagreed about that and the one that did not seed halted on lang §4.5. `gh -R` and the
-`repos/…` API path take `owner/repo` whole, so `{git_host}/{git_project}` is the repo
-argument: there is no need to split `git_project` into owner and repo.
+`check-config` resolves BOTH coordinate sets once and exports them: `host`/`project`/
+`project_enc` for the TRACKER, and `git_host`/`git_project`/`git_project_enc` plus
+`mr_repo` (= `{git_host}/{git_project}`) for the GIT REMOTE — equal to the tracker's when
+`git_platform eq platform`, read from `issue_tracking.git_host`/`git_project` otherwise.
+Every MR/PR and CI step takes them from there: `mr_repo` for `gh -R` / `glab -R`, and
+`git_project_enc` + `git_host` for `glab api projects/… --hostname …`. Never address a
+pipeline or an MR through `{project_enc}`/`{host}`: those name the tracker, which is the
+right answer only while the two platforms coincide. `gh -R` and the `repos/…` API path
+take `owner/repo` whole, so `git_project` is never split into owner and repo.
+`merge-mr` additionally READs `git_host`/`git_project` itself, so it stays usable by a
+caller that did not run `check-config`.
 
 ## Files to update when adding a new BMM workflow override
 

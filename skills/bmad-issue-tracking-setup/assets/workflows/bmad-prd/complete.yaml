@@ -79,40 +79,9 @@ print(''.join(lines[start:]).strip())
             - SET: { variable: issue_ref, value: "Related to https://{host}/{project}/-/issues/{issue_id}" }
           FALSE:
             - SET: { variable: issue_ref, value: "Related to https://{host}/{project}/issues/{issue_id}" }
-    # Resolve mr_repo (gitlab: host/project; github: host/owner/repo — cross-platform uses git_host/git_project)
-    - CHECK: git_platform eq "gitlab"
-      TRUE:
-        - CHECK: git_platform eq platform
-          TRUE:
-            - SET: { variable: mr_repo, value: "{host}/{project}" }
-          FALSE:
-            - READ: _bmad/custom/issue-tracking.yaml
-              EXTRACT:
-                git_host: issue_tracking.git_host
-                git_project: issue_tracking.git_project
-            - SET: { variable: mr_repo, value: "{git_host}/{git_project}" }
-      FALSE:
-        - CHECK: git_platform eq platform
-          TRUE:
-            - SET: { variable: mr_repo, value: "{host}/{project}" }
-          FALSE:
-            - READ: _bmad/custom/issue-tracking.yaml
-              EXTRACT:
-                git_host: issue_tracking.git_host
-                git_project: issue_tracking.git_project
-            - RUN: uv run --no-project python -c "
-import sys
-parts = sys.argv[1].split('/')
-print(parts[0])
-" {git_project}
-              STORE: git_owner
-            - RUN: uv run --no-project python -c "
-import sys
-parts = sys.argv[1].split('/')
-print(parts[1])
-" {git_project}
-              STORE: git_repo
-            - SET: { variable: mr_repo, value: "{git_host}/{git_owner}/{git_repo}" }
+    # mr_repo (the git remote's "host/project") comes from check-config, which resolves
+    # the remote's coordinates once. The block that stood here split git_project into an
+    # owner and a repo and joined them back with a slash, which only renamed the string.
     # Write the cross-platform issue reference to a tmp file (the atomic reads from this path)
     - WRITE:
         file: /tmp/ensure-mr-prd-desc.md

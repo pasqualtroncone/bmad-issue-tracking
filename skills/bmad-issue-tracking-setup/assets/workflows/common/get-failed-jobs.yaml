@@ -2,20 +2,21 @@
 #
 # Purpose: List failed jobs for a given pipeline id, with trace tail per job.
 # Input variables: pipeline_id (gitlab pipeline id) or pipeline_id (github workflow run id);
-#   git_platform (from check-config) — the jobs belong to the git remote's CI.
+#   git_platform, git_host, git_project_enc (from check-config) — the jobs belong to the
+#   git remote's CI, so they are looked up in the REMOTE's project, not the tracker's.
 # Output variables: jobs (newline-separated JSON: each line {name, exitCode, trace_tail})
 # Side effects: none (read-only; fetches job metadata and trace tails)
 #
 # Platform selection: CI jobs belong to the GIT REMOTE, so the two steps are chosen by
 # `CHECK: git_platform eq "gitlab"` and carry NO `PLATFORM:` annotation — that annotation
 # compares against `platform`, the ISSUE TRACKER (lang §2.4), so on a cross-platform setup
-# neither step ran and the caller printed an empty diagnostics block. Known residue: the
-# GitLab step still addresses {project_enc}/{host}, the issue tracker's project — correct
-# whenever git_platform eq platform, which is the only shape the lab exercises.
+# neither step ran and the caller printed an empty diagnostics block. For the same reason
+# the GitLab step addresses {git_project_enc}/{git_host}: {project_enc}/{host} name the
+# ISSUE TRACKER's project, right only while the two platforms coincide.
 - CHECK: git_platform eq "gitlab"
   TRUE:
     # GitLab: list jobs in pipeline, filter failed, fetch trace tail per failed job (sequential — pipeline failure usually has 1-3 jobs)
-    - RUN: glab api "projects/{project_enc}/pipelines/{pipeline_id}/jobs?per_page=50" --hostname {host} | uv run --no-project python -c "
+    - RUN: glab api "projects/{git_project_enc}/pipelines/{pipeline_id}/jobs?per_page=50" --hostname {git_host} | uv run --no-project python -c "
 import json, subprocess, sys
 jobs = json.load(sys.stdin)
 results = []
@@ -33,7 +34,7 @@ for j in jobs:
             trace_tail = ''
         results.append(f\"{name}\t{exit_code}\t{trace_tail}\")
 print('\n'.join(results))
-" {host} {project_enc}
+" {git_host} {git_project_enc}
       STORE: jobs
       EXPECT_EXIT: any
   FALSE:

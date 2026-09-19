@@ -5,22 +5,15 @@
 #   - current_branch: the source branch to check
 #   - git_platform: "gitlab" or "github" (from check-config)
 #   - platform: issue tracker platform (from check-config)
-#   - host: issue tracker host (from check-config)
-#   - project: issue tracker project (from check-config)
+#   - mr_repo: the GIT REMOTE's "host/project" (from check-config, which resolves the
+#       remote's coordinates once — they are the tracker's whenever the platforms agree)
 # Output variables:
 #   - ci_status: "passed", "failed", "running", "no_ci", "no_mr"
 # Side effects: none
 
-# Resolve MR/PR repo (handles cross-platform: git remote may differ from issue tracker)
-- CHECK: git_platform eq platform
-  TRUE:
-    - SET: { variable: mr_repo, value: "{host}/{project}" }
-  FALSE:
-    - READ: _bmad/custom/issue-tracking.yaml
-      EXTRACT:
-        git_host: issue_tracking.git_host
-        git_project: issue_tracking.git_project
-    - SET: { variable: mr_repo, value: "{git_host}/{git_project}" }
+# mr_repo comes from check-config, which resolves the git remote's coordinates once
+# (they are the tracker's whenever git_platform eq platform). This file used to resolve
+# it again here, and three other callers each had their own copy of the same block.
 # Find the MR + fetch its latest pipeline. Atomics self-route via PLATFORM.
 # Note: get-mr-pipeline's GitHub side uses `gh run list` (workflow-run-level) rather
 # than the previous `gh pr checks` (per-check aggregation) — a known semantic shift

@@ -4,7 +4,7 @@
 #          for a story: push code, wait CI, update issue status, post comments, create MR.
 # Dispatched by phase:
 #   - "create-story": spec just created, no code yet — create issue + commit + push + create MR draft
-#   - "dev-finish":    dev session done — push + wait CI + write ci-status.json + update issue + post dev comment
+#   - "dev-finish":    dev session done — push + issue + MR + wait CI + write ci-status.json + update issue + post dev comment
 #   - "review-finish": review session done — push + wait CI + post review findings + update issue final + optional merge
 # Input variables:
 #   - phase: "create-story" | "dev-finish" | "review-finish" (set by dispatcher or caller)
@@ -86,9 +86,11 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # source_branch is the branch we are ON, not the one story_pattern would spell:
     # bmad-loop names its branches bmad-loop/<run>/<story_key>, so a pattern-derived
     # story_branch names a ref that never reached the remote and the MR create fails.
+    # mr_repo is the git remote's "host/project", resolved once by check-config: these
+    # two phases used to SET it to "{host}/{project}", the ISSUE TRACKER's project, which
+    # names the wrong repo as soon as code and issues live on different platforms.
     - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
-    - SET: { variable: mr_repo, value: "{host}/{project}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
     - WRITE:
         file: /tmp/ensure-mr-desc.md
@@ -119,9 +121,6 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     
     - RUN: git commit --allow-empty -m "dev {story_key}" 2>/dev/null || true
     - RUN: git push -u origin HEAD
-    # Wait CI + write ci-status.json (contract for ci-status.sh)
-    - INCLUDE: common/wait-for-green-ci
-    - INCLUDE: common/write-ci-status
     # Ensure issue exists (find or create)
     - INCLUDE: common/ensure-issue
     # Translate caller scope into the new INPUT contract (the atomic no longer reads
@@ -129,9 +128,11 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # source_branch is the branch we are ON, not the one story_pattern would spell:
     # bmad-loop names its branches bmad-loop/<run>/<story_key>, so a pattern-derived
     # story_branch names a ref that never reached the remote and the MR create fails.
+    # mr_repo is the git remote's "host/project", resolved once by check-config: these
+    # two phases used to SET it to "{host}/{project}", the ISSUE TRACKER's project, which
+    # names the wrong repo as soon as code and issues live on different platforms.
     - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
-    - SET: { variable: mr_repo, value: "{host}/{project}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
     - WRITE:
         file: /tmp/ensure-mr-desc.md
@@ -142,6 +143,18 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # Ensure trace MR exists (create if missing)
     - INCLUDE: common/ensure-mr
     - RUN: rm -f /tmp/ensure-mr-desc.md
+    # Wait CI + write ci-status.json (contract for ci-status.sh).
+    #
+    # The gate comes AFTER the MR, and the order is the gate. On the first dev-finish of
+    # a story there is no PR yet: check-mr-ci mapped `no_mr`, write-ci-status wrote
+    # {"status": "green"}, and only then did ensure-mr create the PR. Under bmad-loop the
+    # first [verify] therefore passed whatever CI did, and a red pipeline was first seen
+    # one pass later. With the MR ensured first, wait-for-green-ci has something to gate
+    # on the first time round. `no_mr` still means green — that is the flow with no
+    # remote MR at all, where there is no gate to enforce, not a story whose MR simply
+    # had not been created yet.
+    - INCLUDE: common/wait-for-green-ci
+    - INCLUDE: common/write-ci-status
     # Update issue status based on sprint-status
     - CHECK: story_status eq "review"
       TRUE:
