@@ -63,7 +63,7 @@ print(''.join(lines[start:]).strip())
     - INCLUDE: common/create-issue
     # Commit and push
     - RUN: git add .
-    - RUN: git commit -m "update PRD {prd_key}"
+    - RUN: git commit --allow-empty -m "update PRD {prd_key}"
     - RUN: git push -u origin {prd_branch}
     # Create draft MR via atomic ensure-mr (caller-agnostic INPUT contract)
     # Resolve default_branch (target for the PRD MR)

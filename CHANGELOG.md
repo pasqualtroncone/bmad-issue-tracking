@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Re-running the `bmad-prd`, `create-prd` or `retrospective` completion hook on an unchanged
+  worktree halted it: `git commit -m` exits 1 with "nothing to commit" on a clean tree and the
+  step expects 0, so push, issue and MR never happened.
 - `common/merge-mr.yaml` compared the git platform against the tracker platform with `neq`,
   an operator the workflow language does not define (it has `ne`), on both the GitLab and the
   GitHub branch.
