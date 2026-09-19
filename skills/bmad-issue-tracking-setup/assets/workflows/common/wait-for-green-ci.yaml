@@ -19,8 +19,8 @@
 #   - no_run_rounds: how many consecutive rounds saw no pipeline at all (internal)
 #   - pipeline_id: id of the failed pipeline (set on failure-path, passed to get-failed-jobs)
 #   - jobs: failed-job diagnostics from get-failed-jobs (TSV on gitlab, raw text on github)
-# Side effects: polls CI every 25s while running, in 9 bounded rounds of 8 polls each
-#   (one RUN blocks ~200s and never more than ~240s; 30 min of wall clock in total);
+# Side effects: polls CI every 25s while running, in 18 bounded rounds of 4 polls each
+#   (one RUN blocks ~100s and never more than ~120s; 30 min of wall clock in total);
 #   on failure, fetches failed-job traces
 #
 # Platform selection: CI belongs to the GIT REMOTE, so every poll RUN and the failure-path
@@ -28,7 +28,7 @@
 # annotation. They used to carry one, and `PLATFORM:` compares against `platform`, the
 # ISSUE TRACKER (lang §2.4): on a cross-platform setup the enclosing CHECK picked the
 # right branch and the annotation then skipped its RUN, so the round stored nothing, the
-# loop saw ci_status still "running" for all nine rounds and reported a 30-minute timeout.
+# loop saw ci_status still "running" for every round and reported a 30-minute timeout.
 
 # Initial check (atomic; produces mr_iid + pipeline_id + pipeline_status + ci_status)
 - INCLUDE: common/check-mr-ci
@@ -45,17 +45,24 @@
 - CHECK: ci_status eq "no_mr"
   TRUE:
     - STOP
-# CI running — poll until terminal state (budget: 9 rounds x 200 s = 30 min).
+# CI running — poll until terminal state (budget: 18 rounds x 100 s = 30 min).
 #
 # The long wait is expressed as a LOOP in the workflow language, NOT as one long-running
 # bash loop: the interpreter executes every RUN through a tool that times out (120 s by
 # default, 600 s at most), so a single RUN that blocks for the whole budget is killed
 # before it prints anything, ci_status is never stored and common/write-ci-status never
-# writes ci-status.json. Each iteration below runs ONE bounded RUN of at most 8 polls
+# writes ci-status.json. Each iteration below runs ONE bounded RUN of at most 4 polls
 # x 25 s; the LOOP supplies the repetition.
 #
-# poll_rounds is the literal list 1 2 3 4 5 6 7 8 9, one number per line. The numbers are
-# never read — they only make the LOOP body run nine times.
+# 4 polls, not 8: a round of 8 blocks ~200 s, and the 120 s DEFAULT of that same tool is
+# the very cap this shape exists to respect — the round only survived where the
+# interpreter had raised the timeout, and where it had not, the round was killed,
+# ci_status was never stored and ci-status.json was never written: the symptom the split
+# into rounds was meant to remove. ~100 s leaves the round inside the default cap, and
+# the rounds are doubled so the 30-minute budget is unchanged.
+#
+# poll_rounds is the literal list 1..18, one number per line. The numbers are never read —
+# they only make the LOOP body run eighteen times.
 #
 # Once ci_status is terminal the CHECK inside the body is false, so the remaining
 # iterations do nothing and cost no wall clock.
@@ -65,7 +72,7 @@
 # initial check). mr_iid is reused from the initial check-mr-ci INCLUDE above (the MR is
 # not re-resolved per poll).
 - SET: { variable: no_run_rounds, value: "0" }
-- SET: { variable: poll_rounds, value: "1\n2\n3\n4\n5\n6\n7\n8\n9" }
+- SET: { variable: poll_rounds, value: "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18" }
 - LOOP:
     items: poll_rounds
     as: poll_round
@@ -75,7 +82,7 @@
           - CHECK: git_platform eq "gitlab"
             TRUE:
               - RUN: |
-                  polls_per_round=8
+                  polls_per_round=4
                   poll=0
                   STATUS=running
                   while [ $poll -lt $polls_per_round ]; do
@@ -118,7 +125,7 @@ else:
               - CHECK: git_platform eq "github"
                 TRUE:
                   - RUN: |
-                      polls_per_round=8
+                      polls_per_round=4
                       poll=0
                       STATUS=running
                       while [ $poll -lt $polls_per_round ]; do

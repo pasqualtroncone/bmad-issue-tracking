@@ -134,9 +134,9 @@ case_d18() {
   awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
-  # (b) one GitHub poll round, polls_per_round 8→2, against a repo whose latest run is complete
+  # (b) one GitHub poll round, polls_per_round shortened to 2, against a repo whose latest run is complete
   # (the round used to be the whole 60-attempt loop; #14 split it, so the knob is the per-round count)
-  sed 's/polls_per_round=8/polls_per_round=2/' "$d/github-loop.cmd" > "$d/github-loop-2.cmd"
+  sed -E 's/polls_per_round=[0-9]+/polls_per_round=2/' "$d/github-loop.cmd" > "$d/github-loop-2.cmd"
   gh run list -R "$REPO_GH" --limit 1 --json status,conclusion,headBranch > "$d/latest-run-before.json"
   log "  (b) full polling round with polls_per_round=2 (≈50 s)…"
   ( cd "$CONSUMER" && time bash "$d/github-loop-2.cmd" ) > "$d/github-loop-2.out" 2> "$d/github-loop-2.err"; echo $? > "$d/github-loop-2.rc"
@@ -689,7 +689,7 @@ case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
   local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
   $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" > "$d/gitlab-loop.cmd"
   # polls_per_round replaced max_attempts when #14 split the 30-min loop into bounded rounds
-  sed 's/polls_per_round=8/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
+  sed -E 's/polls_per_round=[0-9]+/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
   log "  (a) literal GitLab round, polls_per_round=2 (≈50 s), MR !$GREEN_IID (pipeline success)…"
   ( cd "$CONSUMER_GL" && bash "$d/gitlab-loop-2.cmd" ) > "$d/gitlab-loop-2.out" 2> "$d/gitlab-loop-2.err"; echo $? > "$d/gitlab-loop-2.rc"
   sed '/STATUS=\$(uv run --no-project python -c "/a import sys' "$d/gitlab-loop-2.cmd" > "$d/gitlab-loop-2-patched.cmd"

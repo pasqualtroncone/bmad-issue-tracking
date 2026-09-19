@@ -254,6 +254,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   definition on the branch (`.gitlab-ci.yml` / `.github/workflows/*.yml`): a CI-less repo
   is still green immediately, a branch that defines CI waits. Inside the polling rounds an
   empty list is `no_run`, and only three consecutive rounds of it conclude `no_ci`.
+- A polling round of `common/wait-for-green-ci.yaml` blocked ~200 s (8 polls × 25 s) while
+  the tool cap the round-based shape exists to respect is 120 s by default. Where the
+  interpreter had not raised it, the round was killed before printing, `ci_status` was
+  never stored and `ci-status.json` was never written — the exact symptom the split into
+  rounds had removed. A round is now 4 polls (~100 s) and the LOOP runs 18 of them, so the
+  30-minute budget is unchanged.
 
 ## [3.0.0] - 2026-09-15
 
