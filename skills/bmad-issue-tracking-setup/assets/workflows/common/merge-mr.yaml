@@ -1,7 +1,9 @@
 # common/merge-mr.yaml
 #
 # Purpose: Merge an MR/PR by IID. Cross-platform, 4 variants (gitlab/github × same/cross-platform target).
-# Input variables: mr_iid (numeric), squash (default "false")
+# Input variables: mr_iid (numeric), squash (default "false"), and from check-config:
+#   platform, git_platform, host, project, project_enc. Nothing else has to be seeded:
+#   on a cross-platform setup this file READS git_host/git_project itself.
 # Output variables:
 #   - merged ("true" if merge CLI succeeded)
 #   - merge_sha (string, from API after merge; empty if merge failed)
@@ -10,6 +12,21 @@
 #   the resulting merge SHA from the API. Callers must treat a non-zero exit or a
 #   non-empty error as "not merged", never as "merge attempted".
 #
+# Platform selection (module rule, see bmad-workflow-lang.md §2.4 and CLAUDE.md
+# "Platform differences"): an MR/PR lives on the GIT REMOTE, so every step below is
+# chosen by `CHECK: git_platform eq "..."` and carries NO `PLATFORM:` annotation.
+# `PLATFORM:` compares against `platform`, the ISSUE TRACKER; on a cross-platform setup
+# that is the other platform, so annotating these steps would skip the only step that
+# can merge and leave `merged` unset.
+#
+# Cross-platform coordinates: check-config exports host/project/project_enc for the
+# ISSUE TRACKER only. The FALSE branch below reads git_host/git_project from the config
+# file itself (as check-mr-ci does) and URL-encodes git_project for the GitLab API, so no
+# caller has to seed them — three callers used to derive {git_owner}/{git_repo} on this
+# file's behalf and the fourth did not, which halted the workflow on lang §4.5.
+# `gh -R` and the `repos/…` API path take `owner/repo` whole, so git_project needs no
+# splitting: "{git_host}/{git_project}" is the string the split-and-rejoin produced.
+#
 # `merged` is the merge CLI's EXIT CODE, carried on stdout. `glab mr merge` prints a
 # confirmation of its own; `gh pr merge` succeeds with rc=0 and ZERO bytes of stdout
 # (a re-merge of an already-merged PR is rc=0 too, with its message on stderr), so the
@@ -17,17 +34,13 @@
 # failed. Reading `merge_commit_sha` instead would not work on GitHub: the API returns
 # a test-merge SHA for an OPEN PR, so a failed merge would still look merged.
 
-# Internal routing: determine target repo (same-platform uses host/project, cross-platform uses git_host/git_project)
-# Trigger on platform match first; fall back to git_platform for cross-platform case.
-
-# === GitLab — same-platform (issue tracker is gitlab) ===
-- CHECK: platform eq "gitlab"
+- CHECK: git_platform eq platform
   TRUE:
-    - CHECK: git_platform eq platform
+    # === Same-platform: the git remote IS the issue tracker ===
+    - CHECK: git_platform eq "gitlab"
       TRUE:
         - RUN: glab mr merge --yes --squash={squash} -R "{host}/{project}" {mr_iid}
           STORE: gl_merge_out
-          PLATFORM: gitlab
           EXPECT_EXIT: any
         # After merge, fetch the merge commit SHA via API (avoids the hardcoded git -C path issue)
         - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}" --hostname {host} | uv run --no-project python -c "
@@ -36,50 +49,42 @@ m = json.load(sys.stdin)
 print(m.get('merge_commit_sha', '') or '')
 "
           STORE: merge_sha
-          PLATFORM: gitlab
-
-# === GitLab — cross-platform (git remote != issue tracker) ===
-- CHECK: platform eq "gitlab"
-  TRUE:
-    - CHECK: git_platform ne platform
+      FALSE:
+        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{host}/{project}" && echo merged
+          STORE: gh_merge_out
+          EXPECT_EXIT: any
+        - RUN: gh api repos/{host}/{project}/pulls/{mr_iid} --jq .merge_commit_sha
+          STORE: merge_sha
+  FALSE:
+    # === Cross-platform: the MR/PR lives on the git remote, not on the issue tracker ===
+    - READ: _bmad/custom/issue-tracking.yaml
+      EXTRACT:
+        git_host: issue_tracking.git_host
+        git_project: issue_tracking.git_project
+    # GitLab's API addresses a project by its URL-encoded path (check-config does the
+    # same for the issue tracker's project); harmless on the GitHub branch.
+    - RUN: uv run --no-project python -c "
+import sys, urllib.parse
+print(urllib.parse.quote(sys.argv[1], safe=''))
+" {git_project}
+      STORE: git_project_enc
+    - CHECK: git_platform eq "gitlab"
       TRUE:
         - RUN: glab mr merge --yes --squash={squash} -R "{git_host}/{git_project}" {mr_iid}
           STORE: gl_merge_out
-          PLATFORM: gitlab
           EXPECT_EXIT: any
-        - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}" --hostname {host} | uv run --no-project python -c "
+        - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}" --hostname {git_host} | uv run --no-project python -c "
 import json, sys
 m = json.load(sys.stdin)
 print(m.get('merge_commit_sha', '') or '')
 "
           STORE: merge_sha
-          PLATFORM: gitlab
-
-# === GitHub — same-platform ===
-- CHECK: platform eq "github"
-  TRUE:
-    - CHECK: git_platform eq platform
-      TRUE:
-        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{host}/{project}" && echo merged
+      FALSE:
+        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{git_host}/{git_project}" && echo merged
           STORE: gh_merge_out
-          PLATFORM: github
           EXPECT_EXIT: any
-        - RUN: gh api repos/{host}/{project}/pulls/{mr_iid} --jq .merge_commit_sha
+        - RUN: gh api repos/{git_host}/{git_project}/pulls/{mr_iid} --jq .merge_commit_sha
           STORE: merge_sha
-          PLATFORM: github
-
-# === GitHub — cross-platform ===
-- CHECK: platform eq "github"
-  TRUE:
-    - CHECK: git_platform ne platform
-      TRUE:
-        - RUN: gh pr merge {mr_iid} --squash --delete-branch -R "{git_host}/{git_owner}/{git_repo}" && echo merged
-          STORE: gh_merge_out
-          PLATFORM: github
-          EXPECT_EXIT: any
-        - RUN: gh api repos/{git_host}/{git_owner}/{git_repo}/pulls/{mr_iid} --jq .merge_commit_sha
-          STORE: merge_sha
-          PLATFORM: github
 
 # Derive merged/error from the CLI outputs (truth source = exit code, not pipeline_status).
 # Both branches only reach here with stdout when their merge CLI exited 0: glab prints its

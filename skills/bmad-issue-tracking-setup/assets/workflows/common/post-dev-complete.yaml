@@ -328,24 +328,10 @@ print(body)
             # mr_repo + source_branch are set by common/check-mr-ci inside wait-for-green-ci
             # (called above when review_status eq "done").
             - INCLUDE: common/find-mr
-            # Seed cross-platform vars (atomic references {git_host}/{git_project}/{git_owner}/{git_repo};
-            # check-config doesn't produce them — mirror existing post-dev-complete.yaml L212-217, L235-250).
-            - READ: _bmad/custom/issue-tracking.yaml
-              EXTRACT:
-                git_host: issue_tracking.git_host
-                git_project: issue_tracking.git_project
-            - RUN: uv run --no-project python -c "
-import sys
-parts = sys.argv[1].split('/')
-print(parts[0])
-" {git_project}
-              STORE: git_owner
-            - RUN: uv run --no-project python -c "
-import sys
-parts = sys.argv[1].split('/')
-print(parts[1])
-" {git_project}
-              STORE: git_repo
+            # No cross-platform seeding here: common/merge-mr reads git_host/git_project
+            # from the config itself. This block used to derive {git_owner}/{git_repo} for
+            # the atomic; three callers did and one did not, so the one that did not halted
+            # on lang §4.5 with an undefined variable.
             - INCLUDE: common/merge-mr
             - RUN: git worktree remove .
     - OUTPUT:

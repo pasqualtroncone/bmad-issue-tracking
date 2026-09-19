@@ -7,13 +7,24 @@
 #       On a cross-platform setup this is the GIT remote, not the issue tracker.
 #   - source_branch (string): the MR/PR source branch (set by check-mr-ci). GitHub has no
 #       per-PR run listing, so this branch filter is what scopes the lookup to THIS MR.
+#   - git_platform (from check-config): CI runs on the git remote, so it — not `platform` —
+#       chooses which CLI is used.
 # Output variables:
 #   - pipeline_id (string): gitlab pipeline id OR github workflow run id (unified name for cross-platform callers)
 #   - pipeline_status (string): gitlab pipeline.status OR github conclusion (success/failed/running/pending/cancelled/none)
 # Side effects: none (read-only lookup)
-
-# GitLab: fetch MR's latest pipeline (paginated, take first)
-- RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
+#
+# Platform selection: a pipeline belongs to the GIT REMOTE, so the steps are chosen by
+# `CHECK: git_platform eq "gitlab"` and carry NO `PLATFORM:` annotation — that annotation
+# compares against `platform`, the ISSUE TRACKER (lang §2.4), so on a cross-platform setup
+# it skipped every branch here and left pipeline_status unset (check-mr-ci then read it as
+# "no_ci"). Known residue: the GitLab steps still address {project_enc}/{host}, the issue
+# tracker's project — correct whenever git_platform eq platform, which is the only shape
+# the lab exercises; a GitLab remote under a GitHub tracker needs the git project instead.
+- CHECK: git_platform eq "gitlab"
+  TRUE:
+    # GitLab: fetch MR's latest pipeline (paginated, take first)
+    - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys
 ps = json.load(sys.stdin)
 if ps:
@@ -21,35 +32,29 @@ if ps:
 else:
     print('')
 "
-  STORE: pipeline_id
-  PLATFORM: gitlab
-
-# GitLab: also fetch pipeline_status (separate RUN — multi-variable STORE has no precedent in this module; safer to split)
-- RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
+      STORE: pipeline_id
+    # GitLab: also fetch pipeline_status (separate RUN — multi-variable STORE has no precedent in this module; safer to split)
+    - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys
 ps = json.load(sys.stdin)
 print(ps[0]['status'] if ps else 'none')
 "
-  STORE: pipeline_status
-  PLATFORM: gitlab
-
-# GitHub: latest workflow run OF THE SOURCE BRANCH (rename run_id → pipeline_id for output unification).
-# Without --branch, `gh run list --limit 1` returns the newest run of the WHOLE repo, so any other
-# branch's red pipeline is reported as this MR's status. The repo is {mr_repo}, not {host}/{project}:
-# those differ when the git remote and the issue tracker are on different platforms.
-- RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
+      STORE: pipeline_status
+  FALSE:
+    # GitHub: latest workflow run OF THE SOURCE BRANCH (rename run_id → pipeline_id for output unification).
+    # Without --branch, `gh run list --limit 1` returns the newest run of the WHOLE repo, so any other
+    # branch's red pipeline is reported as this MR's status. The repo is {mr_repo}, not {host}/{project}:
+    # those differ when the git remote and the issue tracker are on different platforms.
+    - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
 print(str(rs[0]['databaseId']) if rs else '')
 "
-  STORE: pipeline_id
-  PLATFORM: github
-
-# GitHub: pipeline_status from run's conclusion
-- RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
+      STORE: pipeline_id
+    # GitHub: pipeline_status from run's conclusion
+    - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
 print(rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else print('none')
 "
-  STORE: pipeline_status
-  PLATFORM: github
+      STORE: pipeline_status

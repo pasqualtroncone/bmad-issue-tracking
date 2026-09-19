@@ -187,6 +187,22 @@ Executes a CLI command in the shell.
 
 Only the step matching the configured platform is executed. The other is silently skipped.
 
+**`PLATFORM:` names the ISSUE TRACKER, never the git remote.** The variable it compares
+against is `platform` (`issue_tracking.platform`). A setup may keep its issues on one
+platform and its code on another (`issue_tracking.git_platform`), and then an MR/PR or a
+CI step must follow the GIT REMOTE. The module's rule, applied to every such step:
+
+- A step that talks to the **issue tracker** (issues, labels, comments, boards) carries
+  `PLATFORM: gitlab` / `PLATFORM: github`.
+- A step that talks to the **git remote** (MR/PR create, find, merge, mark-ready; CI
+  pipelines, runs and job traces) carries **no `PLATFORM:` annotation** and is selected by
+  `CHECK: git_platform eq "gitlab"` with the GitHub command in the `FALSE:` branch.
+
+Annotating a git-remote step is not a style slip, it silently disables it: on a
+cross-platform setup the enclosing `CHECK: git_platform eq …` picks the right branch and
+the `PLATFORM:` filter then skips the RUN inside it, so the step's `STORE` variable is
+never written and the caller reads an empty value as "no MR" or "no CI".
+
 ### 2.5 OUTPUT
 
 Displays a message to the user.
