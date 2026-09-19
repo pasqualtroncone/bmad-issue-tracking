@@ -5,7 +5,7 @@
 #   A3.sh [repeat]   repeat=2 runs it twice to compare {entry} handling
 set -uo pipefail; . "$(dirname "$0")/_lib.sh"; C=A3; N="${1:-1}"
 WT="$(prd_worktree)"
-TEXT="$(sed -n '/^## Instructions/,/^## Unattended/p' "$MOD/skills/bmad-issue-tracking-sync/SKILL.md" | grep -E '^(1|2|5)\. ' )"
+TEXT="$(sed -n '/^## Instructions/,/^## Unattended/p' "$MOD/skills/bmad-issue-tracking-sync/SKILL.md" | grep -E '^[0-9]+\. ' )"
 for i in $(seq 1 "$N"); do
   story_issues > "$(case_dir $C)/issues-before-$i.txt"
   D="$("$E2E_ROOT/run-hook.sh" --case $C --worktree "$WT" --text "$TEXT" --entry issue-sync/sync.yaml --tag "sync-$i")"
