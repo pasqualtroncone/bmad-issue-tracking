@@ -125,6 +125,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   steps now append `&& echo merged`, so stdout carries the exit code the file header always
   named as the truth source. Reading `merge_commit_sha` instead would have inverted the other
   way — GitHub returns a test-merge SHA for an open PR.
+- A setup whose issue tracker and git remote sit on different platforms could not merge and
+  never polled its CI. `common/merge-mr.yaml` chose the merge CLI by `platform` (the tracker),
+  so with issues on GitHub and code on GitLab it ran `gh pr merge` against a GitLab repo path,
+  and its GitHub branch named `{git_owner}`/`{git_repo}`, which `common/check-config.yaml` never
+  defines — three callers derived them on the atomic's behalf and the fourth did not, halting
+  the workflow on language §4.5. `merge-mr` now reads `git_host`/`git_project` from the config
+  itself, so no caller seeds anything. The same mismatch ran through every MR/PR and CI step:
+  the enclosing `CHECK: git_platform eq …` picked the right branch and the step's `PLATFORM:`
+  annotation — which compares against the tracker — then skipped the RUN inside it, so nothing
+  was stored and the caller read the empty value as "no MR" or, after nine silent poll rounds,
+  as a 30-minute CI timeout. `common/find-mr.yaml`, `common/get-mr-pipeline.yaml`,
+  `common/merge-mr.yaml`, `common/wait-for-green-ci.yaml` and `common/get-failed-jobs.yaml` now
+  carry no `PLATFORM:` annotation and are selected by `git_platform` alone; the rule is written
+  down in `bmad-workflow-lang.md` §2.4 and enforced by `tests/test_platform_coverage.py`.
 
 ## [3.0.0] - 2026-09-15
 

@@ -78,7 +78,7 @@ Cases and what they prove:
 | `g06` | 1 | D06 | GitLab `search=1-1-login-form` still returns 1.1, 1.10 and 11.1 newest-first; the verdict reads which iid the step SELECTS (and that `Epic 1:` does not resolve to `Epic 10:`) |
 | `gl-d23`, `gl-d4`, `gl-d16`, `gl-d2`, `gl-d18` | 1 | D23, D04, D16, D02, D18 on GitLab | same replays as the GitHub cases against the GitLab consumer (D16 and D02 are GitHub-only; the rest hit both) |
 | `d03` | 1 | D03 | GitLab MR on `ci/outcome=sleep:400`: one rendered poll round is timed while the pipeline runs (must print `running` well under 240 s) and again once it is green (`passed` in one poll); also asserts the rendered round's `sleep × polls` bound |
-| `g10` | 1 | D10 | cross-platform repo mix-up (rendering) |
+| `g10` | 1 | D10 | cross-platform repo mix-up (rendering): `get-mr-pipeline` hits the git remote, `merge-mr`'s cross-platform branch routes on `git_platform` and resolves every placeholder on its own |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
 | `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2 |
 | `L` | 3 | D08/D22 end to end | `bmad-loop run --story 1-1` (runbook, by hand) |

@@ -98,7 +98,25 @@ Projects using [`bmad-loop`](https://github.com/bmad-code-org/bmad-loop) bypass 
 - GitHub: `gh` CLI, labels use `:` separator, `gh issue edit --add-label`/`--remove-label` for label updates (preserves other labels)
 - `glab api` uses `--hostname`; `glab mr`/`glab label` use `-R`; `gh` uses `-R` with format `[HOST/]OWNER/REPO`
 
+**How a step picks its CLI:** `PLATFORM: gitlab|github` compares against `platform` — the ISSUE
+TRACKER (lang §2.4). So it may only annotate steps that talk to the tracker (issues, labels,
+comments, boards). Every step that talks to the GIT REMOTE — MR/PR create, find, merge,
+mark-ready; CI pipelines, runs, job traces — carries **no `PLATFORM:` annotation** and is
+selected by `CHECK: git_platform eq "gitlab"` with the GitHub command in `FALSE:`
+(`find-mr`, `get-mr-pipeline`, `merge-mr`, `ensure-mr`, `mark-mr-ready`,
+`wait-for-green-ci`, `get-failed-jobs`). Annotating one of those disables it on a
+cross-platform setup: the `CHECK` picks the right branch and the `PLATFORM:` filter then
+skips the RUN inside it, so its `STORE` variable is never written and the caller reads the
+empty value as "no MR" / "no CI". `tests/test_platform_coverage.py` enforces both halves.
+
 **Git remote vs issue tracker:** The git remote (origin) and issue tracker can be on different platforms (e.g., code on GitLab, issues on GitHub). `issue_tracking.platform` is the issue tracker; `issue_tracking.git_platform` (set during setup) is the git remote. Issue operations (create/update/close issues, labels, comments) use `platform`. MR/PR operations (list, create, merge, mark ready) use `git_platform`. When they differ, `host`/`project` apply to the issue tracker and `git_host`/`git_project` apply to the git remote. Issue references in MR descriptions use `Closes #X` for same-platform, full URL for cross-platform.
+
+`check-config` exports `host`/`project`/`project_enc` for the TRACKER only, so an atomic that
+needs the git remote reads `git_host`/`git_project` from `_bmad/custom/issue-tracking.yaml`
+itself (`check-mr-ci`, `merge-mr`) instead of expecting a caller to seed them — callers
+disagreed about that and the one that did not seed halted on lang §4.5. `gh -R` and the
+`repos/…` API path take `owner/repo` whole, so `{git_host}/{git_project}` is the repo
+argument: there is no need to split `git_project` into owner and repo.
 
 ## Files to update when adding a new BMM workflow override
 

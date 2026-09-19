@@ -20,6 +20,13 @@
 # Side effects: polls CI every 25s while running, in 9 bounded rounds of 8 polls each
 #   (one RUN blocks ~200s and never more than ~240s; 30 min of wall clock in total);
 #   on failure, fetches failed-job traces
+#
+# Platform selection: CI belongs to the GIT REMOTE, so every poll RUN and the failure-path
+# lookup are chosen by `CHECK: git_platform eq "gitlab"` and carry NO `PLATFORM:`
+# annotation. They used to carry one, and `PLATFORM:` compares against `platform`, the
+# ISSUE TRACKER (lang §2.4): on a cross-platform setup the enclosing CHECK picked the
+# right branch and the annotation then skipped its RUN, so the round stored nothing, the
+# loop saw ci_status still "running" for all nine rounds and reported a 30-minute timeout.
 
 # Initial check (atomic; produces mr_iid + pipeline_id + pipeline_status + ci_status)
 - INCLUDE: common/check-mr-ci
@@ -97,7 +104,6 @@ else:
                     fi
                   done
                   echo "$STATUS"
-                PLATFORM: gitlab
                 STORE: ci_status
             FALSE:
               - CHECK: git_platform eq "github"
@@ -137,7 +143,6 @@ else:
                         fi
                       done
                       echo "$STATUS"
-                    PLATFORM: github
                     STORE: ci_status
 # Still "running" after the ninth round — the 30-minute budget is spent
 - CHECK: ci_status eq "running"
@@ -168,7 +173,6 @@ import json, sys
 ps = json.load(sys.stdin)
 print(str(ps[0]['id']) if ps else '')
 "
-          PLATFORM: gitlab
           STORE: pipeline_id
       FALSE:
         - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId | uv run --no-project python -c "
@@ -176,7 +180,6 @@ import json, sys
 rs = json.load(sys.stdin)
 print(str(rs[0]['databaseId']) if rs else '')
 "
-          PLATFORM: github
           STORE: pipeline_id
     - INCLUDE: common/get-failed-jobs
     - OUTPUT:

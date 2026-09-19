@@ -3,7 +3,7 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21 are local)
-#   replay.sh g06|g10|d03           # GitLab lab (g10 is a rendering proof, no glab needed)
+#   replay.sh g06|g10|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
 # Each case replays the RUN command exactly as written in the workflow file (rendered by
@@ -161,10 +161,13 @@ case_d2() {
   git checkout -q ci-green
   gh run list -R "$REPO_GH" --limit 3 --json headBranch,conclusion,createdAt,databaseId > "$d/gh-run-list.json"
   # locator: anchored on '- RUN:' — the fixed step now carries a '# … gh run list …' comment
-  # above it, which a bare 'gh run list' grep would return as step 1.
+  # above it, which a bare 'gh run list' grep would return as step 1. The '^' is gone since
+  # #15: the GitHub steps moved inside `CHECK: git_platform eq "gitlab"`'s FALSE branch (an
+  # MR/CI step follows the git remote, and the PLATFORM: they used to carry names the issue
+  # tracker), so they are indented. '- RUN:' still cannot match a comment line.
   # variables: the step reads {mr_repo}/{source_branch} (set by check-mr-ci) where it used to
   # read {host}/{project} and no branch at all.
-  local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml '^- RUN: gh run list' 1)"; l2="$(line_of common/get-mr-pipeline.yaml '^- RUN: gh run list' 2)"
+  local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 1)"; l2="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 2)"
   replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green
   replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green
   gh run list -R "$REPO_GH" --branch ci-green --limit 1 --json conclusion,headBranch,databaseId > "$d/control-branch-filter.json"
@@ -569,16 +572,27 @@ case_gl-d4() {  # glab api --paginate | json.load
 case_g10() {
   local c=g10; local d; load_lab 2>/dev/null || true; d="$(mkdir -p "$E2E_ROOT/evidence/${LAB_ID:-static}/g10" && echo "$E2E_ROOT/evidence/${LAB_ID:-static}/g10")"
   # rendering proof: cross-platform (issues on GitHub, code on GitLab) — which repo do the MR atomics hit?
-  # locator anchored on '- RUN:' for the same reason as case_d2 (a comment now names the CLI)
-  local l1; l1="$(line_of common/get-mr-pipeline.yaml '^- RUN: gh run list' 1)"
+  # locator anchored on '- RUN:' for the same reason as case_d2, minus the '^': since #15 the
+  # MR/CI steps sit inside `CHECK: git_platform eq "gitlab"` and are indented.
+  local l1; l1="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 1)"
   $TT render-step common/get-mr-pipeline.yaml "$l1" host=github.com project=acme/issues-repo mr_repo=gitlab.com/acme/code-repo source_branch=feat/x/1-1 > "$d/get-mr-pipeline.cmd"
-  local l2; l2="$(line_of common/merge-mr.yaml 'RUN: gh pr merge' 2)"
-  $TT render-step common/merge-mr.yaml "$l2" mr_iid=7 git_host=gitlab.com > "$d/merge-mr-cross.cmd"
+  # merge-mr's cross-platform merge. With issues on GitHub and code on GitLab the merge is a
+  # GitLab one, so THIS is the step the scenario reaches: before #15 the file routed on
+  # `platform` (the tracker) and ran `gh pr merge` here, against a gitlab.com repo path.
+  # The render supplies git_host/git_project because the atomic now READs them itself —
+  # no caller seeds them any more, and it no longer names {git_owner}/{git_repo} at all.
+  local l2; l2="$(line_of common/merge-mr.yaml 'RUN: glab mr merge' 2)"
+  $TT render-step common/merge-mr.yaml "$l2" mr_iid=7 squash=true git_host=gitlab.com git_project=acme/code-repo > "$d/merge-mr-cross.cmd"
+  # the mirror case (issues on GitLab, code on GitHub) renders the gh cross-platform branch
+  local l3; l3="$(line_of common/merge-mr.yaml 'RUN: gh pr merge' 2)"
+  $TT render-step common/merge-mr.yaml "$l3" mr_iid=7 git_host=github.com git_project=acme/code-repo > "$d/merge-mr-cross-gh.cmd"
   grep -n 'git_owner\|git_repo' "$WF/common/check-config.yaml" > "$d/check-config-defines.txt" || echo "(check-config defines neither git_owner nor git_repo)" > "$d/check-config-defines.txt"
-  cat "$d/get-mr-pipeline.cmd" "$d/merge-mr-cross.cmd" "$d/check-config-defines.txt" >&2
+  local unres; unres="$(cat "$d/merge-mr-cross.cmd" "$d/merge-mr-cross-gh.cmd" | grep -o '{[a-z_]*}' | sort -u | tr '\n' ' ')"
+  cat "$d/get-mr-pipeline.cmd" "$d/merge-mr-cross.cmd" "$d/merge-mr-cross-gh.cmd" "$d/check-config-defines.txt" >&2
+  echo "unresolved placeholders in the two cross-platform merge renders: ${unres:-(none)}" | tee "$d/unresolved.txt" >&2
   if grep -q 'github.com/acme/issues-repo' "$d/get-mr-pipeline.cmd" && grep -q '{git_owner}' "$d/merge-mr-cross.cmd"; then
     verdict $c CONFIRMED "get-mr-pipeline.yaml:$l1 renders 'gh run list -R github.com/acme/issues-repo' (the ISSUE tracker) although the MR lives in mr_repo=gitlab.com/acme/code-repo; merge-mr.yaml:$l2 leaves {git_owner}/{git_repo} unresolved (check-config sets neither) → lang §4.5 halts the workflow"
-  else verdict $c REFUTED "the condition needs BOTH halves of D10. get-mr-pipeline.yaml:$l1 now renders '-R {mr_repo}' ($(grep -o -- '-R "[^"]*"' "$d/get-mr-pipeline.cmd" | head -1)) — the GitHub half is fixed (#15); merge-mr.yaml:$l2 still leaves $(grep -o '{git_owner}\|{git_repo}' "$d/merge-mr-cross.cmd" | tr '\n' ' ')unresolved, so #15's remaining half is the cross-platform merge"; fi
+  else verdict $c REFUTED "the condition needs BOTH halves of D10 and both are now fixed. get-mr-pipeline.yaml:$l1 renders '$(grep -o -- '-R "[^"]*"' "$d/get-mr-pipeline.cmd" | head -1)' — the git remote, not the tracker (#34). merge-mr.yaml:$l2 is the step this mix reaches now that the merge routes on git_platform instead of platform: '$(grep -o -- 'glab mr merge[^|]*' "$d/merge-mr-cross.cmd" | head -1)' (it used to run gh pr merge against a gitlab.com path), and the mirror branch merge-mr.yaml:$l3 renders '$(grep -o -- 'gh pr merge[^&]*' "$d/merge-mr-cross-gh.cmd" | head -1)'. Unresolved placeholders in both: ${unres:-none} — the atomic READs git_host/git_project itself, so check-config defining neither git_owner nor git_repo no longer halts it on lang §4.5"; fi
 }
 
 # spec_fixtures <dir> — render the 6.12.0-shaped spec (frontmatter title, no H1) and the
