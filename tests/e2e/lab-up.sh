@@ -73,7 +73,8 @@ if [ "$REDEPLOY" = 1 ]; then
   for c in "$LAB"/consumer*; do
     [ -d "$c" ] || continue
     log "redeploying module assets into $c"
-    ( cd "$c" && git checkout -q main && git pull -q --ff-only origin main 2>/dev/null
+    # replay cases leave local commits on main (d7); the remote is the truth, so start from it
+    ( cd "$c" && git fetch -q origin && git checkout -q main && git reset -q --hard origin/main
       mkdir -p _bmad/custom _bmad/_config/custom/workflows
       rm -f _bmad/custom/bmad-*.toml; cp -f "$ASSETS"/custom/*.toml _bmad/custom/
       rm -rf _bmad/_config/custom/workflows/*; cp -rf "$ASSETS"/workflows/* _bmad/_config/custom/workflows/
