@@ -19,3 +19,6 @@ skills-lock.json
 
 # e2e lab evidence (traces, snapshots, tokens of cost) — never committed
 tests/e2e/evidence/
+
+# subagent worktrees
+.claude/worktrees/

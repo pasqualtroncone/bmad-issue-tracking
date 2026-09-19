@@ -190,6 +190,8 @@ case_d8() {
   local c=d8; load_lab; local d; d="$(case_dir $c)"
   cd "$CONSUMER"; git checkout -q main; git fetch -q origin
   git branch -D bmad-loop/r1/1-1-login-form >/dev/null 2>&1 || true
+  # a previous (fixed) run may have pushed the branch: remove it so the push is judged on its own
+  git push -q origin --delete bmad-loop/r1/1-1-login-form >/dev/null 2>&1 || true
   # bmad-loop cuts the branch from the LOCAL target branch: no tracking information at all
   git checkout -q --no-track -b bmad-loop/r1/1-1-login-form "origin/feat/$PRD_KEY/prd"
   git config --show-origin --get-all push.autoSetupRemote > "$d/push-autosetupremote.txt" 2>&1 || echo "(unset)" >> "$d/push-autosetupremote.txt"
