@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Issue sync stopped after the first issue it created: the `sync_created` counter in
+  `common/sync-issues.yaml` ran `int(sys.argv[1]) + 1` in a `python -c` body with no
+  `import sys`, so the step raised `NameError` and halted the workflow.
 - `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
   clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
   folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)

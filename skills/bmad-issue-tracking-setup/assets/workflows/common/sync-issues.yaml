@@ -272,6 +272,7 @@ else:
                   - INCLUDE: common/update-issue-status
           - RUN: rm -f /tmp/issue-desc-{entry}.md
           - RUN: uv run --no-project python -c "
+import sys
 n = int(sys.argv[1]) + 1
 print(n)
 " {sync_created}
