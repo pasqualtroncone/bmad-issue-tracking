@@ -2,7 +2,8 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -801,16 +802,51 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   fi
 }
 
+case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually see
+  # Static (no lab, no API): the defect IS the order of the dev-finish INCLUDEs. With the
+  # CI gate ahead of ensure-mr there is no PR on a story's first dev-finish, check-mr-ci
+  # maps `no_mr`, write-ci-status writes green, and only then is the PR created — so
+  # bmad-loop's first [verify] passes whatever CI did.
+  local c=d29 d
+  load_lab 2>/dev/null || true
+  d="$(mkdir -p "$E2E_ROOT/evidence/${LAB_ID:-static}/d29" && echo "$E2E_ROOT/evidence/${LAB_ID:-static}/d29")"
+  local f="$WF/common/post-dev-complete.yaml"
+  local from to
+  from="$(grep -n 'CHECK: phase eq "dev-finish"' "$f" | head -1 | cut -d: -f1)"
+  to="$(grep -n 'CHECK: phase eq "review-finish"' "$f" | head -1 | cut -d: -f1)"
+  if [ -z "$from" ] || [ -z "$to" ]; then
+    verdict $c BLOCKED "cannot delimit the dev-finish phase in post-dev-complete.yaml (from='$from' to='$to')"; return
+  fi
+  sed -n "${from},$((to-1))p" "$f" | grep -oE '^[[:space:]]*- INCLUDE: common/[a-z-]+' | sed 's#.*common/##' > "$d/includes.txt"
+  pos() { grep -nxF "$1" "$d/includes.txt" | head -1 | cut -d: -f1; }
+  local p_issue p_mr p_ci p_write
+  p_issue="$(pos ensure-issue)"; p_mr="$(pos ensure-mr)"; p_ci="$(pos wait-for-green-ci)"; p_write="$(pos write-ci-status)"
+  # the `no_mr` -> green mapping must survive: it is the flow with no remote MR AT ALL
+  grep -n 'ci_status eq "no_mr"' "$WF/common/write-ci-status.yaml" > "$d/no-mr-green.txt" || true
+  { echo "dev-finish INCLUDE order: $(tr '\n' ' ' < "$d/includes.txt")"
+    echo "ensure-issue=#${p_issue:-?} ensure-mr=#${p_mr:-?} wait-for-green-ci=#${p_ci:-?} write-ci-status=#${p_write:-?}"
+    echo "write-ci-status still maps no_mr -> green: $(cat "$d/no-mr-green.txt")"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ -z "$p_issue" ] || [ -z "$p_mr" ] || [ -z "$p_ci" ] || [ -z "$p_write" ]; then
+    verdict $c BLOCKED "the dev-finish phase does not include all four atomics: $(cat "$d/summary.txt" | head -2 | tr '\n' ' ')"
+  elif [ "$p_ci" -lt "$p_mr" ]; then
+    verdict $c CONFIRMED "post-dev-complete.yaml dev-finish gates on CI (#$p_ci) BEFORE it ensures the MR (#$p_mr): on a story's first dev-finish there is no PR, check-mr-ci maps no_mr, write-ci-status (#$p_write) writes green, and the PR is created afterwards. bmad-loop's first [verify] passes whatever CI did; a red pipeline is only seen on the next pass"
+  elif [ "$p_issue" -lt "$p_mr" ] && [ "$p_mr" -lt "$p_ci" ] && [ "$p_ci" -lt "$p_write" ] && [ -s "$d/no-mr-green.txt" ]; then
+    verdict $c REFUTED "post-dev-complete.yaml dev-finish ensures the issue (#$p_issue) and the MR (#$p_mr) BEFORE the CI gate (#$p_ci) and the ci-status.json write (#$p_write), so the FIRST dev-finish of a story is gated on a pipeline that exists. no_mr still maps to green ($(cat "$d/no-mr-green.txt")) — that is the flow with no remote MR at all, not a story whose MR had simply not been created yet"
+  else
+    verdict $c BLOCKED "neither shape: ensure-issue=#$p_issue ensure-mr=#$p_mr wait-for-green-ci=#$p_ci write-ci-status=#$p_write; no_mr mapping: $(cat "$d/no-mr-green.txt")"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
-    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
+    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
 }

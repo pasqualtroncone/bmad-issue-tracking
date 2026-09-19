@@ -36,7 +36,7 @@
 #
 # The SHA lookup addresses the host through `--hostname`, never inside the path: `gh api
 # repos/github.com/<owner>/<repo>/pulls/<n>` answers 404 "Not Found" (the path segment is
-# read as the owner), and this step carries no `EXPECT_EXIT: any` — so a SUCCESSFUL merge
+# read as the owner), and this step expects exit 0 like any other — so a SUCCESSFUL merge
 # was immediately followed by a halt with merge_sha empty, on every GitHub merge the
 # review-finish prompt performed. `glab api` has always taken its host that way.
 

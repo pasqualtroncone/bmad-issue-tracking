@@ -78,7 +78,7 @@ Branch setup happens in activation (before BMM workflow runs). The BMM workflow 
 | correct-course | Switch to PRD worktree | Update issue descriptions if artifacts modified | (PRD worktree) |
 | retrospective | Switch to PRD worktree | Create retrospective issue + close | (PRD worktree) |
 | create-story (shim) | Ask story key, create/switch to story worktree (from PRD) | Commit + push + issue + MR | story → PRD |
-| dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + update issue | (MR from create-story) |
+| dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + issue + MR, then the CI gate, then update issue (the MR is ensured BEFORE the gate: with no MR the gate has nothing to read and writes green) | (MR from create-story) |
 | code-review | Find story with status `review`, switch to worktree | Commit + push + post review + optional merge | story → PRD |
 | sprint-status (shim) | Switch to PRD worktree | Trigger issue sync (steps 4-6) | (none) |
 

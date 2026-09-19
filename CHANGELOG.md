@@ -181,6 +181,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MR/PR and CI step reads them from there. The four private copies of that resolution are
   gone, and with them the `git_owner`/`git_repo` split-and-rejoin of
   `bmad-prd/complete.yaml`, `create-prd/complete.yaml` and `common/mark-mr-ready.yaml`.
+- The first dev-finish of a story wrote `ci-status.json` green without checking any CI: the
+  dev-finish phase of `common/post-dev-complete.yaml` ran the CI gate before `ensure-mr`, so
+  on the first pass there was no PR yet, `check-mr-ci` mapped `no_mr` and `write-ci-status`
+  wrote green — and only then was the PR created. Under bmad-loop the first `[verify]`
+  therefore passed whatever CI did, and a red pipeline was first seen one pass later. The
+  issue and the MR are now ensured before the gate. `no_mr` still maps to green: that is the
+  flow with no remote MR at all, not a story whose MR had not been created yet.
 
 ## [3.0.0] - 2026-09-15
 
