@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `common/create-issue.yaml`: the `TRUE:`/`FALSE:` branches of the inner
+  `CHECK: empty issue_id` sat at the same indentation as the `- CHECK` item itself, so the
+  block only read as a conditional by luck (both branches `STOP`, so either reading ended the
+  workflow). They are now nested under the CHECK.
 - The MR for a story named a source branch that does not exist on the remote: the create-story and
   dev-finish phases derived it from `branch_patterns.story` (`feat/<prd_key>/<story_key>`) while the
   work sits on the branch the run is actually on, so `gh pr create --head` failed and the step's
