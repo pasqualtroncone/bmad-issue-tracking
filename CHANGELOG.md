@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `assets/bmad-workflow-lang.md` defined `expect_exit` as a numeric code only while eleven
+  RUN steps across six workflows say `EXPECT_EXIT: any`, so the spec called a step every
+  hook relies on (`cat` on an absent marker, `gh pr merge` on an unmergeable PR, a comment
+  post that must not take the hook down) an error. §2.4 and §5 now describe `any`.
 - Every epic label came out in the tracker's default colour although
   `common/ensure-dynamic-labels.yaml` computed one per epic number from a ten-colour
   palette: the value was stored in `epic_color` and never passed on, because

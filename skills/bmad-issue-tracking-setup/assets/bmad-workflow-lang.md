@@ -171,7 +171,15 @@ Executes a CLI command in the shell.
 - `command` (required): the CLI command to execute (supports `{variable}` substitution).
 - `store` (optional): variable name to store the captured output. The output is stored as a raw string (multi-line output includes newlines).
 - `capture` (optional): what to capture -- `stdout` (default), `stderr`.
-- `expect_exit` (optional): expected exit code (default: `0`). If the command exits with a different code, the workflow stops with an error including the command and the actual exit code.
+- `expect_exit` (optional): expected exit code (default: `0`), either a number or the
+  literal `any`. With a number, a command that exits with a different code stops the
+  workflow with an error including the command and the actual exit code. With
+  `EXPECT_EXIT: any` no exit code is an error: the step's `STORE` variable takes
+  whatever the command printed (the empty string when it printed nothing) and the
+  workflow continues to the next step. Use it where a non-zero exit IS an answer —
+  `cat` on an absent marker file, `gh pr merge` on an unmergeable PR, a comment post
+  whose failure must not take the rest of the hook down — and never to silence an
+  exit code the workflow should have reacted to.
 - `platform` (optional): if specified (`gitlab` or `github`), the step is executed ONLY when the `platform` variable (from `issue_tracking.platform`) matches this value. If omitted, the step is always executed. Only one platform value is allowed per step -- use two separate RUN steps for platform divergence.
 
 **Example (from edit-prd complete.yaml):**
@@ -489,6 +497,7 @@ The following situations cause the workflow to stop immediately. No retry. No fa
 | Situation | Behavior |
 |-----------|----------|
 | `RUN` exits with unexpected code | Stop workflow, output error with command, expected code, and actual code |
+| `RUN` with `EXPECT_EXIT: any` exits non-zero | Not an error. `STORE` takes the output (empty when there is none) and execution continues |
 | `READ` file not found | Stop workflow, output error with file path |
 | `READ` extract dotpath not found | Stop workflow, output error with dotpath and file path |
 | `FILTER` no match on `where` | Stop workflow, output error with the filter condition |
