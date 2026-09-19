@@ -215,8 +215,8 @@ When cutting a release:
 
 ## Step-authoring rules the test suite enforces
 
-These two are not style preferences — `tests/` fails a workflow that breaks them, and both
-have caught real defects:
+These three are not style preferences — `tests/` fails a workflow that breaks them, and all
+three have caught real defects:
 
 - **No raw shell variables in any step.** `test_command_patterns.py::test_no_unresolved_shell_vars`
   rejects `$var` and `${var}` in every step's `raw_value` (only the awk built-in `NF` is
@@ -231,8 +231,18 @@ have caught real defects:
   even when the answer is "none" (`check-config` and `find-issue` both say
   `Side effects: none`). Four MR atomics shipped without it and left the suite red; only
   the first was ever reported, because `assert` aborts the test on the first failure.
+- **`STOP` is a RETURN, never a halt.** Lang §2.10 says it ends the CURRENT file and
+  resumes the INCLUDE caller with every variable in scope; the whole-run halt is
+  `OUTPUT ... stop: true` (§2.5). `test_stop_semantics.py` keeps the files inside that
+  reading: a STOP-bearing file must have an INCLUDE caller and must never be an entry
+  workflow a TOML override points at, no `- STOP` may sit unconditionally at column 0,
+  and §2.10 must keep defining it as a return. Two headless interpreters read the old
+  wording two different ways and one ended a whole sync at `common/find-prd-key.yaml`,
+  where the step meant "prd_key is already known, carry on" — so prefer a guard that
+  needs no early return (`find-prd-key`, `ensure-board`, `mark-mr-ready` all gate their
+  body on the positive condition now) and comment the STOPs that stay.
 
-A third rule is not checked by `tests/` but by the e2e level-0 report (`make e2e-static`,
+A fourth rule is not checked by `tests/` but by the e2e level-0 report (`make e2e-static`,
 item `D03-static`): **no single `RUN` may block longer than the interpreter's Bash tool
 allows** — 120 s by default, 600 s at most. A long wait is expressed in the workflow
 language, not in bash: `common/wait-for-green-ci.yaml` spends its 30-minute CI budget as a
