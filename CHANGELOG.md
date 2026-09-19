@@ -144,6 +144,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every other producer writes, and a key-shaped lookup selects on exactly that marker. There was
   no duplicate — `common/create-issue.yaml` adopts the issue by its exact title — but every sync
   counted the retrospective as newly created and left its status label unreconciled.
+- A successful GitHub merge halted the workflow one step later: `common/merge-mr.yaml` read the
+  merge commit with the host inside the API path (`gh api repos/github.com/<owner>/<repo>/pulls/<n>`),
+  which answers 404, and the step carries no `EXPECT_EXIT: any`. The host now travels in
+  `--hostname`, the shape the rest of the module uses, on both the same-platform and the
+  cross-platform branch.
 
 ## [3.0.0] - 2026-09-15
 

@@ -256,6 +256,15 @@ case_d16() {
   # positive: merge succeeds — capture stdout and stderr separately, exactly as STORE would (stdout only)
   replay $c merge-ok common/merge-mr.yaml "$lm" mr_iid="$n" host=github.com project="$REPO_GH"
   gh pr view "$n" -R "$REPO_GH" --json state,mergedAt --jq '.state + " " + (.mergedAt // "")' > "$d/pr-state-after.txt"
+  # D30 (#43): the SHA lookup the atomic runs right after the merge. `gh api` takes the
+  # host through --hostname; with the host inside the path it answers 404, and the step
+  # carries no EXPECT_EXIT: any — so a REAL merge was followed by a halt with merge_sha
+  # empty. Rendered here against the PR that was just merged: the SHA must come back.
+  local lsha; lsha="$(line_of common/merge-mr.yaml 'RUN: gh api "repos/' 1)"
+  replay $c merge-sha common/merge-mr.yaml "$lsha" mr_iid="$n" host=github.com project="$REPO_GH"
+  # the pre-fix shape against the same merged PR, for the record
+  gh api "repos/github.com/$REPO_GH/pulls/$n" --jq .merge_commit_sha > "$d/merge-sha-hostinpath.out" 2> "$d/merge-sha-hostinpath.err"
+  echo $? > "$d/merge-sha-hostinpath.rc"
   # negative: merge the already-merged PR
   replay $c merge-again common/merge-mr.yaml "$lm" mr_iid="$n" host=github.com project="$REPO_GH"
   # the derivation step, fed what STORE would hold (stdout) in both cases
@@ -266,6 +275,12 @@ case_d16() {
   if [ "$(cat "$d/merge-ok.rc")" = 0 ] && grep -q MERGED "$d/pr-state-after.txt" && [ ! -s "$d/merge-ok.out" ] && [ "$(tr -d '[:space:]' < "$d/derive-ok.out")" = false ]; then
     verdict $c CONFIRMED "merge-mr.yaml:$lm 'gh pr merge --squash --delete-branch' succeeded (rc=0, PR $n MERGED) with EMPTY stdout and stdout-only STORE → merge-mr.yaml:$ld derives merged='$(cat "$d/derive-ok.out")' for a real merge (inverted). Re-merging the merged PR: rc=$(cat "$d/merge-again.rc"), stdout empty, stderr '$(head -c 90 "$d/merge-again.err" | tr '\n' ' ')' → derive='$(cat "$d/derive-again.out")' (indistinguishable)"
   else verdict $c REFUTED "ok rc=$(cat "$d/merge-ok.rc") stdout=$(wc -c < "$d/merge-ok.out")B again rc=$(cat "$d/merge-again.rc") derive=$(cat "$d/derive-ok.out")/$(cat "$d/derive-again.out")"; fi
+  local sha; sha="$(tr -d '[:space:]' < "$d/merge-sha.out")"
+  if [ "$(cat "$d/merge-sha.rc")" = 0 ] && [ -n "$sha" ]; then
+    verdict $c-D30 REFUTED "merge-mr.yaml:$lsha reads the merge SHA of the just-merged PR #$n: rc=0, merge_commit_sha=$sha. The host travels in --hostname, not in the path; the pre-fix path shape (repos/github.com/$REPO_GH/pulls/$n) answers rc=$(cat "$d/merge-sha-hostinpath.rc") '$(head -c 90 "$d/merge-sha-hostinpath.err" | tr '\n' ' ')', and with no EXPECT_EXIT: any that 404 halted the workflow after a successful merge"
+  else
+    verdict $c-D30 CONFIRMED "merge-mr.yaml:$lsha does not read the merge SHA of the merged PR #$n: rc=$(cat "$d/merge-sha.rc") out='$sha' err='$(head -c 120 "$d/merge-sha.err" | tr '\n' ' ')' — the step has no EXPECT_EXIT: any, so the workflow halts right after a successful merge with merge_sha empty"
+  fi
 }
 
 case_d19() {
