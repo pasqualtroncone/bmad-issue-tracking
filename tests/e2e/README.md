@@ -71,7 +71,7 @@ Cases and what they prove:
 | `d8` | 1 | D08 (+D22) | `bmad-loop/r1/…` branch without upstream → `git push` exit 128; module's `story_branch` absent on origin |
 | `d16` | 1 | D16 | `gh pr merge` rc=0, stdout empty → `merged=false` |
 | `d15` | 1 | D15, #52 | the key comes out of the loop item under both renderings and the status out of `sprint-status.yaml` by that key (`backlog` for a bare item too); no `: backlog` in the title or in `/tmp/issue-desc-*.md`; no step left rendering `{entry}` as a key |
-| `d19` | 1 | D19/D20 | `find-issue` on `1-1-login-form`: the query still returns `Story 1.10`, the verdict reads which id the step SELECTS; index latency; space in URL |
+| `d19` | 1 | D19/D20/D23/R5/R8 | `find-issue` on `1-1-login-form`: the query still returns `Story 1.10`, the verdict reads which id the step SELECTS; index latency; space in URL; the PRD lookup must not adopt a PR; and the two gated paths timed against the same absent key (`lookup_attempts=1` vs `4`) |
 | `d21` | 1 | D21 | `ensure-issue`/`sync-issues` title step against the 6.12.0 spec (frontmatter title, no H1) and the legacy H1 variant; the pre-fix heading rules are replayed alongside |
 | `d24` | 1 | D24/D25 | `create-issue` lookup: absent title → empty + rc=0 (not a FILTER halt), present title → its number, and the same over 105 issues (2 `--paginate` pages) |
 | `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |

@@ -7,8 +7,12 @@
 #       Passed as a `-f` request field, never interpolated into the URL, so the CLI
 #       percent-encodes it: a space or a colon ("PRD: mobile-oidc", "Epic 1:") is safe.
 #   - prd_key: the PRD key (from scope, for label scoping)
+#   - lookup_after_create: "true" when a create already happened in THIS run (raised by
+#       common/create-issue.yaml). Optional — an unset flag reads FALSE. Only the
+#       key-shaped GitHub lookup reads it; see the retry note below.
 # Output variables:
 #   - issue_id: the issue IID (GitLab) or number (GitHub); empty string if not found
+#   - lookup_after_create: always "false" on return — the flag marks ONE lookup
 # Side effects: none
 #
 # Both trackers answer `search=` with a FUZZY, index-ranked list: "1-1-login-form" also
@@ -65,14 +69,27 @@ print(str(match[0]['iid']) if match else '')
 # The retry is the other half, and it is why this body calls `gh` itself. NEITHER GitHub
 # endpoint is read-your-writes: measured on the lab, an issue takes 3.7-7.7 s to appear
 # in `repos/<o>/<r>/issues` (with or without the `labels=` filter) and about as long in
-# `search/issues`. Any flow that creates an issue and looks it up again in the same
-# minute — a create-story phase followed by dev-finish, sync-issues walking several
-# entries — read an empty issue_id, skipped the status update and went back to
-# create-issue, whose own lookup reads the same lagging list. So a miss is re-checked up
-# to three times, 3 s apart: ~9 s at worst, paid once per issue that genuinely does not
-# exist yet, and nothing at all when the issue is found on the piped first page.
+# `search/issues`. A flow that creates an issue and looks it up again in the same run —
+# post-dev-complete asks for the story issue after ensure-issue may have just created it
+# — read an empty issue_id, skipped the status update and went back to create-issue,
+# whose own lookup reads the same lagging list. So a miss is re-checked up to three
+# times, 3 s apart: ~9 s at worst.
+#
+# BUT A MISS IS THE NORMAL ANSWER for the callers that are about to create the issue —
+# the first sync of a PRD, create-story, correct-course — and they paid those 9 s per
+# entry for an issue nobody had created yet: a 30-entry first sync slept ~4.5 minutes and
+# spent the REST budget to learn what it already knew. The re-check is only ever right
+# when a create has already happened in THIS run, so it is gated on the flag
+# common/create-issue.yaml raises right after a successful create. An unset flag reads
+# FALSE (the optional-flag idiom `review_producer` uses in post-dev-complete.yaml), so a
+# caller that never creates keeps the single-shot lookup and returns on the miss at once.
 # A `gh` failure raises (check=True) and the step exits non-zero, as #32 requires.
 # GitLab's REST `search=` is not index-backed and needs none of this.
+- CHECK: lookup_after_create eq "true"
+  TRUE:
+    - SET: { variable: lookup_attempts, value: "4" }
+  FALSE:
+    - SET: { variable: lookup_attempts, value: "1" }
 - CHECK: search_text contains ":"
   TRUE:
     - RUN: set -o pipefail; gh api "search/issues" --method GET -f "q={search_text} repo:{project} label:prd{sep}{prd_key}" -f "per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
@@ -111,14 +128,15 @@ def parse(text):
 
 
 marker = '**Sprint Key:** ' + chr(96) + sys.argv[1] + chr(96)
+attempts = int(sys.argv[4])
 text = sys.stdin.read()
 found = ''
-for attempt in range(4):
+for attempt in range(attempts):
     match = [i for i in parse(text) if marker in (i.get('body') or '')]
     if match:
         found = str(match[0]['number'])
         break
-    if attempt == 3:
+    if attempt == attempts - 1:
         break
     time.sleep(3)
     text = subprocess.run(
@@ -126,6 +144,10 @@ for attempt in range(4):
         capture_output=True, text=True, check=True
     ).stdout
 print(found)
-" "{search_text}" "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" {host}
+" "{search_text}" "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" {host} {lookup_attempts}
       STORE: issue_id
       PLATFORM: github
+# The flag marks ONE lookup — the one that may be racing the create that raised it. It is
+# consumed here, on every platform and both search shapes, so the next miss (a different
+# key, an entry nobody has created yet) is answered immediately again.
+- SET: { variable: lookup_after_create, value: "false" }

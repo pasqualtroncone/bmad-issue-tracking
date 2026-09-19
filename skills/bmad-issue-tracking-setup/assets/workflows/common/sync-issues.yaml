@@ -223,7 +223,12 @@ else:
               - SET: { variable: mapped_status, value: "in-progress" }
             FALSE:
               - SET: { variable: mapped_status, value: "{entry_status}" }
-      # --- Find existing issue (3-tier matching) ---
+      # --- Find existing issue ---
+      # This loop never looks up what it just created — create-issue hands issue_id back
+      # directly — so the read-your-writes flag a previous iteration's create raised is
+      # cleared here. Left up, it would make the NEXT entry's miss (the normal answer on a
+      # first sync, where nothing exists yet) pay find-issue's 9 s re-check for nothing.
+      - SET: { variable: lookup_after_create, value: "false" }
       - SET: { variable: search_text, value: "{entry_key}" }
       - INCLUDE: common/find-issue
       - CHECK: empty issue_id

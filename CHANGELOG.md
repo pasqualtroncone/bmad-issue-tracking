@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A first sync spent minutes sleeping over issues nobody had created yet. `common/find-issue.yaml`
+  re-checked every key-shaped GitHub miss three times, 3 s apart, and a miss is the NORMAL
+  answer for the callers that are about to create the issue (a first sync, create-story,
+  correct-course): 30 entries slept ~4.5 minutes and spent the REST budget to be told what
+  they already knew. The re-check is now gated on `lookup_after_create`, the flag
+  `common/create-issue.yaml` raises right after a successful create and `find-issue`
+  consumes on the next lookup; `common/sync-issues.yaml` clears it per entry, because its
+  loop never looks up what it just created. An unset flag reads FALSE, so a caller that
+  never creates returns on the miss at once (measured 0.9 s against 12.3 s).
 - `TestPythonImportCompliance` never inspected a single command: it skipped any step whose
   text lacked `uv run python`, and every RUN in the module spells it `uv run --no-project
   python`. The check the D17/D18 halts should have been caught by was dead from the day it

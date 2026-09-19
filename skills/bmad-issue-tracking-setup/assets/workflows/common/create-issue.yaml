@@ -8,6 +8,9 @@
 #   - description_file: path to the file containing the issue description
 # Output variables:
 #   - issue_id: the IID (GitLab) or number (GitHub) of the created/found issue
+#   - lookup_after_create: "true" after an issue was CREATED here (not after one was
+#       adopted by title). common/find-issue.yaml reads it to decide whether its next
+#       key-shaped GitHub lookup is worth re-checking; see the note at the end.
 # Side effects: creates an issue on the issue tracker if it does not already exist;
 #               writes and removes /tmp/issue-title.txt
 # Requires: host and project in scope (provided by common/check-config via callers)
@@ -154,3 +157,11 @@ print(m.group(1) if m else '')
     - OUTPUT:
         message: "Issue created but its id could not be read from the create output: {create_result}"
         stop: true
+# An issue was just created. Neither GitHub endpoint is read-your-writes (3.7-7.7 s on the
+# lab), so a find-issue LATER IN THIS RUN — post-dev-complete asks for the story issue
+# again after ensure-issue created it — can read an empty issue_id and skip the status
+# update. The flag tells common/find-issue.yaml that its next key-shaped GitHub lookup may
+# be racing this create and is worth re-checking; find-issue consumes it after that one
+# lookup, so no OTHER miss pays for it. The adopt branch above STOPs before this line: an
+# issue found by title was not created here and nothing is racing it.
+- SET: { variable: lookup_after_create, value: "true" }

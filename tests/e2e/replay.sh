@@ -334,7 +334,10 @@ case_d19() {
   # raw search is captured separately (raw-*.txt) because the QUERY is deliberately
   # unchanged — it is still fuzzy, and the evidence has to keep showing that. The verdict
   # therefore reads the selected id, not the number of hits: "the wrong issue is picked".
-  replay $c find-1-1 common/find-issue.yaml "$lr" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # Since #54 the key-shaped step renders {lookup_attempts}: 1 on the ordinary caller path
+  # (no create behind it — the flag `lookup_after_create` is unset, which reads FALSE) and
+  # 4 only when common/create-issue.yaml raised the flag. This lookup is an ordinary one.
+  replay $c find-1-1 common/find-issue.yaml "$lr" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=1
   replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
@@ -374,7 +377,9 @@ case_d19() {
     --body "**Sprint Key:** \`$fresh\`" --label "prd:$key" > "$d/fresh-url.txt" 2>&1
   local fu fn; fu="$(tail -1 "$d/fresh-url.txt")"; fn="${fu##*/}"
   local t0 dt; t0="$(date +%s)"
-  replay $c find-fresh common/find-issue.yaml "$lr" search_text="$fresh" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # the path that DOES re-check: what the runtime renders right after a create raised the
+  # flag (#54). The other path is probed as R8 below.
+  replay $c find-fresh common/find-issue.yaml "$lr" search_text="$fresh" project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=4
   dt=$(( $(date +%s) - t0 ))
   # what the index-backed search API knows about the same issue at the same instant
   gh api "search/issues?q=$fresh+repo:$REPO_GH+label:prd:$key&per_page=5" --jq .total_count > "$d/fresh-search-count.txt" 2>&1
@@ -384,9 +389,41 @@ case_d19() {
   if [ -z "$fn" ]; then
     verdict $c-D20 BLOCKED "could not create the probe issue: $(head -c 200 "$d/fresh-url.txt" | tr '\n' ' ')"
   elif [ "$(cat "$d/find-fresh.rc")" = 0 ] && [ "$gf" = "$fn" ]; then
-    verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
+    verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and, on the after-a-create path (lookup_attempts=4), re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
   else
     verdict $c-D20 CONFIRMED "find-issue.yaml:$lr does not see the issue it was just told about: #$fn key '$fresh' → selected '#${gf:-(empty)}' rc=$(cat "$d/find-fresh.rc") after ${dt}s; search/issues total_count=$(cat "$d/fresh-search-count.txt"). A flow that creates an issue and looks it up in the same minute skips the status update"
+  fi
+  # --- R8 (#54): a miss on the ordinary path must come back at once ---
+  # The D20 re-check above costs 3 x 3 s, and a MISS IS THE NORMAL ANSWER for every caller
+  # that is about to create the issue (a first sync, create-story, correct-course): a
+  # 30-entry first sync slept ~4.5 min to be told what it already knew. Since #54 the
+  # re-check is gated on `lookup_after_create` — unset reads FALSE — so the step renders
+  # lookup_attempts=1 there and 4 only right after a create. Both are replayed against the
+  # SAME absent key so the only difference is the gate.
+  local ghost="9-9-never-created-$(date +%s)"
+  local gs0 gs1 miss_fast miss_retry
+  $TT render-step common/find-issue.yaml "$lr" search_text="$ghost" project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=1 > "$d/miss-fast.cmd"
+  gs0="$(date +%s%N)"; ( cd "$CONSUMER" && bash "$d/miss-fast.cmd" ) > "$d/miss-fast.out" 2> "$d/miss-fast.err"; echo $? > "$d/miss-fast.rc"; gs1="$(date +%s%N)"
+  miss_fast=$(( (gs1 - gs0) / 1000000 ))
+  $TT render-step common/find-issue.yaml "$lr" search_text="$ghost" project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=4 > "$d/miss-retry.cmd"
+  gs0="$(date +%s%N)"; ( cd "$CONSUMER" && bash "$d/miss-retry.cmd" ) > "$d/miss-retry.out" 2> "$d/miss-retry.err"; echo $? > "$d/miss-retry.rc"; gs1="$(date +%s%N)"
+  miss_retry=$(( (gs1 - gs0) / 1000000 ))
+  local mf mr8 gate_true gate_false
+  mf="$(tr -d '[:space:]' < "$d/miss-fast.out")"; mr8="$(tr -d '[:space:]' < "$d/miss-retry.out")"
+  # the gate itself: the two SET steps that decide how many attempts the step renders
+  gate_true="$(grep -c -E '^    - SET: \{ variable: lookup_attempts, value: "4" \}' "$WF/common/find-issue.yaml")"
+  gate_false="$(grep -c -E '^    - SET: \{ variable: lookup_attempts, value: "1" \}' "$WF/common/find-issue.yaml")"
+  { echo "gate in find-issue.yaml: lookup_after_create eq true -> attempts 4 ($gate_true step), else attempts 1 ($gate_false step)"
+    echo "absent key '$ghost' with lookup_attempts=1 -> '${mf:-(empty)}' rc=$(cat "$d/miss-fast.rc") in ${miss_fast}ms"
+    echo "absent key '$ghost' with lookup_attempts=4 -> '${mr8:-(empty)}' rc=$(cat "$d/miss-retry.rc") in ${miss_retry}ms"
+    echo "create-issue.yaml raises the flag after a create: $(grep -c -E '^- SET: \{ variable: lookup_after_create, value: "true" \}' "$WF/common/create-issue.yaml") step"
+    echo "find-issue.yaml consumes it: $(grep -c -E '^- SET: \{ variable: lookup_after_create, value: "false" \}' "$WF/common/find-issue.yaml") step"
+    echo "sync-issues.yaml clears it per entry: $(grep -c -E '^      - SET: \{ variable: lookup_after_create, value: "false" \}' "$WF/common/sync-issues.yaml") step"; } > "$d/r8-summary.txt"; cat "$d/r8-summary.txt" >&2
+  if [ "$gate_true" = 1 ] && [ "$gate_false" = 1 ] && [ "$(cat "$d/miss-fast.rc")" = 0 ] && [ -z "$mf" ] \
+     && [ "$miss_fast" -le 2000 ] && [ "$(cat "$d/miss-retry.rc")" = 0 ] && [ -z "$mr8" ] && [ "$miss_retry" -ge 9000 ]; then
+    verdict $c-R8 REFUTED "find-issue.yaml:$lr no longer pays the read-your-writes wait on an ordinary miss: the absent key '$ghost' comes back EMPTY at rc=0 in ${miss_fast}ms on the gated-off path (lookup_attempts=1), against ${miss_retry}ms for the same absent key on the after-a-create path (lookup_attempts=4) — the 3 x 3 s every first-sync entry used to pay. The gate is the pair of SET steps in find-issue.yaml, fed by the flag create-issue.yaml raises after a create and cleared per entry by sync-issues.yaml (see r8-summary.txt)"
+  else
+    verdict $c-R8 CONFIRMED "the miss still costs the re-check (or the gate is not there): attempts-4 SET=$gate_true attempts-1 SET=$gate_false; fast rc=$(cat "$d/miss-fast.rc") out='$mf' ${miss_fast}ms (want empty, <=2000ms); retry rc=$(cat "$d/miss-retry.rc") out='$mr8' ${miss_retry}ms (want empty, >=9000ms)"
   fi
   # --- R5 (#51): the title-shaped lookup must not adopt a PULL REQUEST ---
   # ensure-mr titles the PRD pull request "PRD: {prd_key}" — the format of the PRD ISSUE —
