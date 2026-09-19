@@ -267,30 +267,39 @@ case_d19() {
   echo "search index latency for a just-created issue: ~${t}s (total_count=$n)" | tee "$d/index-latency.txt" >&2
   sleep 20
   local lf; lf="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
+  # The step searches AND chooses: its stdout is the selected issue number, or empty. The
+  # raw search is captured separately (raw-*.txt) because the QUERY is deliberately
+  # unchanged — it is still fuzzy, and the evidence has to keep showing that. The verdict
+  # therefore reads the selected id, not the number of hits: "the wrong issue is picked".
   replay $c find-1-1 common/find-issue.yaml "$lf" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
-  titles() { uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join("#%s %s" % (i["number"], i["title"]) for i in d))' "$1" 2>/dev/null; }
-  { echo "== search_text=1-1-login-form"; titles "$d/find-1-1.out"; echo "== search_text='Epic 1:'"; titles "$d/find-epic-1.out"; echo "== search_text='PRD: $key' rc=$(cat "$d/find-prd.rc")"; titles "$d/find-prd.out"; head -c 300 "$d/find-prd.err"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
-  local n11 ne1; n11="$(titles "$d/find-1-1.out" | wc -l)"; ne1="$(titles "$d/find-epic-1.out" | wc -l)"
-  if grep -q 'PROTOCOL_ERROR' "$d/find-prd.err" && [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$(tr -d '[:space:]' < "$d/find-prd.out")" = "[]" ]; then
+  raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
+  raw "1-1-login-form" > "$d/raw-1-1.txt"; raw "Epic 1:" > "$d/raw-epic-1.txt"; raw "PRD: $key" > "$d/raw-prd.txt"
+  want() { gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:$key" --paginate --jq ".[] | select(.title == \"$1\") | .number" 2>/dev/null | head -1; }
+  local w11 we1 wprd g11 ge1 gprd
+  w11="$(want "Story 1.1: Login Form")"; we1="$(want "Epic 1: Authentication")"; wprd="$(want "PRD: $key")"
+  g11="$(tr -d '[:space:]' < "$d/find-1-1.out")"; ge1="$(tr -d '[:space:]' < "$d/find-epic-1.out")"; gprd="$(tr -d '[:space:]' < "$d/find-prd.out")"
+  { echo "== search_text=1-1-login-form  selected=#${g11:-(empty)} want=#${w11:-?}  raw hits: $(cat "$d/raw-1-1.txt")"
+    echo "== search_text='Epic 1:'       selected=#${ge1:-(empty)} want=#${we1:-?}  raw hits: $(cat "$d/raw-epic-1.txt")"
+    echo "== search_text='PRD: $key'     selected=#${gprd:-(empty)} want=#${wprd:-?} rc=$(cat "$d/find-prd.rc")  raw hits: $(cat "$d/raw-prd.txt")"
+    head -c 300 "$d/find-prd.err"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if grep -q 'PROTOCOL_ERROR' "$d/find-prd.err" && [ "$(cat "$d/find-prd.rc")" = 0 ] && [ -z "$gprd" ]; then
     gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
-    verdict $c-D23 CONFIRMED "find-issue.yaml:$lf with search_text='PRD: $key' puts a raw space in the URL → gh api: '$(grep -o 'stream error.*' "$d/find-prd.err" | head -1)'; the trailing '| python' makes the step exit 0 with issue_result='[]' → issue_id empty. Every 'PRD: {prd_key}' lookup on GitHub (issue-sync/prepare, bmad-prd/complete create-vs-update, edit-prd, correct-course) silently misses; percent-encoded, the same query returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' fails the same way (rc=$(cat "$d/find-epic-1.rc"), $ne1 hits)"
+    verdict $c-D23 CONFIRMED "find-issue.yaml:$lf with search_text='PRD: $key' puts a raw space in the URL → gh api: '$(grep -o 'stream error.*' "$d/find-prd.err" | head -1)'; the trailing '| python' makes the step exit 0 with an empty selection → issue_id empty. Every 'PRD: {prd_key}' lookup on GitHub (issue-sync/prepare, bmad-prd/complete create-vs-update, edit-prd, correct-course) silently misses; percent-encoded, the same query returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' fails the same way (rc=$(cat "$d/find-epic-1.rc"), selected #${ge1:-(empty)})"
+  elif [ "$(cat "$d/find-prd.rc")" = 0 ] && [ -n "$gprd" ] && [ "$gprd" = "$wprd" ]; then
+    gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
+    verdict $c-D23 REFUTED "find-issue.yaml:$lf with search_text='PRD: $key' → rc=0 and the PRD issue #$gprd 'PRD: $key' is selected, no PROTOCOL_ERROR: the space never reaches the URL. The encoded control returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' → rc=$(cat "$d/find-epic-1.rc"), selected #${ge1:-(empty)}"
   else
-    # same control query, so the REFUTED arm reports what the encoded lookup ought to return
-    gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
-    local nprd; nprd="$(titles "$d/find-prd.out" | wc -l)"
-    if [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$nprd" -ge 1 ]; then
-      verdict $c-D23 REFUTED "find-issue.yaml:$lf with search_text='PRD: $key' → rc=0 and $nprd hit(s) ($(titles "$d/find-prd.out" | tr '\n' ';')), no PROTOCOL_ERROR: the space never reaches the URL. The encoded control returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' → rc=$(cat "$d/find-epic-1.rc"), $ne1 hit(s)"
-    else
-      verdict $c-D23 BLOCKED "neither shape: rc=$(cat "$d/find-prd.rc") hits=$nprd out=$(head -c 120 "$d/find-prd.out") err=$(head -c 160 "$d/find-prd.err")"
-    fi
+    verdict $c-D23 BLOCKED "neither shape: rc=$(cat "$d/find-prd.rc") selected='$gprd' want='$wprd' raw='$(cat "$d/raw-prd.txt")' err=$(head -c 160 "$d/find-prd.err")"
   fi
-  local first11; first11="$(titles "$d/find-1-1.out" | head -1)"
-  if [ "$n11" -gt 1 ] || [ "$ne1" -gt 1 ]; then
-    verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) is a fuzzy search with no title check: search_text '1-1-login-form' returns $n11 issues ($(titles "$d/find-1-1.out" | cut -d' ' -f2- | tr '\n' ';')) and the FILTER takes item 0 — whichever the search index ranks first. Search-index latency measured ≈${t}s (first run: 5 s) → an issue created seconds earlier can be invisible to the next find-issue"
-  elif [ "$n11" = 0 ] && [ "$ne1" = 0 ]; then verdict $c BLOCKED "search returned nothing (rc=$(cat "$d/find-1-1.rc"); see summary.txt) — label qualifier or index"
-  else verdict $c REFUTED "exact hits only: 1-1→$n11, Epic 1→$ne1 (latency ${t}s; PRD rc=$(cat "$d/find-prd.rc"))"; fi
+  if [ -z "$w11" ] || [ -z "$we1" ]; then
+    verdict $c BLOCKED "the seeded issues are not on the repo (want Story 1.1='$w11' Epic 1='$we1'); raw search: $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt")"
+  elif [ "$g11" != "$w11" ] || [ "$ge1" != "$we1" ]; then
+    verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) picks the wrong issue: search_text '1-1-login-form' selects #${g11:-(empty)} but Story 1.1 is #$w11, and 'Epic 1:' selects #${ge1:-(empty)} but Epic 1 is #$we1. The query returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt") and the choice follows the index rank. Search-index latency measured ≈${t}s"
+  else
+    verdict $c REFUTED "find-issue.yaml:$lf (GitHub) picks by identity, not by index rank: '1-1-login-form' → #$g11 'Story 1.1: Login Form' (its **Sprint Key** body marker) and 'Epic 1:' → #$ge1 'Epic 1: Authentication' (exact title prefix, 'Epic 10:' excluded), although the unchanged query still returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt"). Search-index latency measured ≈${t}s"
+  fi
 }
 
 case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not exist yet
@@ -373,6 +382,8 @@ gl_issue() {  # gl_issue <title> — create once, labelled prd::labprd
   glab api "projects/$ENC/issues?labels=prd::$PRD_KEY&state=all&per_page=100" --hostname "$GLH" | grep -qF "\"title\":\"$1\"" || glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=$1" -f "labels=prd::$PRD_KEY" >/dev/null
 }
 gl_titles() { uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print("\n".join("!%s %s" % (i["iid"], i["title"]) for i in d))' "$1" 2>/dev/null; }
+# gl_want <issues.json> <exact title> — the iid the lookup ought to return, or empty
+gl_want() { uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next((str(i["iid"]) for i in d if i["title"]==sys.argv[2]), ""))' "$1" "$2" 2>/dev/null; }
 
 case_g06() {
   local c=g06; gl_setup $c || return; local d; d="$(case_dir $c)"
@@ -382,15 +393,23 @@ case_g06() {
   gl_issue_body "Story 11.1: Eleven" 11-1-login-form; gl_issue_body "Epic 1: Authentication" epic-1; gl_issue_body "Epic 10: Placeholder" epic-10
   sleep 5
   local lf; lf="$(line_of common/find-issue.yaml 'glab api' 1)"
+  # 'Epic 1:' goes in as written: since #32 the search text travels as a `-f` field and
+  # glab percent-encodes it, so the previous revision's hand-encoded 'Epic%201:' control
+  # searched for a literal '%' and returned 0 hits while claiming HTTP 400. It is gone;
+  # the raw searches below show what the (deliberately unchanged) query still returns.
   REPLAY_CWD="$CONSUMER_GL" replay $c find-1-1 common/find-issue.yaml "$lf" search_text="1-1-login-form" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
   REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
-  REPLAY_CWD="$CONSUMER_GL" replay $c find-epic-1-nospace common/find-issue.yaml "$lf" search_text="Epic%201:" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
-  gl_titles "$d/find-1-1.out" > "$d/titles-1-1.txt"; gl_titles "$d/find-epic-1-nospace.out" > "$d/titles-epic.txt"; cat "$d/titles-1-1.txt" "$d/titles-epic.txt" >&2
-  local n1 ne; n1="$(grep -c . "$d/titles-1-1.txt")"; ne="$(grep -c . "$d/titles-epic.txt")"
-  local epicnote="'Epic 1:' as written → rc=$(cat "$d/find-epic-1.rc") HTTP 400 (space, see gl-d23); percent-encoded it returns $ne hit(s): $(tr '\n' ';' < "$d/titles-epic.txt")"
-  if [ "$n1" -gt 1 ] || [ "$ne" -gt 1 ]; then verdict $c CONFIRMED "find-issue.yaml:$lf (GitLab $GLH) is fuzzy: search='1-1-login-form' → $n1 hit(s) ($(tr '\n' ';' < "$d/titles-1-1.txt")); FILTER takes the first. $epicnote"
-  elif [ "$n1" = 1 ]; then verdict $c REFUTED "GitLab search is token-based here: '1-1-login-form' → exactly $(head -1 "$d/titles-1-1.txt") (1.10 and 11.1 not matched). $epicnote"
-  else verdict $c BLOCKED "'1-1-login-form' → $n1 hits: $(head -c 200 "$d/find-1-1.err"). $epicnote"; fi
+  glab api "projects/$ENC/issues" --method GET -f "search=1-1-login-form" -f "labels=prd::$PRD_KEY" --hostname "$GLH" --paginate > "$d/raw-1-1.json" 2>"$d/raw-1-1.err"
+  glab api "projects/$ENC/issues" --method GET -f "search=Epic 1:" -f "labels=prd::$PRD_KEY" --hostname "$GLH" --paginate > "$d/raw-epic-1.json" 2>"$d/raw-epic-1.err"
+  gl_titles "$d/raw-1-1.json" > "$d/titles-1-1.txt"; gl_titles "$d/raw-epic-1.json" > "$d/titles-epic.txt"; cat "$d/titles-1-1.txt" "$d/titles-epic.txt" >&2
+  local n1 ne w1 we g1 ge
+  n1="$(grep -c . "$d/titles-1-1.txt")"; ne="$(grep -c . "$d/titles-epic.txt")"
+  w1="$(gl_want "$d/raw-1-1.json" "Story 1.1: Login Form")"; we="$(gl_want "$d/raw-epic-1.json" "Epic 1: Authentication")"
+  g1="$(tr -d '[:space:]' < "$d/find-1-1.out")"; ge="$(tr -d '[:space:]' < "$d/find-epic-1.out")"
+  local note="the query is untouched and still fuzzy: 'search=1-1-login-form' → $n1 hit(s) ($(tr '\n' ';' < "$d/titles-1-1.txt")), 'search=Epic 1:' → $ne ($(tr '\n' ';' < "$d/titles-epic.txt"))"
+  if [ -z "$w1" ] || [ -z "$we" ]; then verdict $c BLOCKED "the seeded issues are not in the search result (find rc=$(cat "$d/find-1-1.rc"); $(head -c 200 "$d/raw-1-1.err")). $note"
+  elif [ "$g1" != "$w1" ] || [ "$ge" != "$we" ]; then verdict $c CONFIRMED "find-issue.yaml:$lf (GitLab $GLH) picks the wrong issue: '1-1-login-form' → !${g1:-(empty)} but Story 1.1 is !$w1, and 'Epic 1:' → !${ge:-(empty)} but Epic 1 is !$we — the choice follows the index rank. $note"
+  else verdict $c REFUTED "find-issue.yaml:$lf (GitLab $GLH) picks by identity, not by index rank: '1-1-login-form' → !$g1 'Story 1.1: Login Form' (its **Sprint Key** description marker, so 1.10 and 11.1 are excluded) and 'Epic 1:' → !$ge 'Epic 1: Authentication' (exact title prefix, 'Epic 10:' excluded). $note"; fi
 }
 
 case_gl-d23() {  # does the GitLab find-issue survive a space in search_text?
@@ -398,8 +417,11 @@ case_gl-d23() {  # does the GitLab find-issue survive a space in search_text?
   gl_issue "PRD: $PRD_KEY"
   local lf; lf="$(line_of common/find-issue.yaml 'glab api' 1)"
   REPLAY_CWD="$CONSUMER_GL" replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $PRD_KEY" project_enc="$ENC" sep=:: prd_key="$PRD_KEY" host="$GLH"
-  gl_titles "$d/find-prd.out" > "$d/titles.txt"; cat "$d/titles.txt" >&2
-  if [ "$(cat "$d/find-prd.rc")" = 0 ] && grep -q "PRD: $PRD_KEY" "$d/titles.txt"; then verdict $c REFUTED "GitLab path: 'PRD: $PRD_KEY' with a space is found (rc=0, $(head -1 "$d/titles.txt")) — glab api encodes the query; D23 is GitHub-only"
+  # the step prints the SELECTED iid now, so the titles come from the raw search
+  glab api "projects/$ENC/issues" --method GET -f "search=PRD: $PRD_KEY" -f "labels=prd::$PRD_KEY" --hostname "$GLH" --paginate > "$d/raw.json" 2>"$d/raw.err"
+  gl_titles "$d/raw.json" > "$d/titles.txt"; cat "$d/titles.txt" >&2
+  local want got; want="$(gl_want "$d/raw.json" "PRD: $PRD_KEY")"; got="$(tr -d '[:space:]' < "$d/find-prd.out")"
+  if [ "$(cat "$d/find-prd.rc")" = 0 ] && [ -n "$got" ] && [ "$got" = "$want" ]; then verdict $c REFUTED "GitLab path: 'PRD: $PRD_KEY' with a space is found (rc=0, selected $(head -1 "$d/titles.txt")) — glab api encodes the -f field; D23 is GitHub-only"
   else verdict $c CONFIRMED "GitLab path fails with a space too, differently: glab sends the raw URL, nginx answers HTTP 400 and glab exits rc=$(cat "$d/find-prd.rc") → the RUN step HALTS the workflow (lang §5) instead of the silent [] of GitHub. Every 'PRD: {prd_key}' / 'Epic N:' lookup is dead on both platforms"; fi
 }
 

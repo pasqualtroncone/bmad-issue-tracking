@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Issue sync stopped after the first issue it created: the `sync_created` counter in
   `common/sync-issues.yaml` ran `int(sys.argv[1]) + 1` in a `python -c` body with no
   `import sys`, so the step raised `NameError` and halted the workflow.
+- A story's status, comments and closure landed on another story's issue. `search=` is a
+  fuzzy, index-ranked full-text query on both trackers — `1-1-login-form` also returns
+  Story 1.10 and Story 11.1, `Epic 1:` also returns `Epic 10:` — and `common/find-issue.yaml`
+  took the first hit. It now selects the issue whose body carries the exact
+  `**Sprint Key:** <key>` marker (key-shaped lookups) or whose title equals, then literally
+  starts with, the search text (`PRD: <key>`, `Epic <n>:`), and returns nothing when no
+  issue matches. `common/create-issue.yaml`'s GitLab lookup adopted `issues[0]` for the same
+  reason and now compares titles like its GitHub counterpart.
 - `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
   clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
   folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)

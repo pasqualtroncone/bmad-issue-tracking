@@ -11,8 +11,42 @@
 #   - issue_id: the issue IID (GitLab) or number (GitHub); empty string if not found
 # Side effects: none
 
-- RUN: glab api "projects/{project_enc}/issues" --method GET -f "search={search_text}" -f "labels=prd{sep}{prd_key}" --hostname {host} --paginate
-  STORE: issue_result
+# Both trackers answer `search=` with a FUZZY, index-ranked list: "1-1-login-form" also
+# returns Story 1.10 and Story 11.1, and "Epic 1:" also returns "Epic 10: ...". Taking
+# item 0 adopted whichever issue the index happened to rank first, so a story's status
+# landed on another story's issue. The search is unchanged — the CHOICE is made here, on
+# the exact identity the module writes into every issue it creates:
+#   - a key-shaped search_text ("1-1-login-form", "epic-1") must match the body marker
+#     **Sprint Key: <key>** written by ensure-issue.yaml / sync-issues.yaml;
+#   - a "PRD: <key>" / "Epic <n>:" search_text must match the TITLE, equality first and
+#     the literal prefix second (the colon is what keeps "Epic 1:" off "Epic 10: ...").
+# No match prints an EMPTY id — never a consolation hit: the callers' `CHECK: empty
+# issue_id` then goes to create-issue.yaml, whose own exact-title lookup adopts an issue
+# that does exist under the right title instead of duplicating it.
+# The choice lives INSIDE the search step because a JSON array cannot travel through a
+# `{placeholder}` into a later step's argv without the quoting hazard of D09.
+# `--paginate` concatenates one JSON document per page with no separator, hence raw_decode.
+- RUN: set -o pipefail; glab api "projects/{project_enc}/issues" --method GET -f "search={search_text}" -f "labels=prd{sep}{prd_key}" --hostname {host} --paginate | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+issues = [i for page in pages for i in page]
+needle = sys.argv[1]
+if ':' in needle:
+    match = [i for i in issues if (i.get('title') or '') == needle] or [i for i in issues if (i.get('title') or '').startswith(needle)]
+else:
+    marker = '**Sprint Key:** ' + chr(96) + needle + chr(96)
+    match = [i for i in issues if marker in (i.get('description') or '')]
+print(str(match[0]['iid']) if match else '')
+" "{search_text}"
+  STORE: issue_id
   PLATFORM: gitlab
 - RUN: set -o pipefail; gh api "search/issues" --method GET -f "q={search_text} repo:{project} label:prd{sep}{prd_key}" -f "per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys
@@ -25,22 +59,14 @@ while pos < len(text):
         continue
     page, pos = dec.raw_decode(text, pos)
     pages.append(page)
-print(json.dumps([item for page in pages for item in page.get('items', [])]))
-"
-  STORE: issue_result
+issues = [item for page in pages for item in page.get('items', [])]
+needle = sys.argv[1]
+if ':' in needle:
+    match = [i for i in issues if (i.get('title') or '') == needle] or [i for i in issues if (i.get('title') or '').startswith(needle)]
+else:
+    marker = '**Sprint Key:** ' + chr(96) + needle + chr(96)
+    match = [i for i in issues if marker in (i.get('body') or '')]
+print(str(match[0]['number']) if match else '')
+" "{search_text}"
+  STORE: issue_id
   PLATFORM: github
-- CHECK: empty issue_result
-  TRUE:
-    - SET: { variable: issue_id, value: "" }
-  FALSE:
-    - CHECK: platform eq "gitlab"
-      TRUE:
-        - FILTER:
-            source: issue_result
-            select: iid
-            store: issue_id
-      FALSE:
-        - FILTER:
-            source: issue_result
-            select: number
-            store: issue_id
