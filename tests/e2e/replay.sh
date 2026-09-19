@@ -300,11 +300,16 @@ case_d19() {
   echo "search index latency for a just-created issue: ~${t}s (total_count=$n)" | tee "$d/index-latency.txt" >&2
   sleep 20
   local lf; lf="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
+  # Since #44 the two search_text shapes live in two steps: a key-shaped lookup goes to
+  # the REST list endpoint (read-your-writes consistent), a title shape keeps the
+  # index-backed search API. Each replay below targets the step the runtime would pick
+  # for the search_text it passes.
+  local lr; lr="$(line_of common/find-issue.yaml 'gh api "repos/' 1)"
   # The step searches AND chooses: its stdout is the selected issue number, or empty. The
   # raw search is captured separately (raw-*.txt) because the QUERY is deliberately
   # unchanged — it is still fuzzy, and the evidence has to keep showing that. The verdict
   # therefore reads the selected id, not the number of hits: "the wrong issue is picked".
-  replay $c find-1-1 common/find-issue.yaml "$lf" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  replay $c find-1-1 common/find-issue.yaml "$lr" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
@@ -329,9 +334,31 @@ case_d19() {
   if [ -z "$w11" ] || [ -z "$we1" ]; then
     verdict $c BLOCKED "the seeded issues are not on the repo (want Story 1.1='$w11' Epic 1='$we1'); raw search: $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt")"
   elif [ "$g11" != "$w11" ] || [ "$ge1" != "$we1" ]; then
-    verdict $c CONFIRMED "find-issue.yaml:$lf (GitHub) picks the wrong issue: search_text '1-1-login-form' selects #${g11:-(empty)} but Story 1.1 is #$w11, and 'Epic 1:' selects #${ge1:-(empty)} but Epic 1 is #$we1. The query returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt") and the choice follows the index rank. Search-index latency measured ≈${t}s"
+    verdict $c CONFIRMED "find-issue.yaml:$lr/$lf (GitHub) picks the wrong issue: search_text '1-1-login-form' selects #${g11:-(empty)} but Story 1.1 is #$w11, and 'Epic 1:' selects #${ge1:-(empty)} but Epic 1 is #$we1. The query returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt") and the choice follows the index rank. Search-index latency measured ≈${t}s"
   else
-    verdict $c REFUTED "find-issue.yaml:$lf (GitHub) picks by identity, not by index rank: '1-1-login-form' → #$g11 'Story 1.1: Login Form' (its **Sprint Key** body marker) and 'Epic 1:' → #$ge1 'Epic 1: Authentication' (exact title prefix, 'Epic 10:' excluded), although the unchanged query still returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt"). Search-index latency measured ≈${t}s"
+    verdict $c REFUTED "find-issue.yaml:$lr/$lf (GitHub) picks by identity, not by index rank: '1-1-login-form' → #$g11 'Story 1.1: Login Form' (its **Sprint Key** body marker) and 'Epic 1:' → #$ge1 'Epic 1: Authentication' (exact title prefix, 'Epic 10:' excluded), although the unchanged query still returns $(cat "$d/raw-1-1.txt") / $(cat "$d/raw-epic-1.txt"). Search-index latency measured ≈${t}s"
+  fi
+  # --- D20 (#44): an issue created NOW must be findable by its key on the next call ---
+  # This is the half the three lookups above cannot show: they run against issues the
+  # index has long since absorbed. The probe creates one and asks for it immediately.
+  local fresh="9-9-fresh-$(date +%s)"
+  gh issue create -R "$REPO_GH" --title "Story 9.9: Fresh probe ${fresh##*-}" \
+    --body "**Sprint Key:** \`$fresh\`" --label "prd:$key" > "$d/fresh-url.txt" 2>&1
+  local fu fn; fu="$(tail -1 "$d/fresh-url.txt")"; fn="${fu##*/}"
+  local t0 dt; t0="$(date +%s)"
+  replay $c find-fresh common/find-issue.yaml "$lr" search_text="$fresh" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  dt=$(( $(date +%s) - t0 ))
+  # what the index-backed search API knows about the same issue at the same instant
+  gh api "search/issues?q=$fresh+repo:$REPO_GH+label:prd:$key&per_page=5" --jq .total_count > "$d/fresh-search-count.txt" 2>&1
+  local gf; gf="$(tr -d '[:space:]' < "$d/find-fresh.out")"
+  echo "fresh issue #$fn key=$fresh -> selected '#${gf:-(empty)}' in ${dt}s; search/issues total_count right after: $(cat "$d/fresh-search-count.txt")" | tee "$d/fresh.txt" >&2
+  gh issue close "$fn" -R "$REPO_GH" >/dev/null 2>&1 || true
+  if [ -z "$fn" ]; then
+    verdict $c-D20 BLOCKED "could not create the probe issue: $(head -c 200 "$d/fresh-url.txt" | tr '\n' ' ')"
+  elif [ "$(cat "$d/find-fresh.rc")" = 0 ] && [ "$gf" = "$fn" ]; then
+    verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
+  else
+    verdict $c-D20 CONFIRMED "find-issue.yaml:$lr does not see the issue it was just told about: #$fn key '$fresh' → selected '#${gf:-(empty)}' rc=$(cat "$d/find-fresh.rc") after ${dt}s; search/issues total_count=$(cat "$d/fresh-search-count.txt"). A flow that creates an issue and looks it up in the same minute skips the status update"
   fi
 }
 

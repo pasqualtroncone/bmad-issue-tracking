@@ -161,6 +161,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   python without `set -o pipefail`, so a CLI failure (auth, network, rate limit) still
   exited 0 with an empty `issue_index`. Every entry then looked new — `create-issue` adopts
   by exact title, so no duplicates, but no status was reconciled and the counters lied.
+- On GitHub a just-created issue was invisible to the next lookup for several seconds, so
+  sync-issues walking a sprint — or a create-story phase followed by dev-finish in the same
+  minute — read an empty `issue_id` and skipped the status update. A key-shaped lookup
+  (`1-1-login-form`, `epic-1`, `epic-1-retrospective`) now reads the REST list endpoint
+  scoped by the PRD label, the one `create-issue.yaml` uses, and selects on the
+  `**Sprint Key:**` marker locally instead of taking the search index's top hit; and
+  because NEITHER GitHub endpoint is read-your-writes — measured on the lab, 3.7-7.7 s for
+  the issue list and about as long for `search/issues` — a miss is re-checked up to three
+  times, 3 s apart, within the same step. The `PRD: <key>` / `Epic <n>:` title shapes keep
+  the search API. GitLab is unaffected.
 
 ## [3.0.0] - 2026-09-15
 
