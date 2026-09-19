@@ -156,24 +156,35 @@ class TestIssueSearchScoping:
 
 
 class TestPythonImportCompliance:
-    """P1: Python one-liners using sys.argv must import sys (prevents NameError at runtime)."""
+    """P1: Python one-liners using sys must import it (prevents NameError at runtime).
+
+    The filter is `python -c`, not the `uv run …` prefix that spells it: every RUN step
+    writes `uv run --no-project python -c`, while the old guard looked for the prefix
+    without `--no-project`. It matched nothing, so the check never inspected a body —
+    and three of them (D17, D18) were using `sys` with no import, halting their
+    workflows.
+    Body extraction and the import pattern are the ones
+    `tests/e2e/trace-tools.py lint-sys` uses, so the offline suite and the lab agree.
+    """
+
+    PY_BODY_RE = re.compile(r'python -c "((?:[^"\\]|\\.)*)"', re.DOTALL)
+    SYS_IMPORT_RE = re.compile(r"^\s*(import\s+[\w, ]*\bsys\b|from\s+sys\s+import)", re.MULTILINE)
 
     @pytest.mark.parametrize("rel, wf", list(load_all_workflows().items()), ids=lambda x: x[0] if isinstance(x, tuple) else str(x))
-    def test_python_sys_argv_has_import(self, rel, wf):
-        """uv run --no-project python -c blocks that reference sys.argv must have import sys."""
+    def test_python_c_body_imports_sys(self, rel, wf):
+        """Every `python -c` body that touches `sys.` must import sys."""
         for step in flatten_steps(wf["steps"]):
             if step["type"] != "RUN":
                 continue
-            raw = step["raw_value"]
-            if "uv run python" not in raw:
-                continue
-            has_sys_argv = "sys.argv" in raw
-            if not has_sys_argv:
-                continue
-            has_import = bool(re.search(r"(?m)^[^#]*import\s+(json,\s*)?sys", raw))
-            assert has_import, (
-                f"{rel}:L{step['start_line']+1}: uv run --no-project python -c uses sys.argv without import sys"
-            )
+            # `block_scalar` carries the `RUN: |` bodies, which hold pipelines too.
+            text = step["raw_value"] + "\n" + step.get("block_scalar", "")
+            for m in self.PY_BODY_RE.finditer(text):
+                body = m.group(1)
+                if not re.search(r"\bsys\.", body):
+                    continue
+                assert self.SYS_IMPORT_RE.search(body), (
+                    f"{rel}:L{step['start_line']+1}: python -c body uses sys without import sys"
+                )
 
 
 class TestCompleteConfigRequirements:

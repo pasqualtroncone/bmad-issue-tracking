@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `TestPythonImportCompliance` never inspected a single command: it skipped any step whose
+  text lacked `uv run python`, and every RUN in the module spells it `uv run --no-project
+  python`. The check the D17/D18 halts should have been caught by was dead from the day it
+  was written. It now selects on `python -c`, extracts each body and applies the import
+  rule `tests/e2e/trace-tools.py lint-sys` uses, over the same bodies (nested steps and
+  `RUN: |` blocks included).
 - `tests/conftest.py` dropped every step of `common/sync-issues.yaml` that follows the first
   `    else:` line of a `python -c` body: the parser accepted any indented `word:` line as a
   YAML sub-field, so the command body ended the enclosing `do:` block and 52 steps — the
