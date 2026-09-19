@@ -123,8 +123,10 @@ class TestIssueSearchScoping:
                     f"{rel}:L{step['start_line']+1}: gh issue search not scoped by prd label"
                 )
                 continue
-            # Match search/issues?q=... pattern (used by find-issue.yaml)
-            m = re.search(r'gh api "search/issues\?q=([^"]+)"', cmd)
+            # Match search/issues, both spellings: the query in the URL and the
+            # `--method GET -f "q=..."` field form used by find-issue.yaml (the CLI
+            # percent-encodes the field, so a search text with a space is safe).
+            m = re.search(r'gh api "search/issues\?q=([^"]+)"', cmd) or re.search(r'gh api "search/issues"[^|]*-f "q=([^"]+)"', cmd)
             if m:
                 query = m.group(1)
                 assert "label:prd" in query, (

@@ -3,7 +3,7 @@
 # Purpose: Searches for an existing issue by title, creates one if not found.
 #           Extracts and returns the issue ID.
 # Input variables:
-#   - title: the exact issue title to search for (prefix match)
+#   - title: the exact issue title to search for (prefix match); passed as a `-f` field, never into the URL (the CLI percent-encodes it)
 #   - labels: newline-separated list of labels to assign (e.g. "type::prd\nstatus::done")
 #   - description_file: path to the file containing the issue description
 # Output variables:
@@ -12,7 +12,7 @@
 # Requires: host and project in scope (provided by common/check-config via callers)
 
 # Search for existing issue
-- RUN: glab api --paginate "projects/{project_enc}/issues?search={title}&labels=prd{sep}{prd_key}" --hostname {host}
+- RUN: glab api --paginate "projects/{project_enc}/issues" --method GET -f "search={title}" -f "labels=prd{sep}{prd_key}" --hostname {host}
   STORE: search_result
   PLATFORM: gitlab
 - RUN: gh api "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" --hostname {host} --paginate

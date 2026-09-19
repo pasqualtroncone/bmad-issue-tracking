@@ -18,8 +18,16 @@
 # Fetch all PRD issues (bulk fetch for matching)
 - RUN: glab api "projects/{project_enc}/issues?labels=prd{sep}{prd_key}&state=all&per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys
-issues = json.load(sys.stdin)
-for i in issues:
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+for i in [issue for page in pages for issue in page]:
     status = next((l for l in i['labels'] if l.startswith('status')), 'none')
     print(str(i['iid']) + '\t' + i['title'] + '\t' + status)
 "
@@ -27,8 +35,16 @@ for i in issues:
   PLATFORM: gitlab
 - RUN: gh api "search/issues?q=repo:{project}+label:prd{sep}{prd_key}&per_page=100" --hostname {host} --paginate | uv run --no-project python -c "
 import json, sys
-data = json.load(sys.stdin)
-for item in data.get('items', []):
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+for item in [i for page in pages for i in page.get('items', [])]:
     status = next((l['name'] for l in item['labels'] if l['name'].startswith('status')), 'none')
     print(str(item['number']) + '\t' + item['title'] + '\t' + status)
 "

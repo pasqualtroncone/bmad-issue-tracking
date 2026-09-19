@@ -265,6 +265,15 @@ case_d19() {
   if grep -q 'PROTOCOL_ERROR' "$d/find-prd.err" && [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$(tr -d '[:space:]' < "$d/find-prd.out")" = "[]" ]; then
     gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
     verdict $c-D23 CONFIRMED "find-issue.yaml:$lf with search_text='PRD: $key' puts a raw space in the URL → gh api: '$(grep -o 'stream error.*' "$d/find-prd.err" | head -1)'; the trailing '| python' makes the step exit 0 with issue_result='[]' → issue_id empty. Every 'PRD: {prd_key}' lookup on GitHub (issue-sync/prepare, bmad-prd/complete create-vs-update, edit-prd, correct-course) silently misses; percent-encoded, the same query returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' fails the same way (rc=$(cat "$d/find-epic-1.rc"), $ne1 hits)"
+  else
+    # same control query, so the REFUTED arm reports what the encoded lookup ought to return
+    gh api "search/issues?q=PRD%3A%20$key+repo:$REPO_GH+label:prd:$key&per_page=5" --jq '[.items[].title]' > "$d/find-prd-encoded.out" 2>&1
+    local nprd; nprd="$(titles "$d/find-prd.out" | wc -l)"
+    if [ "$(cat "$d/find-prd.rc")" = 0 ] && [ "$nprd" -ge 1 ]; then
+      verdict $c-D23 REFUTED "find-issue.yaml:$lf with search_text='PRD: $key' → rc=0 and $nprd hit(s) ($(titles "$d/find-prd.out" | tr '\n' ';')), no PROTOCOL_ERROR: the space never reaches the URL. The encoded control returns $(cat "$d/find-prd-encoded.out"). 'Epic 1:' → rc=$(cat "$d/find-epic-1.rc"), $ne1 hit(s)"
+    else
+      verdict $c-D23 BLOCKED "neither shape: rc=$(cat "$d/find-prd.rc") hits=$nprd out=$(head -c 120 "$d/find-prd.out") err=$(head -c 160 "$d/find-prd.err")"
+    fi
   fi
   local first11; first11="$(titles "$d/find-1-1.out" | head -1)"
   if [ "$n11" -gt 1 ] || [ "$ne1" -gt 1 ]; then
@@ -417,7 +426,7 @@ case_gl-d4() {  # glab api --paginate | json.load
   glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d objects=%d" % (len(s), s.count(chr(10)), s.count("[{")))' > "$d/paginate-shape.txt" 2>&1; cat "$d/paginate-shape.txt" >&2
   local l; l="$(line_of common/sync-issues.yaml 'glab api "projects' 1)"
   REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/sync-issues.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
-  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path: glab api --paginate yields one parseable document ($(cat "$d/paginate-shape.txt")); $(grep -c . "$d/bulk-fetch.out") rows; D04 is GitHub-only"
+  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: rc=0, $(grep -c . "$d/bulk-fetch.out") rows ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step parsed them anyway"
   else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") rows=$(grep -c . "$d/bulk-fetch.out") $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
 }
 

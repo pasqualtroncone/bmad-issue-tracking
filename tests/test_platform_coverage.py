@@ -23,7 +23,9 @@ class TestPlatformCoverage:
             if step["type"] != "RUN":
                 continue
             platform = None
-            cmd = step["raw_value"]
+            # a step may open with shell options (`set -o pipefail; gh api … | …`,
+            # find-issue.yaml) — the CLI that follows is still what must match PLATFORM
+            cmd = step["raw_value"].strip().removeprefix("set -o pipefail;")
             for _, key, value in step["block"]:
                 if key == "PLATFORM":
                     platform = value
