@@ -47,6 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platforms: the block mapping the pipeline status onto the `ci_status` enum used `sys.argv`
   without `import sys` and sent its stderr to `/dev/null`, so the status was always empty, the
   loop never broke and 60 polls × 30 s elapsed before the workflow gave up.
+- A pipeline that ran longer than the interpreter's Bash tool allows left no `ci-status.json`:
+  `common/wait-for-green-ci.yaml` spent its whole 30-minute budget inside one command
+  (`sleep 30` × 60 attempts), and that command is killed at 600 s at the latest, so `ci_status`
+  was never stored, `common/write-ci-status.yaml` never ran and bmad-loop's `[verify]` failed
+  for the wrong reason. The same 30 minutes are now a `LOOP` of nine rounds, each a single
+  command of at most 8 polls × 25 s (~200 s) that stores `ci_status`; iterations after a
+  terminal state do nothing, and a run that is still `running` after the ninth round yields
+  `timeout` exactly as before.
 - Issue sync stopped after the first issue it created: the `sync_created` counter in
   `common/sync-issues.yaml` ran `int(sys.argv[1]) + 1` in a `python -c` body with no
   `import sys`, so the step raised `NameError` and halted the workflow.
