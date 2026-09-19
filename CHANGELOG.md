@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `/bmad-issue-tracking-sync` runs the prepare and sync workflows and nothing else. Its
+  steps 3 and 4 described routing on `BMAD_MR_ACTION` / `BMAD_ISSUE_ACTION` environment
+  variables to reach single atomics; no workflow file ever read them, the workflow language
+  has no environment channel, and `test_command_patterns.py` rejects `$var` in any step, so
+  a caller following those steps got the full sync instead of the scoped operation.
 - README and `CLAUDE.md` describe both install routes truthfully: BMAD 6.12.0 ships only the classic installer with the `_bmad/{bmm,core,...}/` layout; the Skills CLI /
   `module-manifest.toml` distribution is BMAD `main` (6.13.0-next), unreleased, and the two
   routes never coexist in one project. Previous text claimed 6.12.0 had adopted
