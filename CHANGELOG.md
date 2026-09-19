@@ -35,6 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every epic label came out in the tracker's default colour although
+  `common/ensure-dynamic-labels.yaml` computed one per epic number from a ten-colour
+  palette: the value was stored in `epic_color` and never passed on, because
+  `common/create-label.yaml` took no colour. It now takes an optional `label_color`
+  (6-digit hex, no `#`) and renders `gh label create --color` / `glab label create
+  --color "#…"`; callers that leave it empty keep the previous behaviour.
 - The setup skill's `references/help.md` sent readers to `_bmad/_config/custom/issue-tracking.yaml`
   for the sidecar config; `common/check-config.yaml` reads `_bmad/custom/issue-tracking.yaml`.
   Its title also named the module `issue-tracking` instead of `bmad-issue-tracking`, and the
