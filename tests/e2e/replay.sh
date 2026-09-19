@@ -339,7 +339,10 @@ case_d19() {
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
   raw "1-1-login-form" > "$d/raw-1-1.txt"; raw "Epic 1:" > "$d/raw-epic-1.txt"; raw "PRD: $key" > "$d/raw-prd.txt"
-  want() { gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:$key" --paginate --jq ".[] | select(.title == \"$1\") | .number" 2>/dev/null | head -1; }
+  # `repos/.../issues` returns pull requests too, and the R5 probe below puts a PR titled
+  # "PRD: $key" on that very list: without `.pull_request == null` the EXPECTED value would
+  # become the PR's number and every verdict here would read the wrong way round.
+  want() { gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:$key" --paginate --jq ".[] | select(.pull_request == null) | select(.title == \"$1\") | .number" 2>/dev/null | head -1; }
   local w11 we1 wprd g11 ge1 gprd
   w11="$(want "Story 1.1: Login Form")"; we1="$(want "Epic 1: Authentication")"; wprd="$(want "PRD: $key")"
   g11="$(tr -d '[:space:]' < "$d/find-1-1.out")"; ge1="$(tr -d '[:space:]' < "$d/find-epic-1.out")"; gprd="$(tr -d '[:space:]' < "$d/find-prd.out")"
@@ -384,6 +387,40 @@ case_d19() {
     verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
   else
     verdict $c-D20 CONFIRMED "find-issue.yaml:$lr does not see the issue it was just told about: #$fn key '$fresh' → selected '#${gf:-(empty)}' rc=$(cat "$d/find-fresh.rc") after ${dt}s; search/issues total_count=$(cat "$d/fresh-search-count.txt"). A flow that creates an issue and looks it up in the same minute skips the status update"
+  fi
+  # --- R5 (#51): the title-shaped lookup must not adopt a PULL REQUEST ---
+  # ensure-mr titles the PRD pull request "PRD: {prd_key}" — the format of the PRD ISSUE —
+  # and labels it prd:{key}. search/issues returns issues AND pull requests, so an exact
+  # title match could hand back the PR's number and `gh issue edit <pr>` would edit the PR.
+  cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  local pbr="d19-prdpr-$(date +%s)"
+  git checkout -q -b "$pbr" main; git commit -q --allow-empty -m "d19 R5 probe"
+  git push -q -u origin "$pbr" > "$d/r5-push.log" 2>&1 || warn "push $pbr failed"
+  git checkout -q main
+  gh pr create -R "$REPO_GH" --title "PRD: $key" --body "R5 probe: a PR titled like the PRD issue" \
+    --base main --head "$pbr" --label "prd:$key" > "$d/r5-pr-url.txt" 2>&1
+  local pru prn; pru="$(tail -1 "$d/r5-pr-url.txt")"; prn="${pru##*/}"
+  case "$prn" in ''|*[!0-9]*) prn="";; esac
+  # the index has to know about the PR, or there is nothing to be fooled by
+  local rt=0 rn=0
+  while [ $rt -lt 180 ]; do
+    rn="$(gh api "search/issues?q=repo:$REPO_GH+label:prd:$key+is:pr&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
+    [ "${rn:-0}" -ge 1 ] && break; sleep 10; rt=$((rt+10))
+  done
+  echo "PR #${prn:-(none)} indexed after ${rt}s (search is:pr total_count=$rn)" | tee "$d/r5-index.txt" >&2
+  replay $c find-prd-with-pr common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  gh api "search/issues" --method GET -f "q=PRD: $key repo:$REPO_GH label:prd:$key" -f "per_page=100" \
+    --jq '[.items[] | "#\(.number) \(if .pull_request then "PR" else "issue" end) \(.title)"] | join("; ")' > "$d/r5-raw.txt" 2>&1
+  local gpr; gpr="$(tr -d '[:space:]' < "$d/find-prd-with-pr.out")"
+  echo "with the PR present: selected #${gpr:-(empty)} (PRD issue is #$wprd, the PR is #${prn:-?}); raw hits: $(cat "$d/r5-raw.txt")" | tee "$d/r5-summary.txt" >&2
+  [ -n "$prn" ] && gh pr close "$prn" -R "$REPO_GH" --delete-branch >/dev/null 2>&1
+  git branch -D "$pbr" >/dev/null 2>&1 || true
+  if [ -z "$prn" ] || [ "${rn:-0}" -lt 1 ]; then
+    verdict $c-R5 BLOCKED "no indexed PR titled 'PRD: $key' to be fooled by: pr='#$prn' search is:pr total_count=$rn after ${rt}s ($(head -c 160 "$d/r5-pr-url.txt" | tr '\n' ' '))"
+  elif [ "$gpr" = "$wprd" ]; then
+    verdict $c-R5 REFUTED "find-issue.yaml:$lf drops items carrying \`pull_request\`: with PR #$prn titled 'PRD: $key' and labelled prd:$key on the same search ($(cat "$d/r5-raw.txt")), the step still selects the ISSUE #$gpr. Before the filter the exact-title match could return the PR and \`gh issue edit <pr>\` would have edited the pull request instead of the PRD issue"
+  else
+    verdict $c-R5 CONFIRMED "find-issue.yaml:$lf adopts the pull request: search_text 'PRD: $key' selects #${gpr:-(empty)} while the PRD ISSUE is #$wprd and PR #$prn carries the same title and label ($(cat "$d/r5-raw.txt"))"
   fi
 }
 

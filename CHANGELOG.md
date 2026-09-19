@@ -260,6 +260,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never stored and `ci-status.json` was never written — the exact symptom the split into
   rounds had removed. A round is now 4 polls (~100 s) and the LOOP runs 18 of them, so the
   30-minute budget is unchanged.
+- The GitHub title-shaped lookup in `common/find-issue.yaml` could return a pull request.
+  `search/issues` answers with issues AND pull requests, and unlike the key-shaped branch
+  (and `common/create-issue.yaml`) this one did not drop the items carrying
+  `pull_request` — while `common/ensure-mr.yaml` titles the PRD pull request
+  `PRD: {prd_key}`, the format of the PRD ISSUE, and labels it `prd:{key}`. An exact-title
+  match could therefore hand back the PR's number and `gh issue edit <pr>` edited the pull
+  request instead of the issue. The filter is now on both branches.
 
 ## [3.0.0] - 2026-09-15
 

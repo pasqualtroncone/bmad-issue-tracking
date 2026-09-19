@@ -56,6 +56,12 @@ print(str(match[0]['iid']) if match else '')
 # **Sprint Key:** marker decides locally; the title shapes keep `search/issues`, whose
 # index ranking they survive because the choice is an exact title match.
 #
+# BOTH endpoints answer with issues AND pull requests, and both branches drop the items
+# carrying `pull_request`. The title shapes need it as much as the key shape does:
+# ensure-mr titles the PRD pull request `PRD: {prd_key}` — the very format of the PRD
+# ISSUE — and the PR carries the `prd:{key}` label too, so an exact-title match could
+# return the PR's number and `gh issue edit <pr>` would then edit the pull request.
+#
 # The retry is the other half, and it is why this body calls `gh` itself. NEITHER GitHub
 # endpoint is read-your-writes: measured on the lab, an issue takes 3.7-7.7 s to appear
 # in `repos/<o>/<r>/issues` (with or without the `labels=` filter) and about as long in
@@ -80,7 +86,7 @@ while pos < len(text):
         continue
     page, pos = dec.raw_decode(text, pos)
     pages.append(page)
-issues = [item for page in pages for item in page.get('items', [])]
+issues = [item for page in pages for item in page.get('items', []) if 'pull_request' not in item]
 needle = sys.argv[1]
 match = [i for i in issues if (i.get('title') or '') == needle] or [i for i in issues if (i.get('title') or '').startswith(needle)]
 print(str(match[0]['number']) if match else '')
