@@ -99,7 +99,7 @@ case_d17() {
   replay $c increment common/sync-issues.yaml "$(run_line_of common/sync-issues.yaml '^" \{sync_created\}$')" sync_created=0
   local d; d="$(case_dir $c)"
   # the 12th python step is the increment; assert we replayed the right one
-  grep -q 'n = int(sys.argv\[1\]) + 1' "$d/increment.cmd" && ! grep -q 'import sys' "$d/increment.cmd" || { verdict $c BLOCKED "rendered the wrong step: $(head -2 "$d/increment.cmd" | tail -1)"; return; }
+  grep -q 'n = int(sys.argv\[1\]) + 1' "$d/increment.cmd" || { verdict $c BLOCKED "rendered the wrong step: $(head -2 "$d/increment.cmd" | tail -1)"; return; }
   if [ "$(cat "$d/increment.rc")" != 0 ] && grep -q "NameError: name 'sys' is not defined" "$d/increment.err"; then
     verdict $c CONFIRMED "sync-issues.yaml:274 'n = int(sys.argv[1]) + 1' without import sys → NameError, exit $(cat "$d/increment.rc"); the sync halts after the FIRST created issue"
   else verdict $c REFUTED "rc=$(cat "$d/increment.rc") $(head -c 200 "$d/increment.err")"; fi
@@ -110,7 +110,7 @@ case_d18() {
   local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
   # (a) the STATUS mapping snippet alone, with a real value, redirect removed
   $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="github.com/$REPO_GH" > "$d/github-loop.cmd"
-  awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status" 2>\/dev\/null\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
+  awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
   # (b) the whole GitHub loop, max_attempts 60→2, against a repo whose latest run is complete
@@ -177,7 +177,7 @@ case_d4() {
 case_d7() {
   local c=d7; load_lab; local d; d="$(case_dir $c)"
   cd "$CONSUMER"; git checkout -q main; git status --short > "$d/status-before.txt"
-  local l1 l2; l1="$(line_of create-prd/complete.yaml 'RUN: git add \.' 1)"; l2="$(line_of create-prd/complete.yaml 'RUN: git commit -m' 1)"
+  local l1 l2; l1="$(line_of create-prd/complete.yaml 'RUN: git add \.' 1)"; l2="$(line_of create-prd/complete.yaml 'RUN: git commit( --allow-empty)? -m' 1)"
   replay $c add create-prd/complete.yaml "$l1"
   replay $c commit create-prd/complete.yaml "$l2" prd_key="$PRD_KEY"
   grep -n 'git commit' "$WF/bmad-prd/complete.yaml" "$WF/retrospective/complete.yaml" "$WF/create-prd/complete.yaml" > "$d/other-callers.txt"
@@ -193,7 +193,7 @@ case_d8() {
   # bmad-loop cuts the branch from the LOCAL target branch: no tracking information at all
   git checkout -q --no-track -b bmad-loop/r1/1-1-login-form "origin/feat/$PRD_KEY/prd"
   git config --show-origin --get-all push.autoSetupRemote > "$d/push-autosetupremote.txt" 2>&1 || echo "(unset)" >> "$d/push-autosetupremote.txt"
-  local l1 l2; l1="$(line_of common/post-dev-complete.yaml 'RUN: git commit --allow-empty -m "dev' 1)"; l2="$(line_of common/post-dev-complete.yaml 'RUN: git push$' 1)"
+  local l1 l2; l1="$(line_of common/post-dev-complete.yaml 'RUN: git commit --allow-empty -m "dev' 1)"; l2="$(line_of common/post-dev-complete.yaml 'RUN: git push( -u origin HEAD)?$' 1)"
   replay $c commit common/post-dev-complete.yaml "$l1" story_key=1-1-login-form
   replay $c push common/post-dev-complete.yaml "$l2"
   # D22: what the module thinks the branch is, and whether that branch exists on the remote
