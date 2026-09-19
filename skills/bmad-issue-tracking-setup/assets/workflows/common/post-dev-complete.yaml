@@ -83,7 +83,10 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     - RUN: git push -u origin {story_branch}
     # Translate caller scope into the new INPUT contract (the atomic no longer reads
     # story_key / story_title / story_num / epic_num / issue_id — caller must supply).
-    - SET: { variable: source_branch, value: "{story_branch}" }
+    # source_branch is the branch we are ON, not the one story_pattern would spell:
+    # bmad-loop names its branches bmad-loop/<run>/<story_key>, so a pattern-derived
+    # story_branch names a ref that never reached the remote and the MR create fails.
+    - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
     - SET: { variable: mr_repo, value: "{host}/{project}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
@@ -123,7 +126,10 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     - INCLUDE: common/ensure-issue
     # Translate caller scope into the new INPUT contract (the atomic no longer reads
     # story_key / story_title / story_num / epic_num / issue_id — caller must supply).
-    - SET: { variable: source_branch, value: "{story_branch}" }
+    # source_branch is the branch we are ON, not the one story_pattern would spell:
+    # bmad-loop names its branches bmad-loop/<run>/<story_key>, so a pattern-derived
+    # story_branch names a ref that never reached the remote and the MR create fails.
+    - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
     - SET: { variable: mr_repo, value: "{host}/{project}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }

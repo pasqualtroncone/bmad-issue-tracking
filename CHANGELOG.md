@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The MR for a story named a source branch that does not exist on the remote: the create-story and
+  dev-finish phases derived it from `branch_patterns.story` (`feat/<prd_key>/<story_key>`) while the
+  work sits on the branch the run is actually on, so `gh pr create --head` failed and the step's
+  `2>&1 | grep https://` stored an empty MR URL.
 - The dev-finish and review-finish phases of `common/post-dev-complete.yaml` pushed with a bare
   `git push`, which exits 128 on a branch that has no upstream — the shape bmad-loop creates
   (`bmad-loop/<run>/<story_key>`) — and took the CI gate, the issue update and the comment with it.
