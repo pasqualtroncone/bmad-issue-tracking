@@ -534,9 +534,18 @@ case_r3() {  # #49 — an empty run list seconds after a push must not read as "
   git checkout -q -b ci-green main; set_outcome . pass
   git commit -q --allow-empty -m "r3 marker $(date +%s)"
   git push -q -f -u origin ci-green > "$d/push.log" 2>&1 || warn "push ci-green failed: $(tail -1 "$d/push.log")"
+  # ci-green carries COMPLETED runs from d2, and `gh run list --branch` answers with the
+  # newest one until the push registers its own — a stale answer, not the empty list this
+  # case is about. The probe therefore rides a branch that has never been built, which is
+  # exactly the state a story branch is in on its first dev-finish.
+  local fbr="r3-fresh-$(date +%s)"
+  git checkout -q -b "$fbr" ci-green
+  git commit -q --allow-empty -m "r3 fresh-branch marker"
+  git push -q -u origin "$fbr" >> "$d/push.log" 2>&1 || warn "push $fbr failed: $(tail -1 "$d/push.log")"
   # --- live: what the module sees in the first seconds after that push ---
   local t0; t0="$(date +%s)"
-  replay $c pipeline_status common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green
+  replay $c pipeline_status common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch="$fbr"
+  replay $c pipeline_status_ci_green common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green
   replay $c ci_defined common/check-mr-ci.yaml "$ldef"
   local ps def; ps="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; def="$(tr -d '[:space:]' < "$d/ci_defined.out")"
   replay $c mapping common/check-mr-ci.yaml "$lmap" pipeline_status="$ps" ci_defined="$def"
@@ -557,14 +566,17 @@ ps = sys.argv[1].strip()
 print('passed' if ps == 'success' else 'failed' if ps in ('failed', 'failure') else 'running' if ps in ('running', 'pending', 'queued', 'in_progress') else 'no_ci')
 " "$ps" > "$d/prefix-mapping.txt" 2>&1
   git checkout -q main
-  { echo "push → first lookup after ${dt}s: pipeline_status='$ps', ci_defined='$def' → ci_status='$live' (pre-fix rule: $(cat "$d/prefix-mapping.txt"))"
+  git push -q origin --delete "$fbr" >/dev/null 2>&1 || true
+  git branch -D "$fbr" >/dev/null 2>&1 || true
+  { echo "push → first lookup on the never-built branch $fbr after ${dt}s: pipeline_status='$ps', ci_defined='$def' → ci_status='$live' (pre-fix rule: $(cat "$d/prefix-mapping.txt"))"
+    echo "same instant on ci-green (which already carries d2's completed runs): pipeline_status='$(tr -d '[:space:]' < "$d/pipeline_status_ci_green.out")'"
     echo "mapping(none, defined=true)  → '$mnd' (want running)"
     echo "mapping(none, defined=false) → '$mnn' (want no_ci)"
     echo "mapping(failure)             → '$mf'  (want failed)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$def" != true ]; then
-    verdict $c BLOCKED "the consumer has no .github/workflows/*.yml on ci-green (ci_defined='$def'), so there is no 'run not registered yet' to observe"
+    verdict $c BLOCKED "the consumer has no .github/workflows/*.yml (ci_defined='$def'), so there is no 'run not registered yet' to observe"
   elif [ "$live" != no_ci ] && [ "$mnd" = running ] && [ "$mnn" = no_ci ] && [ "$mf" = failed ]; then
-    verdict $c REFUTED "check-mr-ci.yaml:$lmap reads an empty run list as a run that has not started: ${dt}s after pushing ci-green the lookup at get-mr-pipeline.yaml:$lps answered pipeline_status='$ps' and the mapping returned '$live', not no_ci (the pre-fix rule returned $(cat "$d/prefix-mapping.txt")). The discriminator is the CI definition on the branch (check-mr-ci.yaml:$ldef → '$def'): mapping(none, defined) = '$mnd' and mapping(none, undefined) = '$mnn', so a genuinely CI-less repo is still green at no cost, and a real failure is still '$mf'"
+    verdict $c REFUTED "check-mr-ci.yaml:$lmap reads an empty run list as a run that has not started: ${dt}s after pushing the never-built branch $fbr the lookup at get-mr-pipeline.yaml:$lps answered pipeline_status='$ps' and the mapping returned '$live', not no_ci (the pre-fix rule returned $(cat "$d/prefix-mapping.txt")). The discriminator is the CI definition on the branch (check-mr-ci.yaml:$ldef → '$def'): mapping(none, defined) = '$mnd' and mapping(none, undefined) = '$mnn', so a genuinely CI-less repo is still green at no cost, and a real failure is still '$mf'"
   else
     verdict $c CONFIRMED "check-mr-ci.yaml:$lmap still calls an unregistered run 'no CI': ${dt}s after the push pipeline_status='$ps' ci_defined='$def' → '$live'; mapping(none,true)='$mnd' (want running), mapping(none,false)='$mnn' (want no_ci), mapping(failure)='$mf' (want failed)"
   fi
