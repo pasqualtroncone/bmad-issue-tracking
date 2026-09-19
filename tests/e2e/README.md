@@ -72,6 +72,7 @@ Cases and what they prove:
 | `d16` | 1 | D16 | `gh pr merge` rc=0, stdout empty → `merged=false` |
 | `d15` | 1 | D15 | the loop item split into `entry_key`/`entry_status` for `"key: status"` and for a bare key; no `: backlog` in the title or in `/tmp/issue-desc-*.md`; no step left rendering `{entry}` as a key |
 | `d19` | 1 | D19/D20 | `find-issue` on `1-1-login-form`: the query still returns `Story 1.10`, the verdict reads which id the step SELECTS; index latency; space in URL |
+| `d21` | 1 | D21 | `ensure-issue`/`sync-issues` title step against the 6.12.0 spec (frontmatter title, no H1) and the legacy H1 variant; the pre-fix heading rules are replayed alongside |
 | `d24` | 1 | D24/D25 | `create-issue` lookup: absent title → empty + rc=0 (not a FILTER halt), present title → its number, and the same over 105 issues (2 `--paginate` pages) |
 | `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |
 | `g06` | 1 | D06 | GitLab `search=1-1-login-form` still returns 1.1, 1.10 and 11.1 newest-first; the verdict reads which iid the step SELECTS (and that `Epic 1:` does not resolve to `Epic 10:`) |

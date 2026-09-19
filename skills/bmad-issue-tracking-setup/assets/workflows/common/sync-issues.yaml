@@ -139,7 +139,7 @@ print('Epic ' + n + ': ' + title_line if title_line else 'Epic ' + n)
               - SET: { variable: entry_title, value: "Retrospective: Epic {epic_num}" }
             FALSE:
               - RUN: uv run --no-project python -c "
-import sys, os, glob
+import sys, os, glob, re
 base, entry = sys.argv[1], sys.argv[2]
 parts = entry.split('-')
 prefix = '-'.join(parts[:2]) if len(parts) >= 2 else entry
@@ -153,22 +153,37 @@ if prefix:
     candidates += sorted(glob.glob(os.path.join(base, 'stories', prefix + '-*.md')))
 candidates.append(os.path.join(base, entry + '.md'))
 path = next((c for c in candidates if os.path.exists(c)), None)
+title = ''
 if path:
     with open(path, 'r', encoding='utf-8') as f:
-        for line in f:
-            if line.startswith('#'):
-                heading = line.lstrip('#').strip()
-                if heading.startswith('Story '):
-                    print(heading)
-                else:
-                    print('Story ' + parts[0] + '.' + parts[1] + ': ' + heading if len(parts) >= 2 else heading)
+        lines = f.read().split(chr(10))
+    # BMM 6.12.0's spec template has no H1: the title is in the frontmatter and the
+    # first heading is '## Intent' inside <intent-contract>. Reading the first '#' line
+    # produced 'Story 1.1: Intent'. Frontmatter first, then a real H1, then the key.
+    if lines and lines[0].strip() == '---':
+        for line in lines[1:]:
+            if line.strip() == '---':
                 break
+            m = re.match(r'title\s*:\s*(.+)$', line)
+            if m:
+                t = m.group(1).strip()
+                if len(t) > 1 and t[0] == t[-1] and t[0] in (chr(39), chr(34)):
+                    t = t[1:-1]
+                title = t.strip()
+                break
+    if not title:
+        for line in lines:
+            if line.startswith('# '):
+                title = line[2:].strip()
+                break
+if not title and len(parts) > 2:
+    title = ' '.join(parts[2:]).title()
+if title.startswith('Story '):
+    print(title)
+elif len(parts) >= 2:
+    print('Story ' + parts[0] + '.' + parts[1] + ': ' + (title if title else 'Untitled'))
 else:
-    if len(parts) >= 2:
-        title_part = ' '.join(parts[2:]).title() if len(parts) > 2 else 'Untitled'
-        print('Story ' + parts[0] + '.' + parts[1] + ': ' + title_part)
-    else:
-        print(entry)
+    print(title if title else entry)
 " {implementation_artifacts} "{entry_key}"
                 STORE: entry_title
       # Map status names (entry_status came from the split at the top of the loop body)

@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d24|d9   # GitHub lab (d15 is local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21 are local)
 #   replay.sh g06|g10               # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -537,6 +537,45 @@ PY
   cp "$E2E_ROOT/fixtures/consumer/implementation-artifacts/spec-1-1-login-form.legacy-h1.md" "$1/legacy-h1.md"
 }
 
+case_d21() {  # #12 — story issue titles come out empty: the 6.12.0 spec template has no H1
+  local c=d21; load_lab; local d; d="$(case_dir $c)"
+  local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
+  # what the pre-fix rules produced against the SAME fixture, for the before/after record:
+  # ensure-issue read the first '# ' line (none in 6.12.0 → empty title → "Story 1.1: "),
+  # sync-issues read the first '#' line (→ '## Intent' → "Story 1.1: Intent").
+  uv run --no-project python -c "
+import sys
+for line in open(sys.argv[1], encoding='utf-8'):
+    if line.startswith('# '):
+        print(line[2:].strip())
+        break
+" "$work/ia/spec-1-1-login-form.md" > "$d/old-rule-ensure.out" 2>&1
+  uv run --no-project python -c "
+import sys
+for line in open(sys.argv[1], encoding='utf-8'):
+    if line.startswith('#'):
+        print(line.lstrip('#').strip())
+        break
+" "$work/ia/spec-1-1-login-form.md" > "$d/old-rule-sync.out" 2>&1
+  local le ls
+  le="$(run_line_of common/ensure-issue.yaml 'STORE: story_title')"
+  ls="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
+  replay $c tmpl   common/ensure-issue.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" story_key=1-1-login-form
+  replay $c legacy common/ensure-issue.yaml "$le" spec_path="$work/legacy-h1.md" story_key=1-1-login-form
+  replay $c sync-tmpl common/sync-issues.yaml "$ls" implementation_artifacts="$work/ia" entry_key=1-1-login-form
+  local a b s old_e old_s
+  a="$(head -1 "$d/tmpl.out")"; b="$(head -1 "$d/legacy.out")"; s="$(head -1 "$d/sync-tmpl.out")"
+  old_e="$(head -1 "$d/old-rule-ensure.out")"; old_s="$(head -1 "$d/old-rule-sync.out")"
+  { echo "ensure-issue.yaml:$le  6.12.0 template → '$a'   (first-'# '-line rule gave '$old_e')"
+    echo "ensure-issue.yaml:$le  legacy H1       → '$b'"
+    echo "sync-issues.yaml:$ls   6.12.0 template → '$s'   (first-'#'-line rule gave '$old_s')"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$a" = "Login Form" ] && [ "$b" = "Login Form" ] && [ "$s" = "Story 1.1: Login Form" ]; then
+    verdict $c REFUTED "the title comes from the spec frontmatter: ensure-issue.yaml:$le → '$a' on the 6.12.0 template (whose first heading is '## Intent' inside <intent-contract>, so the old first-'# '-line rule produced '$old_e' → the issue title 'Story 1.1: ') and '$b' on the legacy H1 variant; sync-issues.yaml:$ls → '$s' (old rule: '$old_s')"
+  else
+    verdict $c CONFIRMED "the title is still taken from a heading: ensure-issue.yaml:$le → '$a' (want 'Login Form'), legacy → '$b' (want 'Login Form'), sync-issues.yaml:$ls → '$s' (want 'Story 1.1: Login Form'). The 6.12.0 spec template has no H1 — the title lives in the frontmatter"
+  fi
+}
+
 case_d15() {  # #13 — the loop item renders as "key: status" and the key leaked everywhere
   local c=d15; load_lab; local d; d="$(case_dir $c)"
   local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
@@ -585,11 +624,11 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
-    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
+    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
 }

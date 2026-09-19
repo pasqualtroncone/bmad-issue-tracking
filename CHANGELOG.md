@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Story 1.1: Login Form: Backlog` and files like `/tmp/issue-desc-epic-1: in-progress.md`.
   The loop body now derives `entry_key` and `entry_status` once, accepting both the
   `"key: status"` rendering and the bare key the language specifies.
+- Story issues were created titled `Story 1.1: ` and synced to `Story 1.1: Intent`: BMM
+  6.12.0's spec template has no `# ` heading — the title is in the frontmatter and the first
+  heading is `## Intent` inside `<intent-contract>`. `common/ensure-issue.yaml` and
+  `common/sync-issues.yaml` now read `title:` from the frontmatter, fall back to a real H1
+  (the pre-6.12.0 shape) and only then to the story key.
 - `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
   clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
   folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)
