@@ -96,14 +96,19 @@ snapshot() {
 }
 
 # --- GitHub Actions helpers -------------------------------------------------
-# wait_run <branch> [timeout_s] — wait until the latest run on <branch> is completed; prints conclusion
+# wait_run <branch> [timeout_s] [since_iso] — wait until the latest run on <branch> is completed;
+# prints conclusion. With <since_iso> (UTC, `date -u +%FT%TZ`), a run created at or before that
+# instant does not count: on the SECOND run of a case the branch already carries a completed run,
+# and GitHub needs a few seconds to register the new one, so the first poll would otherwise return
+# the previous run's conclusion while the push being measured is still queueing.
 wait_run() {
-  local branch="$1" timeout="${2:-600}" t=0 json status conc
+  local branch="$1" timeout="${2:-600}" since="${3:-}" t=0 json status conc created
   while :; do
     json="$(gh run list -R "$REPO_GH" --branch "$branch" --limit 1 --json status,conclusion,databaseId,createdAt 2>/dev/null)"
     status="$(printf '%s' "$json" | uv run --no-project python -c 'import json,sys; r=json.load(sys.stdin); print(r[0]["status"] if r else "")')"
     conc="$(printf '%s' "$json" | uv run --no-project python -c 'import json,sys; r=json.load(sys.stdin); print(r[0]["conclusion"] if r else "")')"
-    if [ "$status" = "completed" ]; then echo "$conc"; return 0; fi
+    created="$(printf '%s' "$json" | uv run --no-project python -c 'import json,sys; r=json.load(sys.stdin); print(r[0]["createdAt"] if r else "")')"
+    if [ "$status" = "completed" ] && { [ -z "$since" ] || [ "$created" \> "$since" ]; }; then echo "$conc"; return 0; fi
     [ "$t" -ge "$timeout" ] && { echo "timeout"; return 1; }
     sleep 10; t=$((t+10))
   done
