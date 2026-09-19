@@ -60,7 +60,16 @@ All workflows that create issues use these title formats. They must stay consist
 | Epic | `Epic {n}: {title}` | `sync-issues.yaml` |
 | Retrospective | `Retrospective: Epic {n}` | `retrospective/complete.yaml` |
 
-For stories, `{title}` is extracted from the story file heading (`# Story 1.4: Login Form` → `Login Form`). During initial sync (sprint-planning), story files don't exist yet — the title is derived from the entry key (`1-4-login-form` → `Login Form`). Both paths produce the same format.
+For stories, `{title}` comes from **one shared atomic**, `common/story-title.yaml`:
+frontmatter `title:` first, then a real H1 (`# Story 1.4: Login Form`), then the entry
+key's slug segments (`1-4-login-form` → `Login Form`) — and a leading `Story N.M:` is
+stripped on **every** one of those paths, because the prefix is the caller's to add
+exactly once. `ensure-issue.yaml` and `sync-issues.yaml` both INCLUDE it; they used to
+carry their own copies, which had drifted, and a frontmatter `title: 'Story 1.1: Login
+Form'` then produced `Story 1.1: Story 1.1: Login Form` on one path and `Story 1.1: Login
+Form` on the other — two identities for one story, and the title IS what `create-issue`
+dedupes by. During initial sync (sprint-planning) story files don't exist yet, so the
+key-derived tier answers; every path produces the same format.
 
 ## Branch/MR flow
 

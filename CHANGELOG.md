@@ -33,8 +33,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   routes never coexist in one project. Previous text claimed 6.12.0 had adopted
   Skills-as-modules and a flat `_bmad/{method,toolbox}/` layout.
 
+- `common/story-title.yaml`: the single story-title parser both `common/ensure-issue.yaml`
+  and `common/sync-issues.yaml` now INCLUDE. Frontmatter `title:` first, then a real H1,
+  then the key's slug segments — and a leading `Story N.M:` stripped on every one of those
+  paths, because the prefix is the caller's to add exactly once.
+
+### Removed
+
+- The two paginated tracker fetches at the top of `common/sync-issues.yaml`. They built an
+  `issue_index` variable no step ever read, so every sync paid a full paginated listing
+  (on GitHub through the lagging search index) for a dead value, and their `set -o
+  pipefail` turned a transient rate limit on that unused call into a hard halt. The header
+  promised a "3-tier matching" the loop never did: matching is `common/find-issue` on the
+  **Sprint Key** marker, once per entry.
+
 ### Fixed
 
+- One story could end up with two issues. `ensure-issue.yaml` and `sync-issues.yaml` each
+  carried their own story-title parser and the copies had drifted: sync-issues let a title
+  that already began with `Story ` through untouched, ensure-issue stripped a `Story N.M:`
+  prefix off an H1 but never off the frontmatter. A spec whose frontmatter reads
+  `title: 'Story 1.1: Login Form'` therefore produced `Story 1.1: Story 1.1: Login Form` on
+  one path and `Story 1.1: Login Form` on the other — and the title is the identity
+  `create-issue.yaml` dedupes by. Both callers now read `common/story-title.yaml`.
+- A first sync spent minutes sleeping over issues nobody had created yet. `common/find-issue.yaml`
+  re-checked every key-shaped GitHub miss three times, 3 s apart, and a miss is the NORMAL
+  answer for the callers that are about to create the issue (a first sync, create-story,
+  correct-course): 30 entries slept ~4.5 minutes and spent the REST budget to be told what
+  they already knew. The re-check is now gated on `lookup_after_create`, the flag
+  `common/create-issue.yaml` raises right after a successful create and `find-issue`
+  consumes on the next lookup; `common/sync-issues.yaml` clears it per entry, because its
+  loop never looks up what it just created. An unset flag reads FALSE, so a caller that
+  never creates returns on the miss at once (measured 0.9 s against 12.3 s).
 - `TestPythonImportCompliance` never inspected a single command: it skipped any step whose
   text lacked `uv run python`, and every RUN in the module spells it `uv run --no-project
   python`. The check the D17/D18 halts should have been caught by was dead from the day it

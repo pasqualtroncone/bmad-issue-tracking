@@ -192,17 +192,36 @@ case_d4() {
     [ "${n:-0}" -ge 105 ] && break; sleep 10; t=$((t+10))
   done
   echo "search total_count after ${t}s: $n" | tee "$d/index.txt" >&2
-  local l; l="$(line_of common/sync-issues.yaml 'gh api "search/issues' 1)"
-  replay $c bulk-fetch common/sync-issues.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
-  replay $c control-labprd common/sync-issues.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$PRD_KEY"
-  local lf; lf="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
-  replay $c control-find-issue-shape common/find-issue.yaml "$lf" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # #55 deleted sync-issues' two bulk fetches — they built an `issue_index` no step ever
+  # read — so the D04 evidence moves to the surviving consumer of the SAME stream shape:
+  # find-issue.yaml's title-shaped lookup is the only `gh api search/issues --paginate`
+  # left, and "Extra data" is exactly what its raw_decode loop exists to survive. Both
+  # replays ask the same step for the same text; only the label size differs.
+  local l; l="$(line_of common/find-issue.yaml 'gh api "search/issues' 1)"
+  replay $c bulk-fetch common/find-issue.yaml "$l" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  replay $c control-labprd common/find-issue.yaml "$l" search_text=Seed project="$REPO_GH" host=github.com sep=: prd_key="$PRD_KEY"
   if [ "${n:-0}" -lt 105 ]; then verdict $c BLOCKED "search index shows $n < 105 after 300 s (label qualifier 'label:prd:$key' may not parse — see index.txt/seed.log)"; return; fi
-  gh api "search/issues?q=Seed+repo:$REPO_GH+label:prd:$key&per_page=100" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d" % (len(s), s.count(chr(10))))' > "$d/paginate-shape.txt" 2>&1
+  # the stream the step was just handed, walked by the step's OWN parser: "a >100-issue
+  # label is parsed whole" means every concatenated document is read, not just the first.
+  gh api "search/issues?q=Seed+repo:$REPO_GH+label:prd:$key&per_page=100" --paginate | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+items = [i for page in pages for i in page.get('items', [])]
+print('documents=%d items=%d bytes=%d newlines=%d' % (len(pages), len(items), len(text), text.count(chr(10))))
+" > "$d/paginate-shape.txt" 2>&1
+  local shape sel; shape="$(cat "$d/paginate-shape.txt")"; sel="$(tr -d '[:space:]' < "$d/bulk-fetch.out")"
+  echo "prd:$key search/issues --paginate shape: $shape; step selected #${sel:-(empty)}" >&2
   if grep -q 'JSONDecodeError\|Extra data' "$d/bulk-fetch.err" && [ "$(cat "$d/control-labprd.rc")" = 0 ]; then
-    local fi_note="find-issue.yaml:$lf (the per-line split meant as the fix) ALSO fails at 2 pages: rc=$(cat "$d/control-find-issue-shape.rc") '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/control-find-issue-shape.err" | head -1 | cut -c1-60)' because gh --paginate joins pages with NO newline ($(cat "$d/paginate-shape.txt")); 'gh api --paginate --slurp' is the supported fix"
-    verdict $c CONFIRMED "sync-issues.yaml:$l 'gh api search/issues --paginate | json.load' fails with '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/bulk-fetch.err" | head -1 | cut -c1-80)' at >100 issues (2 pages concatenated); ≤100 (prd:$PRD_KEY) works. $fi_note"
-  else verdict $c REFUTED "bulk rc=$(cat "$d/bulk-fetch.rc") lines=$(wc -l < "$d/bulk-fetch.out") err=$(head -c 200 "$d/bulk-fetch.err")"; fi
+    verdict $c CONFIRMED "find-issue.yaml:$l 'gh api search/issues --paginate | python' fails with '$(grep -o 'json.decoder.JSONDecodeError.*' "$d/bulk-fetch.err" | head -1 | cut -c1-80)' at >100 issues: gh --paginate joins the pages with NO separator ($shape), so a plain json.load dies on the second document and a per-line split finds no lines. ≤100 (prd:$PRD_KEY) works (rc=$(cat "$d/control-labprd.rc")). 'gh api --paginate --slurp' is the other supported fix"
+  else verdict $c REFUTED "find-issue.yaml:$l reads the whole --paginate stream of the 105-issue label prd:$key: rc=$(cat "$d/bulk-fetch.rc"), its raw_decode loop walks $shape and selects #${sel:-(empty)}; documents>1 is gh concatenating the pages with no separator, which is what killed the pre-fix json.load. The ≤100 control (prd:$PRD_KEY) is rc=$(cat "$d/control-labprd.rc"). err=$(head -c 200 "$d/bulk-fetch.err")"; fi
 }
 
 case_d7() {
@@ -334,7 +353,10 @@ case_d19() {
   # raw search is captured separately (raw-*.txt) because the QUERY is deliberately
   # unchanged — it is still fuzzy, and the evidence has to keep showing that. The verdict
   # therefore reads the selected id, not the number of hits: "the wrong issue is picked".
-  replay $c find-1-1 common/find-issue.yaml "$lr" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # Since #54 the key-shaped step renders {lookup_attempts}: 1 on the ordinary caller path
+  # (no create behind it — the flag `lookup_after_create` is unset, which reads FALSE) and
+  # 4 only when common/create-issue.yaml raised the flag. This lookup is an ordinary one.
+  replay $c find-1-1 common/find-issue.yaml "$lr" search_text=1-1-login-form project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=1
   replay $c find-epic-1 common/find-issue.yaml "$lf" search_text="Epic 1:" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   replay $c find-prd common/find-issue.yaml "$lf" search_text="PRD: $key" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   raw() { gh api "search/issues" --method GET -f "q=$1 repo:$REPO_GH label:prd:$key" -f "per_page=100" --jq '[.items[] | "#\(.number) \(.title)"] | join("; ")' 2>/dev/null; }
@@ -374,7 +396,9 @@ case_d19() {
     --body "**Sprint Key:** \`$fresh\`" --label "prd:$key" > "$d/fresh-url.txt" 2>&1
   local fu fn; fu="$(tail -1 "$d/fresh-url.txt")"; fn="${fu##*/}"
   local t0 dt; t0="$(date +%s)"
-  replay $c find-fresh common/find-issue.yaml "$lr" search_text="$fresh" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # the path that DOES re-check: what the runtime renders right after a create raised the
+  # flag (#54). The other path is probed as R8 below.
+  replay $c find-fresh common/find-issue.yaml "$lr" search_text="$fresh" project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=4
   dt=$(( $(date +%s) - t0 ))
   # what the index-backed search API knows about the same issue at the same instant
   gh api "search/issues?q=$fresh+repo:$REPO_GH+label:prd:$key&per_page=5" --jq .total_count > "$d/fresh-search-count.txt" 2>&1
@@ -384,9 +408,41 @@ case_d19() {
   if [ -z "$fn" ]; then
     verdict $c-D20 BLOCKED "could not create the probe issue: $(head -c 200 "$d/fresh-url.txt" | tr '\n' ' ')"
   elif [ "$(cat "$d/find-fresh.rc")" = 0 ] && [ "$gf" = "$fn" ]; then
-    verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
+    verdict $c-D20 REFUTED "find-issue.yaml:$lr selects the just-created issue #$fn for its key '$fresh' in ONE step invocation (rc=0, ${dt}s): the key-shaped lookup reads the REST list endpoint and, on the after-a-create path (lookup_attempts=4), re-checks a miss up to three times, 3 s apart. Neither GitHub endpoint is read-your-writes — search/issues answered total_count=$(cat "$d/fresh-search-count.txt") right after, and the plain list needed 3.7-7.7 s in the timing probe — which is exactly what made sync-issues and a create-story/dev-finish pair in the same minute read an empty issue_id"
   else
     verdict $c-D20 CONFIRMED "find-issue.yaml:$lr does not see the issue it was just told about: #$fn key '$fresh' → selected '#${gf:-(empty)}' rc=$(cat "$d/find-fresh.rc") after ${dt}s; search/issues total_count=$(cat "$d/fresh-search-count.txt"). A flow that creates an issue and looks it up in the same minute skips the status update"
+  fi
+  # --- R8 (#54): a miss on the ordinary path must come back at once ---
+  # The D20 re-check above costs 3 x 3 s, and a MISS IS THE NORMAL ANSWER for every caller
+  # that is about to create the issue (a first sync, create-story, correct-course): a
+  # 30-entry first sync slept ~4.5 min to be told what it already knew. Since #54 the
+  # re-check is gated on `lookup_after_create` — unset reads FALSE — so the step renders
+  # lookup_attempts=1 there and 4 only right after a create. Both are replayed against the
+  # SAME absent key so the only difference is the gate.
+  local ghost="9-9-never-created-$(date +%s)"
+  local gs0 gs1 miss_fast miss_retry
+  $TT render-step common/find-issue.yaml "$lr" search_text="$ghost" project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=1 > "$d/miss-fast.cmd"
+  gs0="$(date +%s%N)"; ( cd "$CONSUMER" && bash "$d/miss-fast.cmd" ) > "$d/miss-fast.out" 2> "$d/miss-fast.err"; echo $? > "$d/miss-fast.rc"; gs1="$(date +%s%N)"
+  miss_fast=$(( (gs1 - gs0) / 1000000 ))
+  $TT render-step common/find-issue.yaml "$lr" search_text="$ghost" project="$REPO_GH" host=github.com sep=: prd_key="$key" lookup_attempts=4 > "$d/miss-retry.cmd"
+  gs0="$(date +%s%N)"; ( cd "$CONSUMER" && bash "$d/miss-retry.cmd" ) > "$d/miss-retry.out" 2> "$d/miss-retry.err"; echo $? > "$d/miss-retry.rc"; gs1="$(date +%s%N)"
+  miss_retry=$(( (gs1 - gs0) / 1000000 ))
+  local mf mr8 gate_true gate_false
+  mf="$(tr -d '[:space:]' < "$d/miss-fast.out")"; mr8="$(tr -d '[:space:]' < "$d/miss-retry.out")"
+  # the gate itself: the two SET steps that decide how many attempts the step renders
+  gate_true="$(grep -c -E '^    - SET: \{ variable: lookup_attempts, value: "4" \}' "$WF/common/find-issue.yaml")"
+  gate_false="$(grep -c -E '^    - SET: \{ variable: lookup_attempts, value: "1" \}' "$WF/common/find-issue.yaml")"
+  { echo "gate in find-issue.yaml: lookup_after_create eq true -> attempts 4 ($gate_true step), else attempts 1 ($gate_false step)"
+    echo "absent key '$ghost' with lookup_attempts=1 -> '${mf:-(empty)}' rc=$(cat "$d/miss-fast.rc") in ${miss_fast}ms"
+    echo "absent key '$ghost' with lookup_attempts=4 -> '${mr8:-(empty)}' rc=$(cat "$d/miss-retry.rc") in ${miss_retry}ms"
+    echo "create-issue.yaml raises the flag after a create: $(grep -c -E '^- SET: \{ variable: lookup_after_create, value: "true" \}' "$WF/common/create-issue.yaml") step"
+    echo "find-issue.yaml consumes it: $(grep -c -E '^- SET: \{ variable: lookup_after_create, value: "false" \}' "$WF/common/find-issue.yaml") step"
+    echo "sync-issues.yaml clears it per entry: $(grep -c -E '^      - SET: \{ variable: lookup_after_create, value: "false" \}' "$WF/common/sync-issues.yaml") step"; } > "$d/r8-summary.txt"; cat "$d/r8-summary.txt" >&2
+  if [ "$gate_true" = 1 ] && [ "$gate_false" = 1 ] && [ "$(cat "$d/miss-fast.rc")" = 0 ] && [ -z "$mf" ] \
+     && [ "$miss_fast" -le 2000 ] && [ "$(cat "$d/miss-retry.rc")" = 0 ] && [ -z "$mr8" ] && [ "$miss_retry" -ge 9000 ]; then
+    verdict $c-R8 REFUTED "find-issue.yaml:$lr no longer pays the read-your-writes wait on an ordinary miss: the absent key '$ghost' comes back EMPTY at rc=0 in ${miss_fast}ms on the gated-off path (lookup_attempts=1), against ${miss_retry}ms for the same absent key on the after-a-create path (lookup_attempts=4) — the 3 x 3 s every first-sync entry used to pay. The gate is the pair of SET steps in find-issue.yaml, fed by the flag create-issue.yaml raises after a create and cleared per entry by sync-issues.yaml (see r8-summary.txt)"
+  else
+    verdict $c-R8 CONFIRMED "the miss still costs the re-check (or the gate is not there): attempts-4 SET=$gate_true attempts-1 SET=$gate_false; fast rc=$(cat "$d/miss-fast.rc") out='$mf' ${miss_fast}ms (want empty, <=2000ms); retry rc=$(cat "$d/miss-retry.rc") out='$mr8' ${miss_retry}ms (want empty, >=9000ms)"
   fi
   # --- R5 (#51): the title-shaped lookup must not adopt a PULL REQUEST ---
   # ensure-mr titles the PRD pull request "PRD: {prd_key}" — the format of the PRD ISSUE —
@@ -851,10 +907,37 @@ case_gl-d4() {  # glab api --paginate | json.load
   glab label create --name "prd::bulkprd" -R "$GLH/$REPO_GL" >/dev/null 2>&1 || true
   local i="$have"; while [ "$i" -lt 105 ]; do i=$((i+1)); glab api --method POST "projects/$ENC/issues" --hostname "$GLH" -f "title=Seed $i (bulkprd)" -f "labels=prd::bulkprd" >/dev/null 2>&1 || { sleep 20; i=$((i-1)); }; printf '\r  seeded %d/105' "$i" >&2; sleep 0.4; done; echo >&2
   glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c 'import sys; s=sys.stdin.read(); print("bytes=%d newlines=%d objects=%d" % (len(s), s.count(chr(10)), s.count("[{")))' > "$d/paginate-shape.txt" 2>&1; cat "$d/paginate-shape.txt" >&2
-  local l; l="$(line_of common/sync-issues.yaml 'glab api "projects' 1)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/sync-issues.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
-  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ "$(grep -c . "$d/bulk-fetch.out")" -ge 105 ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: rc=0, $(grep -c . "$d/bulk-fetch.out") rows ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step parsed them anyway"
-  else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") rows=$(grep -c . "$d/bulk-fetch.out") $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
+  # #55 deleted sync-issues' GitLab bulk fetch (it built an `issue_index` no step read).
+  # The surviving page-aware GitLab listing is create-issue.yaml's title lookup, and it
+  # prints ONE id instead of a row per issue — so "a >100-issue label is parsed whole" is
+  # now proved by WHICH id comes back rather than by counting rows. The step is asked for
+  # the OLDEST seeded title: GitLab lists issues newest-first, so "Seed 1 (bulkprd)" sits
+  # at the tail of the LAST document, and only a parser that walked every concatenated
+  # page can answer with its iid.
+  local want pos
+  read -r want pos <<< "$(glab api "projects/$ENC/issues?labels=prd::bulkprd&state=all&per_page=100" --hostname "$GLH" --paginate | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+p, pages = 0, []
+while p < len(text):
+    if text[p].isspace():
+        p += 1
+        continue
+    page, p = dec.raw_decode(text, p)
+    pages.append(page)
+issues = [i for page in pages for i in page]
+hit = [(n, i) for n, i in enumerate(issues) if i['title'] == 'Seed 1 (bulkprd)']
+print((str(hit[0][1]['iid']) + ' ' + str(hit[0][0] + 1) + '/' + str(len(issues))) if hit else ' ')
+")"
+  echo "oldest seeded title 'Seed 1 (bulkprd)' is !${want:-(none)} at position ${pos:-?} of the concatenated stream" | tee "$d/oldest.txt" >&2
+  printf '%s' "Seed 1 (bulkprd)" > /tmp/issue-title.txt
+  local l; l="$(line_of common/create-issue.yaml 'glab api --paginate' 1)"
+  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/create-issue.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
+  rm -f /tmp/issue-title.txt
+  local got; got="$(tr -d '[:space:]' < "$d/bulk-fetch.out")"
+  if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ -n "$want" ] && [ "$got" = "$want" ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: create-issue.yaml:$l answers !$got for 'Seed 1 (bulkprd)', the issue at position $pos of the 105 ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step's raw_decode loop parsed every one of them; a first-document-only parse could not have reached it"
+  else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") selected='${got:-(empty)}' want=!${want:-?} (position ${pos:-?}) $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
 }
 
 case_d26() {  # #36 — the retrospective issue carries no **Sprint Key** marker, so sync never finds it
@@ -963,32 +1046,85 @@ for line in open(sys.argv[1], encoding='utf-8'):
         print(line.lstrip('#').strip())
         break
 " "$work/ia/spec-1-1-login-form.md" > "$d/old-rule-sync.out" 2>&1
-  local le ls
-  le="$(run_line_of common/ensure-issue.yaml 'STORE: story_title')"
-  ls="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
-  replay $c tmpl   common/ensure-issue.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" story_key=1-1-login-form
-  replay $c legacy common/ensure-issue.yaml "$le" spec_path="$work/legacy-h1.md" story_key=1-1-login-form
-  replay $c sync-tmpl common/sync-issues.yaml "$ls" implementation_artifacts="$work/ia" entry_key=1-1-login-form
+  # Since #56 BOTH callers read the title through ONE atomic, common/story-title.yaml
+  # (ensure-issue hands it the spec_path it resolved; sync-issues hands it the entry key
+  # and lets the atomic glob). The locators follow the parser to where it now lives; the
+  # composition of "Story N.M: <title>" stayed behind in sync-issues and is replayed as a
+  # second step, because that is where the prefix is added.
+  local le ls lc
+  le="$(run_line_of common/story-title.yaml 'STORE: story_title')"
+  ls="$le"
+  lc="$(run_line_of common/sync-issues.yaml "print\('Story ' \+ parts\[0\]")"
+  replay $c tmpl   common/story-title.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c legacy common/story-title.yaml "$le" spec_path="$work/legacy-h1.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-tmpl common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/sync-title.out")"
   local a b s old_e old_s
   a="$(head -1 "$d/tmpl.out")"; b="$(head -1 "$d/legacy.out")"; s="$(head -1 "$d/sync-tmpl.out")"
   old_e="$(head -1 "$d/old-rule-ensure.out")"; old_s="$(head -1 "$d/old-rule-sync.out")"
-  { echo "ensure-issue.yaml:$le  6.12.0 template → '$a'   (first-'# '-line rule gave '$old_e')"
-    echo "ensure-issue.yaml:$le  legacy H1       → '$b'"
-    echo "sync-issues.yaml:$ls   6.12.0 template → '$s'   (first-'#'-line rule gave '$old_s')"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  { echo "story-title.yaml:$le  6.12.0 template → '$a'   (first-'# '-line rule gave '$old_e')"
+    echo "story-title.yaml:$le  legacy H1       → '$b'"
+    echo "story-title.yaml:$ls + sync-issues.yaml:$lc  6.12.0 template → '$(head -1 "$d/sync-title.out")' → '$s'   (first-'#'-line rule gave '$old_s')"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$a" = "Login Form" ] && [ "$b" = "Login Form" ] && [ "$s" = "Story 1.1: Login Form" ]; then
     verdict $c REFUTED "the title comes from the spec frontmatter: ensure-issue.yaml:$le → '$a' on the 6.12.0 template (whose first heading is '## Intent' inside <intent-contract>, so the old first-'# '-line rule produced '$old_e' → the issue title 'Story 1.1: ') and '$b' on the legacy H1 variant; sync-issues.yaml:$ls → '$s' (old rule: '$old_s')"
   else
     verdict $c CONFIRMED "the title is still taken from a heading: ensure-issue.yaml:$le → '$a' (want 'Login Form'), legacy → '$b' (want 'Login Form'), sync-issues.yaml:$ls → '$s' (want 'Story 1.1: Login Form'). The 6.12.0 spec template has no H1 — the title lives in the frontmatter"
+  fi
+  # --- R10 (#56): a frontmatter title that ALREADY carries the prefix ---
+  # The two parsers disagreed here and nowhere else: sync-issues passed a title beginning
+  # with "Story " through untouched, ensure-issue stripped a "Story N.M:" prefix only off
+  # an H1 — never off the frontmatter. So `title: 'Story 1.1: Login Form'` became
+  # "Story 1.1: Story 1.1: Login Form" on the ensure-issue path and "Story 1.1: Login Form"
+  # on the sync path, and that string is the identity create-issue.yaml dedupes by: one
+  # story, two issues. Both callers are asked the same question against the same spec.
+  local pre="$d/prefixed"; rm -rf "$pre"; mkdir -p "$pre/ia"
+  sed "s/^title: 'Login Form'\$/title: 'Story 1.1: Login Form'/" "$work/ia/spec-1-1-login-form.md" > "$pre/ia/spec-1-1-login-form.md"
+  grep -m1 '^title:' "$pre/ia/spec-1-1-login-form.md" > "$pre/frontmatter.txt"; cat "$pre/frontmatter.txt" >&2
+  # what the pre-fix ensure-issue rule made of the same frontmatter, for the record
+  uv run --no-project python -c "
+import re, sys
+lines = open(sys.argv[1], encoding='utf-8').read().split(chr(10))
+title = ''
+if lines and lines[0].strip() == '---':
+    for line in lines[1:]:
+        if line.strip() == '---':
+            break
+        m = re.match(r'title\s*:\s*(.+)\$', line)
+        if m:
+            t = m.group(1).strip()
+            if len(t) > 1 and t[0] == t[-1] and t[0] in (chr(39), chr(34)):
+                t = t[1:-1]
+            title = t.strip()
+            break
+print('Story 1.1: ' + title)
+" "$pre/ia/spec-1-1-login-form.md" > "$d/old-rule-prefixed.out" 2>&1
+  replay $c prefixed-ensure common/story-title.yaml "$le" spec_path="$pre/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/prefixed-sync-title.out")"
+  local pe pst ps old_p
+  pe="$(head -1 "$d/prefixed-ensure.out")"; pst="$(head -1 "$d/prefixed-sync-title.out")"; ps="$(head -1 "$d/prefixed-sync.out")"
+  old_p="$(head -1 "$d/old-rule-prefixed.out")"
+  { echo "spec frontmatter: $(cat "$pre/frontmatter.txt")"
+    echo "ensure-issue path: story-title.yaml:$le → '$pe' → issue title 'Story 1.1: $pe'   (pre-fix rule gave '$old_p')"
+    echo "sync path:         story-title.yaml:$ls → '$pst' → sync-issues.yaml:$lc → '$ps'"; } > "$d/r10-summary.txt"; cat "$d/r10-summary.txt" >&2
+  if [ "$pe" = "Login Form" ] && [ "$pst" = "Login Form" ] && [ "$ps" = "Story 1.1: Login Form" ]; then
+    verdict $c-R10 REFUTED "one parser, one answer: with the frontmatter reading $(cat "$pre/frontmatter.txt"), common/story-title.yaml returns the BARE '$pe' on both callers, so the ensure-issue path composes 'Story 1.1: $pe' and the sync path 'Story 1.1: Login Form' → '$ps'. The prefix is stripped on EVERY tier now (frontmatter, H1 and key alike) and added once by the caller; the pre-fix ensure-issue rule produced '$old_p' against the sync path's 'Story 1.1: Login Form' — two identities for one story, and the title is what create-issue.yaml dedupes by"
+  else
+    verdict $c-R10 CONFIRMED "the two callers still disagree on a prefixed frontmatter title $(cat "$pre/frontmatter.txt"): ensure-issue path → '$pe' (want 'Login Form', issue title would be 'Story 1.1: $pe'), sync path → '$pst' → '$ps' (want 'Story 1.1: Login Form')"
   fi
 }
 
 case_d15() {  # #13 — the loop item renders as "key: status" and the key leaked everywhere
   local c=d15; load_lab; local d; d="$(case_dir $c)"
   local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
-  local lk lst lt
+  local lk lst lt lpt
   lk="$(run_line_of common/sync-issues.yaml 'STORE: entry_key')"
   lst="$(run_line_of common/sync-issues.yaml 'STORE: entry_status')"
-  lt="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
+  # since #56 the title is parsed by the shared common/story-title.yaml and only the
+  # "Story N.M: " composition stayed in sync-issues — which is the step D15 is about, the
+  # one that used to receive "1-1-login-form: backlog" as the key
+  lpt="$(run_line_of common/story-title.yaml 'STORE: story_title')"
+  lt="$(run_line_of common/sync-issues.yaml "print\('Story ' \+ parts\[0\]")"
   # both renderings lang §4.1 leaves open: "key: status" (what the interpreter does) and
   # the bare key (what the language says a map item is). The KEY still comes out of the
   # rendered item; since #52 the STATUS is read from sprint-status.yaml by that key, so
@@ -1003,7 +1139,8 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   local sp sb
   sp="$(head -1 "$d/status-pair.out")"; sb="$(head -1 "$d/status-bare.out")"
   # the derived key feeds the title step and the description file name
-  replay $c title common/sync-issues.yaml "$lt" implementation_artifacts="$work/ia" entry_key="$kp"
+  replay $c story-title common/story-title.yaml "$lpt" spec_path="" spec_file="" story_key="$kp" implementation_artifacts="$work/ia"
+  replay $c title common/sync-issues.yaml "$lt" entry_key="$kp" story_title="$(head -1 "$d/story-title.out")"
   local title fname title_leak=0
   title="$(head -1 "$d/title.out")"
   # D15 is about the STATUS leaking into the title, not about which title is read (D21):

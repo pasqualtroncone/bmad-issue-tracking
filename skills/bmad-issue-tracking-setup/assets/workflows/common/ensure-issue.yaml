@@ -32,39 +32,20 @@
     - OUTPUT:
         message: "Story spec not found — tried '{spec_file}' then '{implementation_artifacts}/{story_key}.md' — cannot create issue"
   FALSE:
-    # Title sources, in order. BMM 6.12.0's spec-template.md has NO H1 — the title lives
-    # in the frontmatter and the first heading is `## Intent` inside <intent-contract>, so
-    # reading the first `#` line produced "Story 1.1: " (empty) or "Story 1.1: Intent".
-    # Frontmatter first, then a real H1 (the pre-6.12.0 shape), then the story key.
-    - RUN: uv run --no-project python -c "
-import sys, re
-with open(sys.argv[1], 'r', encoding='utf-8') as f:
-    lines = f.read().split(chr(10))
-title = ''
-if lines and lines[0].strip() == '---':
-    for line in lines[1:]:
-        if line.strip() == '---':
-            break
-        m = re.match(r'title\s*:\s*(.+)$', line)
-        if m:
-            t = m.group(1).strip()
-            if len(t) > 1 and t[0] == t[-1] and t[0] in (chr(39), chr(34)):
-                t = t[1:-1]
-            title = t.strip()
-            break
-if not title:
-    for line in lines:
-        if line.startswith('# '):
-            heading = line[2:].strip()
-            m = re.match(r'Story\s+\d+\.\d+\s*:\s*(.+)', heading)
-            title = (m.group(1).strip() if m else heading)
-            break
-if not title:
-    parts = sys.argv[2].split('-')
-    title = ' '.join(parts[2:]).title() if len(parts) > 2 else 'Untitled'
-print(title)
-" "{spec_path}" "{story_key}"
-      STORE: story_title
+    # ONE title rule, shared with common/sync-issues.yaml: common/story-title.yaml. Both
+    # files used to carry their own copy and the copies had drifted — sync-issues let a
+    # title that already began with "Story " through untouched, this one stripped a
+    # "Story N.M:" prefix off an H1 but never off the frontmatter, so a spec whose
+    # frontmatter reads `title: 'Story 1.1: Login Form'` came out as
+    # "Story 1.1: Story 1.1: Login Form" here and "Story 1.1: Login Form" there. That
+    # string is the identity create-issue.yaml dedupes by.
+    # The atomic returns the BARE title; the prefix is composed below, once. An empty
+    # answer (no spec, and a key with no slug segments) keeps the wording this file has
+    # always used.
+    - INCLUDE: common/story-title
+    - CHECK: empty story_title
+      TRUE:
+        - SET: { variable: story_title, value: "Untitled" }
     - WRITE:
         file: /tmp/issue-desc.md
         content: "**Sprint Key:** `{story_key}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{story_body}"

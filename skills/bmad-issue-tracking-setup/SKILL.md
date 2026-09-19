@@ -117,6 +117,7 @@ cp -rf <path>/workflows/* _bmad/_config/custom/workflows/
 - `_bmad/_config/custom/workflows/common/post-dev-complete-review-finish.yaml`
 - `_bmad/_config/custom/workflows/common/post-issue-comment.yaml`
 - `_bmad/_config/custom/workflows/common/set-story-status.yaml`
+- `_bmad/_config/custom/workflows/common/story-title.yaml`
 - `_bmad/_config/custom/workflows/common/sync-issues.yaml`
 - `_bmad/_config/custom/workflows/common/update-issue-description.yaml`
 - `_bmad/_config/custom/workflows/common/update-issue-status.yaml`
