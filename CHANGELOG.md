@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The dev-finish and review-finish phases of `common/post-dev-complete.yaml` pushed with a bare
+  `git push`, which exits 128 on a branch that has no upstream — the shape bmad-loop creates
+  (`bmad-loop/<run>/<story_key>`) — and took the CI gate, the issue update and the comment with it.
 - Re-running the `bmad-prd`, `create-prd` or `retrospective` completion hook on an unchanged
   worktree halted it: `git commit -m` exits 1 with "nothing to commit" on a clean tree and the
   step expects 0, so push, issue and MR never happened.

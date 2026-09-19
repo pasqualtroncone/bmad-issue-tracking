@@ -115,7 +115,7 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # Push any remaining local commits
     
     - RUN: git commit --allow-empty -m "dev {story_key}" 2>/dev/null || true
-    - RUN: git push
+    - RUN: git push -u origin HEAD
     # Wait CI + write ci-status.json (contract for ci-status.sh)
     - INCLUDE: common/wait-for-green-ci
     - INCLUDE: common/write-ci-status
@@ -180,7 +180,7 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # Commit and push any review modifications
     
     - RUN: git commit --allow-empty -m "code review {story_key}" 2>/dev/null || true
-    - RUN: git push
+    - RUN: git push -u origin HEAD
     # Find issue
     - SET: { variable: search_text, value: "{story_key}" }
     - INCLUDE: common/find-issue
