@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `LICENSE` (MIT). The README declared the license but the file was never committed.
+- Classic-installer packaging restored alongside the Skills-as-modules manifests, so the same
+  release installs through both routes: `skills/module.yaml` + `skills/module-help.csv`
+  (BMM 6.12.0 canonical help schema) and `.claude-plugin/marketplace.json`.
+  `npx bmad-method install --custom-source <repo>` (Discovery mode) and
+  `--custom-source <repo>/skills` (Direct mode) now register the module as
+  `bmad-issue-tracking` with its version instead of an anonymous `skills` module.
+- `tests/test_packaging.py`: module code, semver version string, skill list, manifest `knowledge`
+  targets and help-CSV header/rows must agree across `module.yaml`, `marketplace.json`, every
+  `module-manifest.toml` and the newest `CHANGELOG.md` release heading, in the shapes the
+  6.12.0 installer's line-based parsers actually accept.
+
+### Changed
+
+- README and `CLAUDE.md` describe both install routes truthfully: BMAD 6.12.0 ships only the classic installer with the `_bmad/{bmm,core,...}/` layout; the Skills CLI /
+  `module-manifest.toml` distribution is BMAD `main` (6.13.0-next), unreleased, and the two
+  routes never coexist in one project. Previous text claimed 6.12.0 had adopted
+  Skills-as-modules and a flat `_bmad/{method,toolbox}/` layout.
+
+### Fixed
+
+- `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
+  clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
+  folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)
+  once and reuses it for TOML overrides, workflows, `ci-status.sh` and the close-trace-mr plugin.
+- Setup step 1 read the BMM version from `.agents/skills/*/module-manifest.toml` on the assumption
+  that 6.12.0 installs that way; on a classic install it now reads `_bmad/_config/manifest.yaml`
+  first, and the error message no longer tells classic users to run `npx skills add`.
+- Setup step 3 copied `bmad-workflow-lang.md` into `_bmad/_config/custom/` before creating the
+  directory, which does not exist on a fresh classic install.
+- Setup step 3's verify list missed four shipped `common/` workflows (`find-mr`, `get-failed-jobs`,
+  `get-mr-pipeline`, `merge-mr`), so a consumer could lack them and the installer stay green.
+  `tests/test_setup_verify_list.py` now pins the list to `assets/`.
+- The sync skill's `module-manifest.toml` pointed `knowledge` at the setup skill's help file instead of
+  its own `references/help.md`; that help file still required BMM 6.11.0 and read the version only
+  from the legacy `_bmad/bmm/config.yaml`.
+- Setup could not find its assets on a classic install for tools other than Claude Code; any
+  `*/skills/bmad-issue-tracking-setup/` under the project root is now a candidate.
+- The README override table lacked rows for `bmad-build.toml` and `bmad-build-auto.toml`;
+  `tests/test_setup_verify_list.py` now pins the table to `assets/custom/` as well.
+
 ## [3.0.0] - 2026-09-15
 
 [compare v2.2.0...v3.0.0](https://github.com/jrevillard/bmad-issue-tracking/compare/v2.2.0...v3.0.0)

@@ -4,16 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-BMAD module that integrates sprint tracking with GitLab/GitHub Issues. It's not a runnable application — it's a set of TOML overrides and Skills-as-modules folders consumed by the new BMad installer (each `<skill>/module-manifest.toml` declares `module = "issue-tracking"`).
+BMAD module that integrates sprint tracking with GitLab/GitHub Issues. It's not a runnable application — it's a set of TOML overrides and two skill folders, packaged for both BMad install routes: the classic installer (`npx bmad-method install --custom-source`, reads `skills/module.yaml`, `skills/module-help.csv`, `.claude-plugin/marketplace.json`) and the Skills CLI (`npx skills add`, reads each `<skill>/module-manifest.toml`; all declare `module = "bmad-issue-tracking"`).
 
-Requires BMM 6.12.0+ (the flat per-skill install layout `_bmad/{method,toolbox,...}/` replaces the legacy `_bmad/{bmm,bmb,cis,core}/` subdirectories from 6.12.0 onward; BMad adopted the Skills-as-modules format with this version).
+Requires BMM 6.12.0+ (targets the 6.12.0 skill set and `uv`). Install-route rule: **released BMAD (6.12.x) ships only the classic installer**, with the `_bmad/{bmm,core,_config,custom,...}/` consumer layout. The Skills-as-modules route (`npx skills add bmad-code-org/BMAD-METHOD`, `module-manifest.toml`, `bmad setup/update/doctor`, flat `_bmad/{method,toolbox}/`) existed only on BMAD `main` (6.13.0-next) when 3.0.x was cut. The two routes are not designed to coexist in one consumer project (different `_bmad/` layouts; BMAD `main` adds an explicit installer guard). Consumers on a released BMAD use the classic route; the manifests are forward compatibility. Check the BMAD release notes before changing which route the README recommends.
 
 ## Architecture
 
-Two Skills-as-modules folders, each with its own manifest declaring the same module key:
+Two skill folders, each with its own `module-manifest.toml` declaring the same module key (plus the shared classic metadata in `skills/module.yaml` + `skills/module-help.csv`):
 
-- `skills/bmad-issue-tracking-sync/` — the user-facing `/bmad-issue-tracking-sync` command. Manifest: `module = "issue-tracking"`, `knowledge = "references/help.md in the bmad-issue-tracking-sync skill"`.
-- `skills/bmad-issue-tracking-setup/` — one-time deploy. Manifest: same module key, plus `scripts = [...]` listing the bmad-loop integration Python + shell files.
+- `skills/bmad-issue-tracking-sync/` — the user-facing `/bmad-issue-tracking-sync` command. Manifest: `module = "bmad-issue-tracking"`, `knowledge` pointing at its own `references/help.md`.
+- `skills/bmad-issue-tracking-setup/` — one-time deploy. Manifest: same module key, `knowledge` pointing at its own `references/help.md`. Its `scripts/` folder holds the bmad-loop integration Python + shell files (`bmad-loop/ci-gate/ci-status.sh`, `close-trace-mr/`).
 
 Assets that get pushed into a consumer project live under `skills/bmad-issue-tracking-setup/assets/custom/` (TOML pointers), `assets/workflows/` (YAML bodies), and `assets/bmad-workflow-lang.md`. The standalone sync SKILL.md never gets copied into a consumer project — only `assets/` payloads do, via the setup skill.
 
@@ -88,7 +88,7 @@ Projects using [`bmad-loop`](https://github.com/bmad-code-org/bmad-loop) bypass 
 
 - `common/find-prd-key.yaml` — silent `prd_key` resolution (no PRD worktree, no prompt); used by `issue-sync/prepare.yaml` + `sync.yaml` so `/bmad-issue-tracking-sync` runs unattended after a bmad-loop run.
 - `common/mark-mr-ready.yaml` — no-op when no MR exists (bmad-loop has none); the MR-based CI gates (`check-mr-ci`, `wait-for-green-ci`) are not used in this flow.
-- `scripts/bmad-loop/ci-gate/ci-status.sh` (declared in the setup skill's `module-manifest.toml` `scripts = [...]`) — bmad-loop `[verify]` command deployed to `.bmad-loop/ci-status.sh` (setup step 3c): reads `ci-status.json` (written by the `dev-finish` / `review-finish` phases of `common/post-dev-complete.yaml` via `common/write-ci-status.yaml`) and returns exit 0 if CI is green, exit 1 if red (fixable), exit 1 if the file is missing. The intelligent work (polling CI, parsing logs) is done by the `on_complete` workflow.
+- `scripts/bmad-loop/ci-gate/ci-status.sh` (in the setup skill's `scripts/` folder) — bmad-loop `[verify]` command deployed to `.bmad-loop/ci-status.sh` (setup step 4): reads `ci-status.json` (written by the `dev-finish` / `review-finish` phases of `common/post-dev-complete.yaml` via `common/write-ci-status.yaml`) and returns exit 0 if CI is green, exit 1 if red (fixable), exit 1 if the file is missing. The intelligent work (polling CI, parsing logs) is done by the `on_complete` workflow.
 - `custom/bmad-build-auto.toml` — routes the `bmad-build-auto` `on_complete` hook to `common/post-build-dispatch.yaml` (non-interactive dispatcher). The bmad-build-auto skill executes this hook at the end of EVERY session — including when bmad-loop invokes it — so issue tracking + CI write happen without any bmad-loop plugins. `bmad-build.toml` uses the interactive dispatcher (`post-build-dispatch-interactive.yaml`) with the optional MR merge prompt.
 - `awaiting-operator` — bmad-loop status for a story parked on external action; mapped to `status{sep}awaiting-operator` and the issue stays open.
 
@@ -107,11 +107,67 @@ Projects using [`bmad-loop`](https://github.com/bmad-code-org/bmad-loop) bypass 
 3. Add the TOML file to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3)
 4. Add the YAML files to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3b)
 5. Add a row to the override table in `README.md`
-6. If the workflow has a standalone skill, create or update its `references/help.md` and bump `version` in `<skill>/module-manifest.toml` (manifest is now the source of truth — `module-help.csv` no longer exists)
+6. If the workflow has a standalone skill, create or update its `references/help.md`, add its row to `skills/module-help.csv` (classic help catalog) and bump `version` in `<skill>/module-manifest.toml`
+
+## Commit convention
+
+This repo follows the generic scoped-commit convention (`type(scope): description`,
+five types: `feat`, `fix`, `docs`, `chore`, `revert`; the description states the
+effect or the symptom, never the operation). Repo-specific rules:
+
+### Language
+
+- **English.** Upstream commits in English and changes may go back as PRs.
+
+### Canonical scopes
+
+The scope is semantic (what area is being talked about), not a folder path.
+
+| Scope | Area |
+|-------|------|
+| `install` | Packaging and install routes: `skills/module.yaml`, `skills/module-help.csv`, `.claude-plugin/marketplace.json`, `*/module-manifest.toml`, install docs |
+| `setup` | The `bmad-issue-tracking-setup` skill: version gate, deploy steps, prerequisite checks |
+| `sync` | The `bmad-issue-tracking-sync` skill and the `issue-sync/` workflows |
+| `overrides` | The TOML pointers in `assets/custom/` (which BMM workflows are hooked, and to what) |
+| `workflows` | The workflow YAML bodies in `assets/workflows/` (`common/`, per-workflow folders) |
+| `ci-gate` | `ci-status.sh`, the `ci-status.json` contract, CI wait/poll behaviour for bmad-loop |
+| `lang` | `bmad-workflow-lang.md`, the workflow language itself |
+| `tests` | The test suite infrastructure (`conftest.py`, runners); a test for area X is `chore(X)` |
+| `readme` / `changelog` | The respective file, when the change belongs to no area (a docs change about an area takes that area's scope, e.g. `docs(install)`) |
+| `release` | Version bumps and tags |
+| `repo` | Repo housekeeping that fits no area (`.gitignore`, stale artifacts) |
+
+**Without scope** go cross-cutting changes (`LICENSE`, this convention): plain `docs:` or `chore:`.
+
+**Vocabulary maintenance:** a commit that needs a scope missing from this table adds it
+to the table in the same commit/PR.
+
+### Issue tracker
+
+- The issue reference goes **only in the footer**: `Refs #n`, or `Closes #n` in the
+  commit/PR that closes the task. Never in the scope or the description.
+
+### PR title
+
+The PR title becomes the `main` commit message when squash-merged, so it must satisfy the
+full convention (type + scope + description with substance). Intermediate branch commits
+follow the same format with lower stakes; the `Refs #n` footer is non-negotiable.
+
+### Examples from this repo
+
+- ✅ `chore(release): 3.0.0`
+- ✅ `chore: add the MIT LICENSE file the README already declares`
+- ❌ `docs(readme): fix stale BMM version refs, add architecture/CI/troubleshooting/license`
+  → the "and" list signals several changes; split, or name the one effect that matters:
+  `docs(readme): BMM version refs no longer point at 6.11`
 
 ## Python environment
 
-Tests use `pytest` and `pyyaml`. Always use the project venv — never `pip3 install --break-system-packages`:
+Tests use `pytest` and `pyyaml`. Run them with `uv` (already a module requirement), never `pip3 install --break-system-packages`:
+```bash
+uv run --with pytest --with pyyaml pytest -q
+```
+A project venv works too:
 ```bash
 python3 -m venv .venv && source .venv/bin/activate && pip install pytest pyyaml
 ```
@@ -121,7 +177,7 @@ python3 -m venv .venv && source .venv/bin/activate && pip install pytest pyyaml
 When working on a branch, add functional changes to the `[Unreleased]` section of `CHANGELOG.md` following Keep a Changelog format (Added, Changed, Fixed, etc.) — one entry per logical change, not per commit.
 
 When cutting a release:
-1. Bump `version` in every `skills/*/module-manifest.toml` so all skills declare the same release version (manifest is now the source of truth — `module.yaml` and `marketplace.json` no longer exist).
+1. Bump `version` in every `skills/*/module-manifest.toml`, in `skills/module.yaml` and in `.claude-plugin/marketplace.json` — `tests/test_packaging.py` fails if they disagree.
 2. Update `CHANGELOG.md` — replace `[Unreleased]` with the version and date, add comparison link.
 3. Create a git tag `v{version}` on the version bump commit and push it (`git push origin --tags`).
 

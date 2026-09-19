@@ -1,0 +1,12 @@
+# Classic BMad installer metadata (`npx bmad-method install --custom-source`).
+# The Skills CLI route (`npx skills add`) ignores this file and reads
+# `<skill>/module-manifest.toml` instead. Keep `version` in sync with every
+# `skills/*/module-manifest.toml` and `.claude-plugin/marketplace.json`
+# (tests/test_packaging.py enforces it).
+code: bmad-issue-tracking
+name: "Issue Tracking"
+version: 3.0.0
+description: >-
+  Mirrors BMad sprint tracking to GitLab Issues or GitHub Issues via their
+  CLIs (glab / gh). Supports cloud and self-hosted instances. Hooks BMM
+  workflows through native TOML customization.
