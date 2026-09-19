@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # A2 — dev-finish with CI RUNNING. Requires the story PR to exist (A1 first, or it is
-# created here as create-story would). ci/outcome=sleep:60 → running at the first poll →
-# D18 keeps the loop for the full 60×30 s → D03: the Bash tool times out at 600 s.
-#   A2.sh proxy    BASH_MAX_TIMEOUT_MS=90000 (tool timeout after 90 s, ≈3-4 min total)
-#   A2.sh default  real defaults (600 s tool timeout, ≈12 min)
+# created here as create-story would). ci/outcome=sleep:60 → running at the first poll.
+# Historically: D18 kept the loop going for the whole 60×30 s budget inside ONE RUN, so
+# D03 followed — the Bash tool times out at 600 s and no ci-status.json was ever written.
+# Both are fixed (#31 the sys import, #14 the bounded rounds): the wait is now a LOOP of
+# nine rounds, each ONE RUN of ≤ 8 polls × 25 s ≈ 200 s.
+#   A2.sh proxy    BASH_MAX_TIMEOUT_MS=90000 — a 90 s cap is BELOW one 200 s round, so this
+#                  pass still times out by construction; it measures the cap, not the module
+#   A2.sh default  real defaults (600 s tool timeout, ≈12 min) — a round fits three times
+#                  over, so a timeout here now means a regression, not the original defect
 #   A2.sh patched  wait-for-green-ci.yaml with 'import sys' added + sleep:660 → isolates D03
+#                  (the import is already in the file since #31; the sed is now a no-op
+#                  duplicate and the pass survives only as the long-pipeline probe)
 set -uo pipefail; . "$(dirname "$0")/_lib.sh"; C=A2; PASS="${1:-proxy}"
 WT="$(story_worktree 1-1-login-form)"
 if [ -z "$(pr_for "feat/$PRD_KEY/1-1-login-form")" ]; then

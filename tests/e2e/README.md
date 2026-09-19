@@ -49,7 +49,7 @@ D08.
 make e2e-static                 # level 0, seconds, no lab
 make e2e-up  [PLATFORM=github]  # ≈4 min (npm install of bmad-method)
 tests/e2e/lab-up.sh --add-gitlab --gl-host gitlab.example.com   # add a GitLab consumer to the current lab
-tests/e2e/replay.sh gitlab      # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18
+tests/e2e/replay.sh gitlab      # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d03
 make e2e-check                  # resolve_customization.py returns the module's on_complete per skill
 make e2e-replay                 # level 1, ≈35 min (two Actions runs, 105 issues seeded, index waits)
 tests/e2e/replay.sh d18         # or one case at a time
@@ -77,6 +77,7 @@ Cases and what they prove:
 | `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |
 | `g06` | 1 | D06 | GitLab `search=1-1-login-form` still returns 1.1, 1.10 and 11.1 newest-first; the verdict reads which iid the step SELECTS (and that `Epic 1:` does not resolve to `Epic 10:`) |
 | `gl-d23`, `gl-d4`, `gl-d16`, `gl-d2`, `gl-d18` | 1 | D23, D04, D16, D02, D18 on GitLab | same replays as the GitHub cases against the GitLab consumer (D16 and D02 are GitHub-only; the rest hit both) |
+| `d03` | 1 | D03 | GitLab MR on `ci/outcome=sleep:400`: one rendered poll round is timed while the pipeline runs (must print `running` well under 240 s) and again once it is green (`passed` in one poll); also asserts the rendered round's `sleep × polls` bound |
 | `g10` | 1 | D10 | cross-platform repo mix-up (rendering) |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
 | `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2 |

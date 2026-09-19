@@ -3,7 +3,7 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21 are local)
-#   replay.sh g06|g10               # GitLab lab (g10 is a rendering proof, no glab needed)
+#   replay.sh g06|g10|d03           # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
 # Each case replays the RUN command exactly as written in the workflow file (rendered by
@@ -82,10 +82,24 @@ PY
 )"
   say "conftest.flatten_steps sees the sync_created increment RUN (sync-issues.yaml:274)? count=$seen"
   if [ "$seen" = 0 ]; then mark S9 CONFIRMED "tests/conftest.py drops steps nested LOOP→CHECK→RUN: sync-issues.yaml:274 (D17) is invisible to every test, even a fixed S7"; else mark S9 REFUTED "parser reaches it"; fi
-  # D03 arithmetic
-  local sl ma; sl="$(grep -o 'sleep [0-9]*' "$WF/common/wait-for-green-ci.yaml" | head -1 | awk '{print $2}')"; ma="$(grep -o 'max_attempts=[0-9]*' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d= -f2)"
-  say "wait-for-green-ci: sleep $sl × max_attempts $ma = $((sl*ma)) s inside ONE RUN; Claude Code Bash hard cap = 600 s (BASH_MAX_TIMEOUT_MS)"
-  if [ $((sl*ma)) -gt 600 ]; then mark D03-static CONFIRMED "a single RUN can block $((sl*ma)) s but the tool times out at 600 s → ci-status.json never written on long pipelines (empirical: scenario A2)"; else mark D03-static REFUTED "fits"; fi
+  # D03 arithmetic — what matters is the worst case of ONE poll RUN, since that is what the
+  # Bash tool has to survive. The old locator multiplied sleep × max_attempts because the whole
+  # 30-min wait WAS one RUN; now the wait is a LOOP in the workflow language, so the same product
+  # is computed per round (sleep × polls_per_round) and the round count only reports the budget.
+  local d03; d03="$($PY - "$WF/common/wait-for-green-ci.yaml" <<'PY'
+import re, sys
+t = open(sys.argv[1], encoding="utf-8").read()
+sleeps = [int(x) for x in re.findall(r"\bsleep (\d+)", t)] or [0]
+polls = [int(x) for x in re.findall(r"\b(?:polls_per_round|max_attempts)=(\d+)", t)] or [0]
+m = re.search(r'poll_rounds, value: "([^"]*)"', t)
+rounds = len(m.group(1).split("\\n")) if m else 1
+one = max(sleeps) * max(polls)
+print(one, rounds, one * rounds)
+PY
+)"
+  local one rounds total; read -r one rounds total <<< "$d03"
+  say "wait-for-green-ci: the longest single poll RUN blocks sleep × polls = $one s (× $rounds LOOP rounds = $total s of wall clock); Claude Code Bash hard cap = 600 s (BASH_MAX_TIMEOUT_MS)"
+  if [ "$one" -gt 600 ]; then mark D03-static CONFIRMED "a single RUN can block $one s but the tool times out at 600 s → ci-status.json never written on long pipelines (empirical: scenario A2)"; else mark D03-static REFUTED "one RUN blocks at most $one s, under the 600 s cap; the $total s wait is $rounds LOOP rounds in the workflow language and ci_status is stored after each"; fi
   # D22 arithmetic
   local bl; bl="$(find "$(uv tool dir 2>/dev/null)/bmad-loop" -name workspace.py -path '*bmad_loop*' 2>/dev/null | head -1)"
   if [ -n "$bl" ]; then
@@ -116,20 +130,21 @@ case_d18() {
   awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
-  # (b) the whole GitHub loop, max_attempts 60→2, against a repo whose latest run is complete
-  sed 's/max_attempts=60/max_attempts=2/' "$d/github-loop.cmd" > "$d/github-loop-2.cmd"
+  # (b) one GitHub poll round, polls_per_round 8→2, against a repo whose latest run is complete
+  # (the round used to be the whole 60-attempt loop; #14 split it, so the knob is the per-round count)
+  sed 's/polls_per_round=8/polls_per_round=2/' "$d/github-loop.cmd" > "$d/github-loop-2.cmd"
   gh run list -R "$REPO_GH" --limit 1 --json status,conclusion,headBranch > "$d/latest-run-before.json"
-  log "  (b) full polling loop with max_attempts=2 (≈60 s)…"
+  log "  (b) full polling round with polls_per_round=2 (≈50 s)…"
   ( cd "$CONSUMER" && time bash "$d/github-loop-2.cmd" ) > "$d/github-loop-2.out" 2> "$d/github-loop-2.err"; echo $? > "$d/github-loop-2.rc"
   # (c) same loop with the one-line fix
   sed '/STATUS=\$(uv run --no-project python -c "/a import sys' "$d/github-loop-2.cmd" > "$d/github-loop-2-patched.cmd"
-  log "  (c) patched loop (+import sys), max_attempts=2 (≈30 s)…"
+  log "  (c) patched round (+import sys), polls_per_round=2 (≈25 s)…"
   ( cd "$CONSUMER" && time bash "$d/github-loop-2-patched.cmd" ) > "$d/github-loop-2-patched.out" 2> "$d/github-loop-2-patched.err"; echo $? > "$d/github-loop-2-patched.rc"
   # gitlab variant is the same text; render it for the record
   $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc=x mr_iid=1 host=gitlab.com > "$d/gitlab-loop.cmd"
   local latest; latest="$(uv run --no-project python -c 'import json,sys; r=json.load(open(sys.argv[1])); print((r[0]["conclusion"] or r[0]["status"]) if r else "none")' "$d/latest-run-before.json")"
   if grep -q "NameError: name 'sys' is not defined" "$d/status-snippet.err" && [ "$(tr -d '[:space:]' < "$d/github-loop-2.out")" = timeout ] && [ "$(tr -d '[:space:]' < "$d/github-loop-2-patched.out")" != timeout ]; then
-    verdict $c CONFIRMED "STATUS mapping (wait-for-green-ci.yaml:$gh block, also :$gl) NameErrors under 2>/dev/null → STATUS='' → loop never breaks: latest run '$latest' still yields 'timeout' after max_attempts; with 'import sys' the same loop prints '$(tr -d '[:space:]' < "$d/github-loop-2-patched.out")' on the first poll. Real run: 60×30 s = 30 min → masks D03"
+    verdict $c CONFIRMED "STATUS mapping (wait-for-green-ci.yaml:$gh block, also :$gl) NameErrors under 2>/dev/null → STATUS='' → loop never breaks: latest run '$latest' still yields 'timeout' after the round's polls; with 'import sys' the same loop prints '$(tr -d '[:space:]' < "$d/github-loop-2-patched.out")' on the first poll. Real run: the whole 30-min budget elapses → masks D03"
   else verdict $c REFUTED "snippet rc=$(cat "$d/status-snippet.rc") loop='$(cat "$d/github-loop-2.out")' patched='$(cat "$d/github-loop-2-patched.out")'"; fi
 }
 
@@ -485,15 +500,58 @@ case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
   local c=gl-d18; case_gl-ci || return; local d; d="$(case_dir $c)"
   local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
   $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH" > "$d/gitlab-loop.cmd"
-  sed 's/max_attempts=60/max_attempts=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
-  log "  (a) literal GitLab loop, max_attempts=2 (≈60 s), MR !$GREEN_IID (pipeline success)…"
+  # polls_per_round replaced max_attempts when #14 split the 30-min loop into bounded rounds
+  sed 's/polls_per_round=8/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
+  log "  (a) literal GitLab round, polls_per_round=2 (≈50 s), MR !$GREEN_IID (pipeline success)…"
   ( cd "$CONSUMER_GL" && bash "$d/gitlab-loop-2.cmd" ) > "$d/gitlab-loop-2.out" 2> "$d/gitlab-loop-2.err"; echo $? > "$d/gitlab-loop-2.rc"
   sed '/STATUS=\$(uv run --no-project python -c "/a import sys' "$d/gitlab-loop-2.cmd" > "$d/gitlab-loop-2-patched.cmd"
-  log "  (b) +import sys (≈30 s)…"
+  log "  (b) +import sys (≈25 s)…"
   ( cd "$CONSUMER_GL" && bash "$d/gitlab-loop-2-patched.cmd" ) > "$d/gitlab-loop-2-patched.out" 2> "$d/gitlab-loop-2-patched.err"; echo $? > "$d/gitlab-loop-2-patched.rc"
   local a b; a="$(tr -d '[:space:]' < "$d/gitlab-loop-2.out")"; b="$(tr -d '[:space:]' < "$d/gitlab-loop-2-patched.out")"
-  if [ "$a" = timeout ] && [ "$b" = passed ]; then verdict $c CONFIRMED "wait-for-green-ci.yaml:$gl (GitLab, $GLH) against MR !$GREEN_IID whose pipeline is success: literal loop → '$a' after max_attempts; with 'import sys' → '$b' on the first poll. D18 hits both platforms"
+  if [ "$a" = timeout ] && [ "$b" = passed ]; then verdict $c CONFIRMED "wait-for-green-ci.yaml:$gl (GitLab, $GLH) against MR !$GREEN_IID whose pipeline is success: literal round → '$a' after its polls; with 'import sys' → '$b' on the first poll. D18 hits both platforms"
   else verdict $c REFUTED "literal='$a' patched='$b' (see $d)"; fi
+}
+
+case_d03() {  # #14 — does ONE poll round return long before the Bash tool cap?
+  local c=d03; gl_setup $c || return; local d; d="$(case_dir $c)"
+  local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
+  local br=gl-ci-slow
+  cd "$CONSUMER_GL"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  git branch -D "$br" >/dev/null 2>&1; git checkout -q -b "$br" main
+  set_outcome . "sleep:400"; git commit -q --allow-empty -m "d03 marker $(date +%s)"
+  git push -q -f -u origin "$br"; git checkout -q main
+  local iid; iid="$(gl_mr_for "$br")"; echo "mr=$iid" > "$d/mr.txt"
+  [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR for $br"; cd - >/dev/null; return; }
+  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$iid" host="$GLH" > "$d/poll.cmd"
+  # static half: the rendered round must be bounded — no 60-attempt (30-min) RUN left
+  local sl po worst
+  sl="$(grep -o 'sleep [0-9]*' "$d/poll.cmd" | awk '{print $2}' | sort -n | tail -1)"
+  po="$(grep -oE '(polls_per_round|max_attempts)=[0-9]+' "$d/poll.cmd" | cut -d= -f2 | sort -n | tail -1)"
+  worst=$(( ${sl:-0} * ${po:-0} )); echo "sleep=$sl polls=$po worst=${worst}s" | tee "$d/bound.txt" >&2
+  # the timed round has to start while the pipeline is still running
+  local t=0 st=""
+  while [ $t -lt 240 ]; do
+    st="$(glab api "projects/$ENC/merge_requests/$iid/pipelines" --hostname "$GLH" 2>/dev/null | uv run --no-project python -c 'import json,sys; d=json.load(sys.stdin); print(d[0]["status"] if d else "")')"
+    case "$st" in running|pending) break;; esac
+    sleep 5; t=$((t+5))
+  done
+  echo "pipeline status before the timed round: ${st:-(none)}" > "$d/pipeline-before.txt"
+  log "  (a) one poll round while the MR !$iid pipeline is ${st:-(none)}…"
+  local t0 dur_run dur_final a b final
+  t0=$(date +%s); ( cd "$CONSUMER_GL" && bash "$d/poll.cmd" ) > "$d/poll-running.out" 2> "$d/poll-running.err"; echo $? > "$d/poll-running.rc"
+  dur_run=$(( $(date +%s) - t0 )); a="$(tr -d '[:space:]' < "$d/poll-running.out")"
+  log "      → '$a' in ${dur_run}s; waiting for the pipeline to finish…"
+  final="$(gl_wait_pipeline "$br" 900)"; echo "$final" > "$d/pipeline-final.txt"
+  log "  (b) one poll round with the pipeline $final…"
+  t0=$(date +%s); ( cd "$CONSUMER_GL" && bash "$d/poll.cmd" ) > "$d/poll-final.out" 2> "$d/poll-final.err"; echo $? > "$d/poll-final.rc"
+  dur_final=$(( $(date +%s) - t0 )); b="$(tr -d '[:space:]' < "$d/poll-final.out")"
+  log "      → '$b' in ${dur_final}s"
+  cd - >/dev/null
+  local note="bound sleep $sl × $po polls = ${worst}s; running-round '$a' in ${dur_run}s (pipeline $st), terminal-round '$b' in ${dur_final}s (pipeline $final)"
+  if [ "$st" != running ] && [ "$st" != pending ]; then verdict $c BLOCKED "the pipeline for $br never reached running/pending (status '${st:-none}') — nothing to time. $note"
+  elif [ "$worst" -le 240 ] && [ "$a" = running ] && [ "$dur_run" -le 240 ] && [ "$b" = passed ] && [ "$dur_final" -le 240 ]; then
+    verdict $c REFUTED "wait-for-green-ci.yaml:$gl (GitLab, $GLH) against MR !$iid with ci/outcome sleep:400: one poll round is bounded and returns a status instead of being killed — $note. Both rounds finish far under the Bash tool's 600 s cap (120 s default), so ci_status is stored after every round and write-ci-status always gets a value; the 30-min wait is the LOOP's rounds, not one RUN"
+  else verdict $c CONFIRMED "one RUN still overruns the tool cap or loses the status: $note"; fi
 }
 
 case_gl-d4() {  # glab api --paginate | json.load
@@ -625,8 +683,8 @@ main() {
   case "$what" in
     static) case_static;;
     d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
-    gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18; do log "=== $k"; "case_$k"; done;;
-    gl-d2|gl-d18) "case_$what";;
+    gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d03; do log "=== $k"; "case_$k"; done;;
+    gl-d2|gl-d18|d03) "case_$what";;
     all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
