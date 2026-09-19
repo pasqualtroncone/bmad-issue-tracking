@@ -139,9 +139,9 @@ case_d2() {
   git branch -D ci-green ci-red >/dev/null 2>&1 || true
   # t0 discards the completed runs a previous d2 left on these branches (see wait_run)
   local t0; t0="$(date -u +%FT%TZ)"
-  git checkout -q -b ci-green main; set_outcome . pass; git commit -q --allow-empty -m "ci-green marker"; git push -q -f -u origin ci-green
+  git checkout -q -b ci-green main; set_outcome . pass; git commit -q --allow-empty -m "ci-green marker"; git push -f -u origin ci-green > "$d/push-ci-green.log" 2>&1 || warn "push ci-green failed: $(tail -1 "$d/push-ci-green.log")"
   log "  waiting for ci-green run…"; echo "ci-green: $(wait_run ci-green 600 "$t0")" | tee "$d/runs.txt" >&2
-  git checkout -q -b ci-red main; set_outcome . fail; git push -q -f -u origin ci-red
+  git checkout -q -b ci-red main; set_outcome . fail; git push -f -u origin ci-red > "$d/push-ci-red.log" 2>&1 || warn "push ci-red failed: $(tail -1 "$d/push-ci-red.log")"
   log "  waiting for ci-red run…"; echo "ci-red: $(wait_run ci-red 600 "$t0")" | tee -a "$d/runs.txt" >&2
   git checkout -q ci-green
   gh run list -R "$REPO_GH" --limit 3 --json headBranch,conclusion,createdAt,databaseId > "$d/gh-run-list.json"
