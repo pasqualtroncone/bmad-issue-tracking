@@ -54,6 +54,7 @@ print(ps[0]['status'] if ps else 'none')
 " 2>/dev/null)
               # Map atomic pipeline_status → ci_status enum (mirrors check-mr-ci L41-54)
               STATUS=$(uv run --no-project python -c "
+import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 if ps == 'success':
     print('passed')
@@ -63,7 +64,7 @@ elif ps in ('running', 'pending', 'queued', 'in_progress'):
     print('running')
 else:
     print('no_ci')
-" "$pipeline_status" 2>/dev/null)
+" "$pipeline_status")
               if [ "$STATUS" = "passed" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "no_ci" ]; then
                 echo "$STATUS"
                 break
@@ -92,6 +93,7 @@ print((rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else 'none')
 " 2>/dev/null)
                   # Map atomic pipeline_status → ci_status enum (mirrors check-mr-ci L41-54)
                   STATUS=$(uv run --no-project python -c "
+import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 if ps == 'success':
     print('passed')
@@ -101,7 +103,7 @@ elif ps in ('running', 'pending', 'queued', 'in_progress'):
     print('running')
 else:
     print('no_ci')
-" "$pipeline_status" 2>/dev/null)
+" "$pipeline_status")
                   if [ "$STATUS" = "passed" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "no_ci" ]; then
                     echo "$STATUS"
                     break

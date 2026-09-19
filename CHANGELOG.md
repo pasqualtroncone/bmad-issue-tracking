@@ -30,6 +30,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The MR for a story named a source branch that does not exist on the remote: the create-story and
+  dev-finish phases derived it from `branch_patterns.story` (`feat/<prd_key>/<story_key>`) while the
+  work sits on the branch the run is actually on, so `gh pr create --head` failed and the step's
+  `2>&1 | grep https://` stored an empty MR URL.
+- The dev-finish and review-finish phases of `common/post-dev-complete.yaml` pushed with a bare
+  `git push`, which exits 128 on a branch that has no upstream — the shape bmad-loop creates
+  (`bmad-loop/<run>/<story_key>`) — and took the CI gate, the issue update and the comment with it.
+- Re-running the `bmad-prd`, `create-prd` or `retrospective` completion hook on an unchanged
+  worktree halted it: `git commit -m` exits 1 with "nothing to commit" on a clean tree and the
+  step expects 0, so push, issue and MR never happened.
+- `common/merge-mr.yaml` compared the git platform against the tracker platform with `neq`,
+  an operator the workflow language does not define (it has `ne`), on both the GitLab and the
+  GitHub branch.
+- `common/wait-for-green-ci.yaml` reported `timeout` for every running pipeline on both
+  platforms: the block mapping the pipeline status onto the `ci_status` enum used `sys.argv`
+  without `import sys` and sent its stderr to `/dev/null`, so the status was always empty, the
+  loop never broke and 60 polls × 30 s elapsed before the workflow gave up.
+- Issue sync stopped after the first issue it created: the `sync_created` counter in
+  `common/sync-issues.yaml` ran `int(sys.argv[1]) + 1` in a `python -c` body with no
+  `import sys`, so the step raised `NameError` and halted the workflow.
 - `/bmad-issue-tracking-setup` looked for its own assets only in the classic installer's URL
   clone cache and otherwise asked the user for a repo path. It now resolves the installed skill
   folder (`.claude/skills/…`, `.agents/skills/…`, cache, then ask)

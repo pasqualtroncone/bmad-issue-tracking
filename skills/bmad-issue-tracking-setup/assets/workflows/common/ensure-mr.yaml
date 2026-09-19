@@ -7,7 +7,10 @@
 #          create-prd/complete.yaml).
 # Input variables:
 #   - mr_repo: full repo path (gitlab "host/group/project"; github "host/owner/project")
-#   - source_branch: branch with the work to merge (PRD: prd_branch; story: story_branch = prd_branch/story_key)
+#   - source_branch: branch with the work to merge, as it exists on the remote (PRD
+#               callers pass prd_branch; story callers pass the branch they are on,
+#               current_branch — the pattern-derived story_branch is not it under
+#               bmad-loop, which names branches bmad-loop/<run>/<story_key>)
 #   - target_branch: branch to merge into (PRD: default_branch; story: prd_branch)
 #   - mr_title: title shown in the MR (story callers typically "Story N.M: Title" or
 #               "Story KEY — bmad-build-converge"; PRD callers "PRD: {prd_key}")

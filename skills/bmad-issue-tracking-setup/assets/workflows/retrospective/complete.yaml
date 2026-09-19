@@ -45,7 +45,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
 - INCLUDE: common/create-issue
 # Commit and push
 - RUN: git add .
-- RUN: git commit -m "retrospective epic {epic_number}"
+- RUN: git commit --allow-empty -m "retrospective epic {epic_number}"
 - RUN: git push
 # Close the issue immediately (status is "done")
 - SET: { variable: issue_id, value: "{issue_id}" }
