@@ -3,8 +3,10 @@
 # Purpose: Get the latest pipeline id + status for a given MR/PR.
 # Input variables:
 #   - mr_iid (numeric): the MR/PR whose pipeline is wanted (GitLab looks it up by IID)
-#   - mr_repo (string): "host/project" of the repo the MR/PR lives in (set by check-mr-ci).
+#   - mr_repo (string): "host/project" of the repo the MR/PR lives in (from check-config).
 #       On a cross-platform setup this is the GIT remote, not the issue tracker.
+#   - git_host / git_project_enc (from check-config): the same repo in the coordinates the
+#       GitLab API takes (hostname + URL-encoded project path).
 #   - source_branch (string): the MR/PR source branch (set by check-mr-ci). GitHub has no
 #       per-PR run listing, so this branch filter is what scopes the lookup to THIS MR.
 #   - git_platform (from check-config): CI runs on the git remote, so it — not `platform` —
@@ -18,13 +20,13 @@
 # `CHECK: git_platform eq "gitlab"` and carry NO `PLATFORM:` annotation — that annotation
 # compares against `platform`, the ISSUE TRACKER (lang §2.4), so on a cross-platform setup
 # it skipped every branch here and left pipeline_status unset (check-mr-ci then read it as
-# "no_ci"). Known residue: the GitLab steps still address {project_enc}/{host}, the issue
-# tracker's project — correct whenever git_platform eq platform, which is the only shape
-# the lab exercises; a GitLab remote under a GitHub tracker needs the git project instead.
+# "no_ci"). For the same reason the GitLab steps address {git_project_enc}/{git_host} and
+# not {project_enc}/{host}: those name the ISSUE TRACKER's project, which is the right
+# answer only while the two platforms coincide. check-config resolves both pairs once.
 - CHECK: git_platform eq "gitlab"
   TRUE:
     # GitLab: fetch MR's latest pipeline (paginated, take first)
-    - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
+    - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate | uv run --no-project python -c "
 import json, sys
 ps = json.load(sys.stdin)
 if ps:
@@ -34,7 +36,7 @@ else:
 "
       STORE: pipeline_id
     # GitLab: also fetch pipeline_status (separate RUN — multi-variable STORE has no precedent in this module; safer to split)
-    - RUN: glab api "projects/{project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {host} --paginate | uv run --no-project python -c "
+    - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate | uv run --no-project python -c "
 import json, sys
 ps = json.load(sys.stdin)
 print(ps[0]['status'] if ps else 'none')

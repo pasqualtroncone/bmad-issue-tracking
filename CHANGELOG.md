@@ -171,6 +171,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the issue list and about as long for `search/issues` — a miss is re-checked up to three
   times, 3 s apart, within the same step. The `PRD: <key>` / `Epic <n>:` title shapes keep
   the search API. GitLab is unaffected.
+- With code on a GitLab remote and issues on GitHub, the CI atomics polled the issue
+  tracker's project: the GitLab steps of `common/get-mr-pipeline.yaml`,
+  `common/wait-for-green-ci.yaml` and `common/get-failed-jobs.yaml` addressed
+  `projects/{project_enc}` with `--hostname {host}`, and the dev-finish and create-story
+  phases of `common/post-dev-complete.yaml` set `mr_repo` to `{host}/{project}` outright.
+  `common/check-config.yaml` now resolves the git remote's coordinates once
+  (`git_host`, `git_project`, `git_project_enc`, `mr_repo`) beside the tracker's, and every
+  MR/PR and CI step reads them from there. The four private copies of that resolution are
+  gone, and with them the `git_owner`/`git_repo` split-and-rejoin of
+  `bmad-prd/complete.yaml`, `create-prd/complete.yaml` and `common/mark-mr-ready.yaml`.
 
 ## [3.0.0] - 2026-09-15
 

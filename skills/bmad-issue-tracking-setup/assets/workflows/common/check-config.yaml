@@ -7,9 +7,23 @@
 #   - git_platform: the git remote platform (required — set by /bmad-issue-tracking-setup step 7)
 #   - host: the issue tracker hostname
 #   - project: the issue tracker project path (group/project or owner/repo)
+#   - project_enc: the tracker project path, URL-encoded (GitLab addresses a project that way)
+#   - git_host / git_project / git_project_enc: the same three coordinates for the GIT
+#       REMOTE. Equal to the tracker's when git_platform eq platform; read from
+#       issue_tracking.git_host / git_project otherwise.
+#   - mr_repo: "{git_host}/{git_project}", the repo argument every MR/PR and CI step takes
 #   - worktree_base: base directory for worktrees (required — set by /bmad-issue-tracking-setup step 6)
 #   - branch_patterns: the configured branch patterns object
 # Side effects: none
+#
+# Two sets of coordinates, resolved once. Issues, labels and comments live on the
+# TRACKER (host/project/project_enc); MRs, PRs, pipelines and job traces live on the GIT
+# REMOTE (git_host/git_project/git_project_enc, mr_repo). They coincide on most setups,
+# which is exactly why the difference kept being forgotten: check-mr-ci, mark-mr-ready,
+# bmad-prd and create-prd each resolved mr_repo their own way — one of them by splitting
+# git_project into an owner and a repo it then rejoined — while the GitLab CI steps went
+# on addressing `projects/{project_enc}` with `--hostname {host}`, the TRACKER's project.
+# Correct whenever the two agree; wrong for a GitLab remote under a GitHub tracker.
 
 - READ: _bmad/custom/issue-tracking.yaml
   EXTRACT:
@@ -57,3 +71,22 @@ import sys, urllib.parse
 print(urllib.parse.quote(sys.argv[1], safe=''))
 " {project}
   STORE: project_enc
+# Git remote coordinates. Same platform -> the tracker's; otherwise the git_* keys the
+# setup skill wrote. `gh -R` and the `repos/...` API path take `owner/repo` whole, so
+# git_project never needs splitting into an owner and a repo.
+- CHECK: git_platform eq platform
+  TRUE:
+    - SET: { variable: git_host, value: "{host}" }
+    - SET: { variable: git_project, value: "{project}" }
+    - SET: { variable: git_project_enc, value: "{project_enc}" }
+  FALSE:
+    - READ: _bmad/custom/issue-tracking.yaml
+      EXTRACT:
+        git_host: issue_tracking.git_host
+        git_project: issue_tracking.git_project
+    - RUN: uv run --no-project python -c "
+import sys, urllib.parse
+print(urllib.parse.quote(sys.argv[1], safe=''))
+" {git_project}
+      STORE: git_project_enc
+- SET: { variable: mr_repo, value: "{git_host}/{git_project}" }

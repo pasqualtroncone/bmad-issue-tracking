@@ -557,8 +557,10 @@ case_gl-ci() {  # shared setup for gl-d2 / gl-d18: a green MR and a red MR with 
 case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the project's latest)?
   local c=gl-d2; case_gl-ci || return; local d; d="$(case_dir $c)"
   local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml 'glab api' 1)"; l2="$(line_of common/get-mr-pipeline.yaml 'glab api' 2)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH"
-  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH"
+  # since #40 the GitLab steps address the GIT REMOTE's project (git_project_enc/git_host,
+  # resolved by check-config), not the tracker's — on this lab the two are the same project
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH"
   local got latest; got="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; latest="$(uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d[0]["ref"]+"="+d[0]["status"])' "$(case_dir gl-ci)/latest-pipelines.json")"
   if [ "$got" = success ]; then verdict $c REFUTED "GitLab path is per-MR and correct: get-mr-pipeline.yaml:$l2 for the green MR !$GREEN_IID → '$got' while the project's latest pipeline is $latest. D02 is GitHub-only"
   else verdict $c CONFIRMED "GitLab path also wrong: green MR reports '$got' (latest project pipeline $latest)"; fi
@@ -567,7 +569,7 @@ case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the proj
 case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
   local c=gl-d18; case_gl-ci || return; local d; d="$(case_dir $c)"
   local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
-  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$GREEN_IID" host="$GLH" > "$d/gitlab-loop.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" > "$d/gitlab-loop.cmd"
   # polls_per_round replaced max_attempts when #14 split the 30-min loop into bounded rounds
   sed 's/polls_per_round=8/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
   log "  (a) literal GitLab round, polls_per_round=2 (≈50 s), MR !$GREEN_IID (pipeline success)…"
@@ -590,7 +592,7 @@ case_d03() {  # #14 — does ONE poll round return long before the Bash tool cap
   git push -q -f -u origin "$br"; git checkout -q main
   local iid; iid="$(gl_mr_for "$br")"; echo "mr=$iid" > "$d/mr.txt"
   [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR for $br"; cd - >/dev/null; return; }
-  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc="$ENC" mr_iid="$iid" host="$GLH" > "$d/poll.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" > "$d/poll.cmd"
   # static half: the rendered round must be bounded — no 60-attempt (30-min) RUN left
   local sl po worst
   sl="$(grep -o 'sleep [0-9]*' "$d/poll.cmd" | awk '{print $2}' | sort -n | tail -1)"
