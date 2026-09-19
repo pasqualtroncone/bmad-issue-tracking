@@ -229,6 +229,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   therefore passed whatever CI did, and a red pipeline was first seen one pass later. The
   issue and the MR are now ensured before the gate. `no_mr` still maps to green: that is the
   flow with no remote MR at all, not a story whose MR had not been created yet.
+- Every issue `common/create-issue.yaml` created on GitHub was orphaned on the spot: the id
+  was taken with `FILTER select: number` from `create_result`, and `gh issue create` prints
+  the issue's web URL, not JSON. lang §5 stops a workflow whose FILTER matches nothing, so
+  the run ended right after the issue existed — no status label, no comment, no `issue_ref`
+  in the MR description — and the next run adopted the issue by exact title, which is why
+  the loss never surfaced. The GitHub branch now reads the trailing integer of the URL, and
+  an unreadable create output stops with a message naming it instead of leaving `issue_id`
+  empty for the callers to treat as "no issue yet".
 
 ## [3.0.0] - 2026-09-15
 

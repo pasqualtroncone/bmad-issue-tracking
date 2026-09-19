@@ -96,7 +96,15 @@ print(','.join(labels))
 - RUN: gh issue create --title "{title}" --body-file "{description_file}" --label "{label_arg}" -R "{host}/{project}"
   STORE: create_result
   PLATFORM: github
-# Extract issue_id from creation result
+# Extract issue_id from creation result.
+# The two CLIs answer in different shapes and only one of them is JSON. `glab api
+# --method POST` prints the created issue as a JSON object, so a FILTER reads `iid`
+# straight off it. `gh issue create` prints ONE LINE: the issue's web URL
+# (https://<host>/<owner>/<repo>/issues/<n>). A FILTER for `number` finds no such field
+# and lang §5 stops the workflow there — after the issue exists — so the status label,
+# the comment and the MR description's issue_ref were all skipped, silently: the next
+# run adopts the issue by exact title, so nothing ever reported the gap. The GitHub
+# branch therefore reads the trailing integer of the URL instead.
 - CHECK: platform eq "gitlab"
   TRUE:
     - FILTER:
@@ -104,7 +112,17 @@ print(','.join(labels))
         select: iid
         store: issue_id
   FALSE:
-    - FILTER:
-        source: create_result
-        select: number
-        store: issue_id
+    - RUN: uv run --no-project python -c "
+import re, sys
+m = re.search(r'([0-9]+)[^0-9]*\Z', sys.argv[1].strip())
+print(m.group(1) if m else '')
+" "{create_result}"
+      STORE: issue_id
+# An unreadable create output is a halt WITH a reason, not a silent skip: every caller
+# treats an empty issue_id as "no issue yet" and would go on to label, comment on and
+# link an issue id that is the empty string.
+- CHECK: empty issue_id
+  TRUE:
+    - OUTPUT:
+        message: "Issue created but its id could not be read from the create output: {create_result}"
+        stop: true

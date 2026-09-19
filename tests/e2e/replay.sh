@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9   # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1  # GitHub lab (d15/d21/d29 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -16,6 +16,9 @@ set -uo pipefail
 line_of() { grep -n -E -- "$2" "$WF/$1" | sed -n "${3:-1}p" | cut -d: -f1; }
 # run_line_of <rel> <body-regex> — the `- RUN:` line that owns the first line matching the body regex
 run_line_of() { local b; b="$(grep -n -E -- "$2" "$WF/$1" | head -1 | cut -d: -f1)"; [ -n "$b" ] && awk -v n="$b" 'NR<=n && /^ *- RUN:/ {l=NR} END{print l}' "$WF/$1"; }
+# run_line_of_n <rel> <body-regex> <nth> — same, for the nth match (two platform steps can
+# share a STORE name, and only their order tells them apart)
+run_line_of_n() { local b; b="$(grep -n -E -- "$2" "$WF/$1" | sed -n "${3:-1}p" | cut -d: -f1)"; [ -n "$b" ] && awk -v n="$b" 'NR<=n && /^ *- RUN:/ {l=NR} END{print l}' "$WF/$1"; }
 
 # replay <case> <name> <rel> <line> [k=v...] — render the RUN step and execute it in $CONSUMER
 replay() {
@@ -405,6 +408,47 @@ print('documents=%d issues=%d bytes=%d newlines=%d' % (len(pages), sum(len(p) fo
     verdict $c REFUTED "create-issue.yaml:$l returns an EMPTY string (rc=0) for the absent title 'Story 1.1: Login Form' instead of halting, and #$p for 'PRD: $key' — the caller's 'CHECK: empty found_issue_id' now reaches the creation branch. Over the 105-issue label prd:bulkprd it is rc=0 and empty too ($pages): on this ARRAY endpoint gh --paginate merges the pages into ONE document, so #33's 'Extra data' is a search/issues shape (already fixed in sync-issues/find-issue); the raw_decode loop parses either"
   else
     verdict $c CONFIRMED "create-issue.yaml:$l did not behave as a lookup: absent rc=$(cat "$d/absent.rc") out='$a' (want empty); present out='$p' (want '$want'); bulk rc=$(cat "$d/bulk-absent.rc") out='$b' (want empty) err='$(head -c 160 "$d/bulk-absent.err" | tr '\n' ' ')'"
+  fi
+}
+
+case_r1() {  # #47 — `gh issue create` prints a URL, not JSON: reading `number` off it halts
+  # The pre-fix step was `FILTER source: create_result select: number`. lang §5 stops the
+  # workflow when a FILTER finds nothing, and it finds nothing in a one-line URL — so the
+  # issue was created and the status label, the comment and the MR's issue_ref were all
+  # skipped. The next run adopts the issue by exact title, which is why nothing reported it.
+  local c=r1; load_lab; local d; d="$(case_dir $c)"; local key=r1prd
+  gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
+  local title="R1 probe $(date +%s)"
+  printf '**Sprint Key:** `%s`\n' "$title" > "$d/desc.md"
+  # locator: the GitHub create step is the SECOND `STORE: create_result` (the first is glab)
+  local lc lx
+  lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
+  lx="$(run_line_of common/create-issue.yaml 'm = re\.search')"
+  [ -n "$lc" ] && [ -n "$lx" ] || { verdict $c BLOCKED "cannot locate the create step ($lc) or the id extraction ($lx) in create-issue.yaml"; return; }
+  printf '%s' "$title" > "$d/title.txt"
+  replay $c create common/create-issue.yaml "$lc" title="$title" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH" title_file="$d/title.txt"
+  local url want; url="$(tail -1 "$d/create.out")"; want="${url##*/}"
+  replay $c extract common/create-issue.yaml "$lx" create_result="$(cat "$d/create.out")"
+  local got; got="$(tr -d '[:space:]' < "$d/extract.out")"
+  # the pre-fix shape against the same output, for the record: a `number` field to select
+  uv run --no-project python -c "
+import json, sys
+try:
+    obj = json.loads(open(sys.argv[1], encoding='utf-8').read())
+    print('number=' + str(obj.get('number')))
+except Exception as e:
+    print('not JSON: ' + type(e).__name__)
+" "$d/create.out" > "$d/prefix-filter.txt" 2>&1
+  { echo "create stdout: $(head -c 200 "$d/create.out" | tr '\n' ' ')"
+    echo "issue number from the URL: #${want:-(none)}  extraction step → '#${got:-(empty)}'"
+    echo "what a FILTER select: number had to read: $(cat "$d/prefix-filter.txt")"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  [ -n "$want" ] && gh issue close "$want" -R "$REPO_GH" >/dev/null 2>&1
+  if [ "$(cat "$d/create.rc")" != 0 ] || [ -z "$want" ]; then
+    verdict $c BLOCKED "the create step did not create an issue: rc=$(cat "$d/create.rc") out='$(head -c 160 "$d/create.out")' err='$(head -c 160 "$d/create.err" | tr '\n' ' ')'"
+  elif [ "$got" = "$want" ]; then
+    verdict $c REFUTED "create-issue.yaml:$lc created issue #$want and printed only its URL ($(head -c 60 "$d/create.out" | tr -d '\n')); create-issue.yaml:$lx reads the trailing integer off it → issue_id='$got'. The pre-fix 'FILTER select: number' had nothing to read ($(cat "$d/prefix-filter.txt")) and lang §5 halted the workflow there, after the issue existed"
+  else
+    verdict $c CONFIRMED "create-issue.yaml:$lx does not recover the issue number from the create output: created #$want, extracted '#${got:-(empty)}' (rc=$(cat "$d/extract.rc")) from '$(head -c 80 "$d/create.out" | tr -d '\n')'"
   fi
 }
 
@@ -842,10 +886,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
