@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `common/wait-for-green-ci.yaml` reported `timeout` for every running pipeline on both
+  platforms: the block mapping the pipeline status onto the `ci_status` enum used `sys.argv`
+  without `import sys` and sent its stderr to `/dev/null`, so the status was always empty, the
+  loop never broke and 60 polls × 30 s elapsed before the workflow gave up.
 - Issue sync stopped after the first issue it created: the `sync_created` counter in
   `common/sync-issues.yaml` ran `int(sys.argv[1]) + 1` in a `python -c` body with no
   `import sys`, so the step raised `NameError` and halted the workflow.
