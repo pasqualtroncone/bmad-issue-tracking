@@ -200,6 +200,16 @@ have caught real defects:
   `Side effects: none`). Four MR atomics shipped without it and left the suite red; only
   the first was ever reported, because `assert` aborts the test on the first failure.
 
+A third rule is not checked by `tests/` but by the e2e level-0 report (`make e2e-static`,
+item `D03-static`): **no single `RUN` may block longer than the interpreter's Bash tool
+allows** — 120 s by default, 600 s at most. A long wait is expressed in the workflow
+language, not in bash: `common/wait-for-green-ci.yaml` spends its 30-minute CI budget as a
+`LOOP` over nine rounds, each ONE `RUN` of at most 8 polls × 25 s (~200 s) that stores
+`ci_status` and lets the following iterations no-op once the state is terminal. The
+original shape (one `RUN` looping `sleep 30` sixty times) was killed by the tool on any
+pipeline longer than the cap, so `ci_status` was never set, `common/write-ci-status.yaml`
+never wrote `ci-status.json` and bmad-loop's `[verify]` failed for the wrong reason.
+
 ## Adding or removing a workflow file
 
 `skills/bmad-issue-tracking-setup/SKILL.md` carries an explicit per-file verify list
