@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The setup skill's `references/help.md` sent readers to `_bmad/_config/custom/issue-tracking.yaml`
+  for the sidecar config; `common/check-config.yaml` reads `_bmad/custom/issue-tracking.yaml`.
+  Its title also named the module `issue-tracking` instead of `bmad-issue-tracking`, and the
+  close-trace-mr README credited the deploy to setup "step 3d", which is step 5.
 - `common/create-issue.yaml`: the `TRUE:`/`FALSE:` branches of the inner
   `CHECK: empty issue_id` sat at the same indentation as the `- CHECK` item itself, so the
   block only read as a conditional by luck (both branches `STOP`, so either reading ended the

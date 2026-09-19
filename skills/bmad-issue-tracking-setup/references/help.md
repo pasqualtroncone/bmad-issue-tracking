@@ -1,4 +1,4 @@
-# Module: issue-tracking — setup skill
+# Module: bmad-issue-tracking — setup skill
 
 Deploys the issue-tracking override assets into a consumer project's `_bmad/` tree. Run once after installing the module.
 
@@ -11,7 +11,7 @@ Deploys the issue-tracking override assets into a consumer project's `_bmad/` tr
 
 ## Refs the module expects at runtime (consumer side)
 
-- `_bmad/_config/custom/issue-tracking.yaml` — sidecar config the asset workflows read (platform, host, project, worktree_base, branch_patterns)
+- `_bmad/custom/issue-tracking.yaml` — sidecar config the asset workflows read (platform, host, project, worktree_base, branch_patterns)
 - A working `glab` (GitLab) or `gh` (GitHub) CLI
 
 ## References to running skills in this module
