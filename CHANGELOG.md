@@ -273,6 +273,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `entry_status` empty, `mapped_status` empty and the status update wrong. Only the key
   still comes from the loop item; the status is read back from `sprint-status.yaml` by
   that key, so both renderings produce the same answer.
+- A story title holding a double quote, a backtick or a `$(…)` took `common/create-issue.yaml`
+  apart. The title was interpolated inside double quotes three times (`-f "search={title}"`,
+  a python argv, `gh issue create --title "{title}"`), and titles come from user-typed spec
+  frontmatter: a quote made the shell split the command, so the hook halted on every
+  dev-finish of that story, and a `$(…)` was executed before the CLI saw it — the same class
+  as D09, fixed in `common/ensure-mr.yaml` by handing the body to the CLI as a file. The
+  title is now written to `/tmp/issue-title.txt` with `WRITE` (no shell involved) and read
+  back in python, which calls `gh`/`glab` with an argument list. The GitLab lookup dropped
+  its `search=` term with it: it was fuzzy, so the title had to decide locally anyway.
 
 ## [3.0.0] - 2026-09-15
 

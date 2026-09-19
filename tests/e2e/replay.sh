@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1|r3  # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|r1|r3|r7  # GitHub lab (d15/d21/d29 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -443,10 +443,15 @@ case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not ex
   done
   echo "expected issue number for 'PRD: $key': #$want (after ${t}s)" | tee "$d/expected.txt" >&2
   local l; l="$(line_of common/create-issue.yaml '^- RUN: set -o pipefail; gh api "repos/' 1)"
-  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key" title="Story 1.1: Login Form"
-  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key" title="PRD: $key"
+  # since #53 the lookup reads the title from /tmp/issue-title.txt (written by the WRITE
+  # step at the top of the file) instead of taking it as a rendered argv
+  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
+  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  printf '%s' "PRD: $key" > /tmp/issue-title.txt
+  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   # #33: the same step over the 105-issue label seeded by d4 (>1 page of 100)
-  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd title="Story 1.1: Login Form"
+  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
+  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd
   gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:bulkprd" --paginate 2>/dev/null | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
@@ -483,8 +488,11 @@ case_r1() {  # #47 — `gh issue create` prints a URL, not JSON: reading `number
   lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
   lx="$(run_line_of common/create-issue.yaml 'm = re\.search')"
   [ -n "$lc" ] && [ -n "$lx" ] || { verdict $c BLOCKED "cannot locate the create step ($lc) or the id extraction ($lx) in create-issue.yaml"; return; }
-  printf '%s' "$title" > "$d/title.txt"
-  replay $c create common/create-issue.yaml "$lc" title="$title" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH" title_file="$d/title.txt"
+  # since #53 the title travels in /tmp/issue-title.txt (the WRITE step at the top of the
+  # file), never on the command line — so the case lays the file down instead of
+  # rendering a {title} placeholder
+  printf '%s' "$title" > /tmp/issue-title.txt
+  replay $c create common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH"
   local url want; url="$(tail -1 "$d/create.out")"; want="${url##*/}"
   replay $c extract common/create-issue.yaml "$lx" create_result="$(cat "$d/create.out")"
   local got; got="$(tr -d '[:space:]' < "$d/extract.out")"
@@ -559,6 +567,52 @@ print('passed' if ps == 'success' else 'failed' if ps in ('failed', 'failure') e
     verdict $c REFUTED "check-mr-ci.yaml:$lmap reads an empty run list as a run that has not started: ${dt}s after pushing ci-green the lookup at get-mr-pipeline.yaml:$lps answered pipeline_status='$ps' and the mapping returned '$live', not no_ci (the pre-fix rule returned $(cat "$d/prefix-mapping.txt")). The discriminator is the CI definition on the branch (check-mr-ci.yaml:$ldef → '$def'): mapping(none, defined) = '$mnd' and mapping(none, undefined) = '$mnn', so a genuinely CI-less repo is still green at no cost, and a real failure is still '$mf'"
   else
     verdict $c CONFIRMED "check-mr-ci.yaml:$lmap still calls an unregistered run 'no CI': ${dt}s after the push pipeline_status='$ps' ci_defined='$def' → '$live'; mapping(none,true)='$mnd' (want running), mapping(none,false)='$mnn' (want no_ci), mapping(failure)='$mf' (want failed)"
+  fi
+}
+
+case_r7() {  # #53 — a title carrying a quote or $(…) must reach the tracker intact
+  # Same class as D09: the title was interpolated inside double quotes in the lookup, in a
+  # python argv and in `gh issue create --title "{title}"`. Story titles come from
+  # user-typed spec frontmatter, so a double quote split the command (syntax error → the
+  # hook halts on every dev-finish of that story) and a $(…) was EXECUTED.
+  local c=r7; load_lab; local d; d="$(case_dir $c)"; local key=r7prd
+  gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
+  local title
+  title='R7 "quoted" $(echo INJECTED) `backtick` probe '"$(date +%s)"
+  printf '%s' "$title" > /tmp/issue-title.txt
+  printf '**Sprint Key:** `r7probe`\n' > "$d/desc.md"
+  local lc; lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
+  [ -n "$lc" ] || { verdict $c BLOCKED "cannot locate the GitHub create step in create-issue.yaml"; return; }
+  # {title} is still offered to the renderer on purpose: the step must no longer NAME it,
+  # exactly as case_d9 checks for {description_body}. A render that resolved it would put
+  # the hostile text back on the command line and this case would see it.
+  $TT render-step common/create-issue.yaml "$lc" title="$title" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH" > "$d/rendered.cmd"
+  bash -n "$d/rendered.cmd" > "$d/syntax.out" 2> "$d/syntax.err"; echo $? > "$d/syntax.rc"
+  ( cd "$CONSUMER" && bash "$d/rendered.cmd" ) > "$d/create.out" 2> "$d/create.err"; echo $? > "$d/create.rc"
+  local url n; url="$(tail -1 "$d/create.out")"; n="${url##*/}"
+  case "$n" in ''|*[!0-9]*) n="";; esac
+  # raw, not --json: a JSON blob escapes the very quotes this case is about
+  if [ -n "$n" ]; then gh issue view "$n" -R "$REPO_GH" --json title --jq .title > "$d/issue-title.txt" 2>&1; else : > "$d/issue-title.txt"; fi
+  local got; got="$(cat "$d/issue-title.txt")"
+  # the command line must not carry the title at all
+  local online=0; grep -qF 'echo INJECTED' "$d/rendered.cmd" && online=1
+  # the substitution ran exactly when INJECTED shows up without its wrapper
+  local inj=0
+  grep -q INJECTED "$d/create.err" 2>/dev/null && inj=1
+  if grep -q INJECTED "$d/issue-title.txt" 2>/dev/null && ! grep -qF '$(echo INJECTED)' "$d/issue-title.txt" 2>/dev/null; then inj=1; fi
+  { echo "rendered command carries the title text? $online"
+    echo "bash -n rc=$(cat "$d/syntax.rc") $(head -c 120 "$d/syntax.err" | tr '\n' ' ')"
+    echo "create rc=$(cat "$d/create.rc") → #${n:-(none)}; err: $(head -c 160 "$d/create.err" | tr '\n' ' ')"
+    echo "title sent:  [$title]"
+    echo "title stored:[$got]"
+    echo "\$(echo INJECTED) executed? $inj"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  [ -n "$n" ] && gh issue close "$n" -R "$REPO_GH" >/dev/null 2>&1
+  rm -f /tmp/issue-title.txt
+  if [ "$(cat "$d/syntax.rc")" = 0 ] && [ "$(cat "$d/create.rc")" = 0 ] && [ -n "$n" ] \
+     && [ "$got" = "$title" ] && [ "$inj" = 0 ] && [ "$online" = 0 ]; then
+    verdict $c REFUTED "create-issue.yaml:$lc never puts the title on the command line: the render does not name {title} at all (it is read from /tmp/issue-title.txt and handed to gh as one argv element), bash -n accepts the command, and issue #$n came back with the title '[$got]' byte for byte — the literal \$(echo INJECTED), the backtick and the double quotes all survived (executed=$inj)"
+  else
+    verdict $c CONFIRMED "create-issue.yaml:$lc takes the title apart: bash -n rc=$(cat "$d/syntax.rc"), create rc=$(cat "$d/create.rc") → issue '#${n:-(none)}', title stored '[$got]' vs sent '[$title]', \$(echo INJECTED) executed=$inj, title on the command line=$online; err '$(head -c 120 "$d/create.err" | tr '\n' ' ')'"
   fi
 }
 
@@ -1003,10 +1057,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|r3|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|r1|r3|r7|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1 r3; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d19 d2 d18 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
