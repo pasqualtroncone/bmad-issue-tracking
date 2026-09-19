@@ -81,6 +81,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `JSONDecodeError: Extra data` on the second page. The bulk fetches in `common/sync-issues.yaml`
   and the GitHub search in `common/find-issue.yaml` now read the stream with
   `json.JSONDecoder().raw_decode`, which accepts any number of pages.
+- The first story or epic issue of a PRD was never created: `common/create-issue.yaml` decided
+  "does this issue exist?" with a `FILTER … where: title matches`, and a FILTER that matches
+  nothing stops the workflow (language §5). Once the PRD issue carried the `prd:<key>` label the
+  listing was never empty, so the `empty search_result` guard did not catch it and every hook
+  halted on the issue it was about to create. The lookup is now a `RUN` that prints the issue id —
+  exact title first, prefix second — or an empty string, and reads the `--paginate` stream with
+  `json.JSONDecoder().raw_decode` so any number of pages parses.
 
 ## [3.0.0] - 2026-09-15
 

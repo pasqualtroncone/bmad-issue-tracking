@@ -11,28 +11,54 @@
 # Side effects: creates an issue on the issue tracker if it does not already exist
 # Requires: host and project in scope (provided by common/check-config via callers)
 
-# Search for existing issue
-- RUN: glab api --paginate "projects/{project_enc}/issues" --method GET -f "search={title}" -f "labels=prd{sep}{prd_key}" --hostname {host}
-  STORE: search_result
+# Look up an existing issue with this title. The step prints the issue id, or an EMPTY
+# string when there is none — the lookup must not be a FILTER: lang §5 stops the workflow
+# when `where` matches nothing, and "no issue yet" is the normal case every story and epic
+# goes through on its first sync (the PRD label alone makes the listing non-empty, so the
+# `empty search_result` guard never catches it).
+# The page stream is parsed with raw_decode because `--paginate` concatenates one JSON
+# document per page with no separator: past 100 issues a plain parse dies on "Extra data".
+- RUN: set -o pipefail; glab api --paginate "projects/{project_enc}/issues" --method GET -f "search={title}" -f "labels=prd{sep}{prd_key}" --hostname {host} | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+issues = [i for page in pages for i in page]
+print(str(issues[0]['iid']) if issues else '')
+"
+  STORE: found_issue_id
   PLATFORM: gitlab
-- RUN: gh api "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" --hostname {host} --paginate
-  STORE: search_result
+# GitHub lists every issue carrying the PRD label, so the title comparison happens here:
+# exact first, prefix second (the match the header promises). Pull requests share the
+# issues endpoint and are dropped.
+- RUN: set -o pipefail; gh api "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" --hostname {host} --paginate | uv run --no-project python -c "
+import json, sys
+dec = json.JSONDecoder()
+text = sys.stdin.read()
+pos, pages = 0, []
+while pos < len(text):
+    if text[pos].isspace():
+        pos += 1
+        continue
+    page, pos = dec.raw_decode(text, pos)
+    pages.append(page)
+title = sys.argv[1]
+issues = [i for page in pages for i in page if 'pull_request' not in i]
+match = [i for i in issues if i['title'] == title] or [i for i in issues if i['title'].startswith(title)]
+print(str(match[0]['number']) if match else '')
+" "{title}"
+  STORE: found_issue_id
   PLATFORM: github
-# If found, extract issue_id and stop
-- CHECK: empty search_result
+# If found, adopt it as issue_id and stop
+- CHECK: empty found_issue_id
   FALSE:
-    - CHECK: platform eq "gitlab"
-      TRUE:
-        - FILTER:
-            source: search_result
-            select: iid
-            store: issue_id
-      FALSE:
-        - FILTER:
-            source: search_result
-            select: number
-            where: title matches "{title}"
-            store: issue_id
+    - SET: { variable: issue_id, value: "{found_issue_id}" }
     - CHECK: empty issue_id
     TRUE:
       - STOP
