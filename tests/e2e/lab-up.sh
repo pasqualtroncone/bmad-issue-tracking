@@ -11,7 +11,7 @@
 set -euo pipefail
 . "$(dirname "$0")/lib/common.sh"
 
-PLATFORM=github; VIA_SKILL=0; CHECK=0; ID=""; ADD_GL=0; GL_HOST="${E2E_GL_HOST:-gitlab.com}"
+PLATFORM=github; VIA_SKILL=0; CHECK=0; ID=""; ADD_GL=0; REDEPLOY=0; GL_HOST="${E2E_GL_HOST:-gitlab.com}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift 2;;
@@ -20,6 +20,7 @@ while [ $# -gt 0 ]; do
     --id) ID="$2"; shift 2;;
     --gl-host) GL_HOST="$2"; shift 2;;
     --add-gitlab) ADD_GL=1; shift;;   # add a GitLab consumer to the CURRENT lab (self-hosted host via --gl-host)
+    --redeploy) REDEPLOY=1; shift;;   # copy THIS checkout's assets into every consumer of the current lab (level 2 reads the deployed copies)
     -h|--help) sed -n 2,12p "$0"; exit 0;;
     *) die "unknown arg $1";;
   esac
@@ -64,6 +65,30 @@ check_lab() {
 }
 
 if [ "$CHECK" = 1 ]; then check_lab; exit $?; fi
+
+# --redeploy: SKILL.md steps 2-3 again, from this checkout, committed on main and fast-forwarded
+# into the PRD branch (story worktrees are cut from it and carry tracked files only).
+if [ "$REDEPLOY" = 1 ]; then
+  load_lab
+  for c in "$LAB"/consumer*; do
+    [ -d "$c" ] || continue
+    log "redeploying module assets into $c"
+    ( cd "$c" && git checkout -q main && git pull -q --ff-only origin main 2>/dev/null
+      mkdir -p _bmad/custom _bmad/_config/custom/workflows
+      rm -f _bmad/custom/bmad-*.toml; cp -f "$ASSETS"/custom/*.toml _bmad/custom/
+      rm -rf _bmad/_config/custom/workflows/*; cp -rf "$ASSETS"/workflows/* _bmad/_config/custom/workflows/
+      cp -f "$ASSETS"/bmad-workflow-lang.md _bmad/_config/custom/
+      # the skill folders too, so resolve_customization/help see the same version
+      for sk in bmad-issue-tracking-setup bmad-issue-tracking-sync; do rm -rf ".claude/skills/$sk"; cp -r "$MOD/skills/$sk" ".claude/skills/$sk"; done
+      git add -A _bmad/custom _bmad/_config/custom .claude/skills
+      git commit -q -m "chore: redeploy bmad-issue-tracking from $(git -C "$MOD" rev-parse --short HEAD)" || log "  (nothing changed)"
+      git push -q origin main
+      git fetch -q origin && git branch -f "feat/$PRD_KEY/prd" origin/main 2>/dev/null || true
+      git push -q -f origin "feat/$PRD_KEY/prd:feat/$PRD_KEY/prd"
+      echo "  main=$(git rev-parse --short origin/main) prd=$(git rev-parse --short origin/feat/$PRD_KEY/prd)" )
+  done
+  exit 0
+fi
 export GITLAB_HOST="$GL_HOST"   # glab repo create / glab api pick the host from here
 
 if [ "$ADD_GL" = 1 ]; then
