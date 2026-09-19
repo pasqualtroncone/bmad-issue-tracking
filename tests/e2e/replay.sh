@@ -126,7 +126,7 @@ case_d18() {
   local c=d18; load_lab; local d; d="$(case_dir $c)"
   local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
   # (a) the STATUS mapping snippet alone, with a real value, redirect removed
-  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="github.com/$REPO_GH" > "$d/github-loop.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="github.com/$REPO_GH" source_branch=ci-green > "$d/github-loop.cmd"
   awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
