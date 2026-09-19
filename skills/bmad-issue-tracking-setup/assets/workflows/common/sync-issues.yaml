@@ -128,53 +128,30 @@ print('Epic ' + n + ': ' + title_line if title_line else 'Epic ' + n)
             TRUE:
               - SET: { variable: entry_title, value: "Retrospective: Epic {epic_num}" }
             FALSE:
+              # ONE title rule, shared with common/ensure-issue.yaml:
+              # common/story-title.yaml. Both files used to carry their own copy and the
+              # copies had drifted on the case that matters — a frontmatter
+              # `title: 'Story 1.1: Login Form'` came out doubled on the ensure-issue path
+              # and bare here, and that string is the identity create-issue.yaml dedupes
+              # by. The atomic resolves the spec the same way this step used to
+              # (spec-<storyId>-<slug>.md, stories/<storyId>-<slug>.md, then the legacy
+              # <key>.md) and returns the BARE title; the "Story N.M:" prefix is composed
+              # below, once. spec_path/spec_file are seeded empty because this flow has
+              # neither and the atomic must not read one a previous INCLUDE left in scope.
+              - SET: { variable: story_key, value: "{entry_key}" }
+              - SET: { variable: spec_path, value: "" }
+              - SET: { variable: spec_file, value: "" }
+              - INCLUDE: common/story-title
               - RUN: uv run --no-project python -c "
-import sys, os, glob, re
-base, entry = sys.argv[1], sys.argv[2]
-parts = entry.split('-')
-prefix = '-'.join(parts[:2]) if len(parts) >= 2 else entry
-# Producer names first: sprint mode writes spec-<storyId>-<slug>.md, stories mode
-# writes stories/<storyId>-<slug>.md. The legacy exact-key form is a last resort -
-# it never matches in sprint mode, because the slug comes from the story TITLE.
-# No 'prefix != entry' guard: a two-segment entry is exactly when the glob is needed.
-candidates = []
-if prefix:
-    candidates += sorted(glob.glob(os.path.join(base, 'spec-' + prefix + '-*.md')))
-    candidates += sorted(glob.glob(os.path.join(base, 'stories', prefix + '-*.md')))
-candidates.append(os.path.join(base, entry + '.md'))
-path = next((c for c in candidates if os.path.exists(c)), None)
-title = ''
-if path:
-    with open(path, 'r', encoding='utf-8') as f:
-        lines = f.read().split(chr(10))
-    # BMM 6.12.0's spec template has no H1: the title is in the frontmatter and the
-    # first heading is '## Intent' inside <intent-contract>. Reading the first '#' line
-    # produced 'Story 1.1: Intent'. Frontmatter first, then a real H1, then the key.
-    if lines and lines[0].strip() == '---':
-        for line in lines[1:]:
-            if line.strip() == '---':
-                break
-            m = re.match(r'title\s*:\s*(.+)$', line)
-            if m:
-                t = m.group(1).strip()
-                if len(t) > 1 and t[0] == t[-1] and t[0] in (chr(39), chr(34)):
-                    t = t[1:-1]
-                title = t.strip()
-                break
-    if not title:
-        for line in lines:
-            if line.startswith('# '):
-                title = line[2:].strip()
-                break
-if not title and len(parts) > 2:
-    title = ' '.join(parts[2:]).title()
-if title.startswith('Story '):
-    print(title)
-elif len(parts) >= 2:
+import sys
+key = sys.argv[1].strip()
+title = sys.argv[2].strip()
+parts = key.split('-')
+if len(parts) >= 2:
     print('Story ' + parts[0] + '.' + parts[1] + ': ' + (title if title else 'Untitled'))
 else:
-    print(title if title else entry)
-" {implementation_artifacts} "{entry_key}"
+    print(title if title else key)
+" "{entry_key}" "{story_title}"
                 STORE: entry_title
       # Map status names (entry_status came from the split at the top of the loop body)
       - CHECK: entry_status eq "drafted"

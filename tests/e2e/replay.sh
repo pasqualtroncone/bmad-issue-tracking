@@ -1046,32 +1046,85 @@ for line in open(sys.argv[1], encoding='utf-8'):
         print(line.lstrip('#').strip())
         break
 " "$work/ia/spec-1-1-login-form.md" > "$d/old-rule-sync.out" 2>&1
-  local le ls
-  le="$(run_line_of common/ensure-issue.yaml 'STORE: story_title')"
-  ls="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
-  replay $c tmpl   common/ensure-issue.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" story_key=1-1-login-form
-  replay $c legacy common/ensure-issue.yaml "$le" spec_path="$work/legacy-h1.md" story_key=1-1-login-form
-  replay $c sync-tmpl common/sync-issues.yaml "$ls" implementation_artifacts="$work/ia" entry_key=1-1-login-form
+  # Since #56 BOTH callers read the title through ONE atomic, common/story-title.yaml
+  # (ensure-issue hands it the spec_path it resolved; sync-issues hands it the entry key
+  # and lets the atomic glob). The locators follow the parser to where it now lives; the
+  # composition of "Story N.M: <title>" stayed behind in sync-issues and is replayed as a
+  # second step, because that is where the prefix is added.
+  local le ls lc
+  le="$(run_line_of common/story-title.yaml 'STORE: story_title')"
+  ls="$le"
+  lc="$(run_line_of common/sync-issues.yaml "print\('Story ' \+ parts\[0\]")"
+  replay $c tmpl   common/story-title.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c legacy common/story-title.yaml "$le" spec_path="$work/legacy-h1.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-tmpl common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/sync-title.out")"
   local a b s old_e old_s
   a="$(head -1 "$d/tmpl.out")"; b="$(head -1 "$d/legacy.out")"; s="$(head -1 "$d/sync-tmpl.out")"
   old_e="$(head -1 "$d/old-rule-ensure.out")"; old_s="$(head -1 "$d/old-rule-sync.out")"
-  { echo "ensure-issue.yaml:$le  6.12.0 template → '$a'   (first-'# '-line rule gave '$old_e')"
-    echo "ensure-issue.yaml:$le  legacy H1       → '$b'"
-    echo "sync-issues.yaml:$ls   6.12.0 template → '$s'   (first-'#'-line rule gave '$old_s')"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  { echo "story-title.yaml:$le  6.12.0 template → '$a'   (first-'# '-line rule gave '$old_e')"
+    echo "story-title.yaml:$le  legacy H1       → '$b'"
+    echo "story-title.yaml:$ls + sync-issues.yaml:$lc  6.12.0 template → '$(head -1 "$d/sync-title.out")' → '$s'   (first-'#'-line rule gave '$old_s')"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$a" = "Login Form" ] && [ "$b" = "Login Form" ] && [ "$s" = "Story 1.1: Login Form" ]; then
     verdict $c REFUTED "the title comes from the spec frontmatter: ensure-issue.yaml:$le → '$a' on the 6.12.0 template (whose first heading is '## Intent' inside <intent-contract>, so the old first-'# '-line rule produced '$old_e' → the issue title 'Story 1.1: ') and '$b' on the legacy H1 variant; sync-issues.yaml:$ls → '$s' (old rule: '$old_s')"
   else
     verdict $c CONFIRMED "the title is still taken from a heading: ensure-issue.yaml:$le → '$a' (want 'Login Form'), legacy → '$b' (want 'Login Form'), sync-issues.yaml:$ls → '$s' (want 'Story 1.1: Login Form'). The 6.12.0 spec template has no H1 — the title lives in the frontmatter"
+  fi
+  # --- R10 (#56): a frontmatter title that ALREADY carries the prefix ---
+  # The two parsers disagreed here and nowhere else: sync-issues passed a title beginning
+  # with "Story " through untouched, ensure-issue stripped a "Story N.M:" prefix only off
+  # an H1 — never off the frontmatter. So `title: 'Story 1.1: Login Form'` became
+  # "Story 1.1: Story 1.1: Login Form" on the ensure-issue path and "Story 1.1: Login Form"
+  # on the sync path, and that string is the identity create-issue.yaml dedupes by: one
+  # story, two issues. Both callers are asked the same question against the same spec.
+  local pre="$d/prefixed"; rm -rf "$pre"; mkdir -p "$pre/ia"
+  sed "s/^title: 'Login Form'\$/title: 'Story 1.1: Login Form'/" "$work/ia/spec-1-1-login-form.md" > "$pre/ia/spec-1-1-login-form.md"
+  grep -m1 '^title:' "$pre/ia/spec-1-1-login-form.md" > "$pre/frontmatter.txt"; cat "$pre/frontmatter.txt" >&2
+  # what the pre-fix ensure-issue rule made of the same frontmatter, for the record
+  uv run --no-project python -c "
+import re, sys
+lines = open(sys.argv[1], encoding='utf-8').read().split(chr(10))
+title = ''
+if lines and lines[0].strip() == '---':
+    for line in lines[1:]:
+        if line.strip() == '---':
+            break
+        m = re.match(r'title\s*:\s*(.+)\$', line)
+        if m:
+            t = m.group(1).strip()
+            if len(t) > 1 and t[0] == t[-1] and t[0] in (chr(39), chr(34)):
+                t = t[1:-1]
+            title = t.strip()
+            break
+print('Story 1.1: ' + title)
+" "$pre/ia/spec-1-1-login-form.md" > "$d/old-rule-prefixed.out" 2>&1
+  replay $c prefixed-ensure common/story-title.yaml "$le" spec_path="$pre/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/prefixed-sync-title.out")"
+  local pe pst ps old_p
+  pe="$(head -1 "$d/prefixed-ensure.out")"; pst="$(head -1 "$d/prefixed-sync-title.out")"; ps="$(head -1 "$d/prefixed-sync.out")"
+  old_p="$(head -1 "$d/old-rule-prefixed.out")"
+  { echo "spec frontmatter: $(cat "$pre/frontmatter.txt")"
+    echo "ensure-issue path: story-title.yaml:$le → '$pe' → issue title 'Story 1.1: $pe'   (pre-fix rule gave '$old_p')"
+    echo "sync path:         story-title.yaml:$ls → '$pst' → sync-issues.yaml:$lc → '$ps'"; } > "$d/r10-summary.txt"; cat "$d/r10-summary.txt" >&2
+  if [ "$pe" = "Login Form" ] && [ "$pst" = "Login Form" ] && [ "$ps" = "Story 1.1: Login Form" ]; then
+    verdict $c-R10 REFUTED "one parser, one answer: with the frontmatter reading $(cat "$pre/frontmatter.txt"), common/story-title.yaml returns the BARE '$pe' on both callers, so the ensure-issue path composes 'Story 1.1: $pe' and the sync path 'Story 1.1: Login Form' → '$ps'. The prefix is stripped on EVERY tier now (frontmatter, H1 and key alike) and added once by the caller; the pre-fix ensure-issue rule produced '$old_p' against the sync path's 'Story 1.1: Login Form' — two identities for one story, and the title is what create-issue.yaml dedupes by"
+  else
+    verdict $c-R10 CONFIRMED "the two callers still disagree on a prefixed frontmatter title $(cat "$pre/frontmatter.txt"): ensure-issue path → '$pe' (want 'Login Form', issue title would be 'Story 1.1: $pe'), sync path → '$pst' → '$ps' (want 'Story 1.1: Login Form')"
   fi
 }
 
 case_d15() {  # #13 — the loop item renders as "key: status" and the key leaked everywhere
   local c=d15; load_lab; local d; d="$(case_dir $c)"
   local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
-  local lk lst lt
+  local lk lst lt lpt
   lk="$(run_line_of common/sync-issues.yaml 'STORE: entry_key')"
   lst="$(run_line_of common/sync-issues.yaml 'STORE: entry_status')"
-  lt="$(run_line_of common/sync-issues.yaml 'candidates\.append')"
+  # since #56 the title is parsed by the shared common/story-title.yaml and only the
+  # "Story N.M: " composition stayed in sync-issues — which is the step D15 is about, the
+  # one that used to receive "1-1-login-form: backlog" as the key
+  lpt="$(run_line_of common/story-title.yaml 'STORE: story_title')"
+  lt="$(run_line_of common/sync-issues.yaml "print\('Story ' \+ parts\[0\]")"
   # both renderings lang §4.1 leaves open: "key: status" (what the interpreter does) and
   # the bare key (what the language says a map item is). The KEY still comes out of the
   # rendered item; since #52 the STATUS is read from sprint-status.yaml by that key, so
@@ -1086,7 +1139,8 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   local sp sb
   sp="$(head -1 "$d/status-pair.out")"; sb="$(head -1 "$d/status-bare.out")"
   # the derived key feeds the title step and the description file name
-  replay $c title common/sync-issues.yaml "$lt" implementation_artifacts="$work/ia" entry_key="$kp"
+  replay $c story-title common/story-title.yaml "$lpt" spec_path="" spec_file="" story_key="$kp" implementation_artifacts="$work/ia"
+  replay $c title common/sync-issues.yaml "$lt" entry_key="$kp" story_title="$(head -1 "$d/story-title.out")"
   local title fname title_leak=0
   title="$(head -1 "$d/title.out")"
   # D15 is about the STATUS leaking into the title, not about which title is read (D21):
