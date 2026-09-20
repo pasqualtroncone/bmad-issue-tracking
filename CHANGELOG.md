@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `common/create-issue.yaml`'s adopt path kept a branch that could not execute: after
+  `SET issue_id = {found_issue_id}` — inside the CHECK that proved `found_issue_id`
+  non-empty — it asked `empty issue_id` again and STOPped on the TRUE side. The path is now
+  one branch (SET, rm, OUTPUT, STOP), so the file's remaining STOPs are all reachable
+  returns; `tests/test_stop_semantics.py` keeps it that way.
+
 - The review-finish phase halted on a spec that was on disk. `common/post-dev-complete.yaml`
   resolved the spec for its review-section read from `{spec_file}` and the legacy
   `{implementation_artifacts}/{story_key}.md` — the two candidates #72 removed from

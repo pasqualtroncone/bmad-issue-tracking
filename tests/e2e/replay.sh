@@ -51,7 +51,7 @@ case_static() {
   # hardcoded `sed -n 36,42p` would have quietly reported REFUTED for the wrong reason.
   local s2l; s2l="$(grep -n '^    - CHECK: empty issue_id' "$WF/common/create-issue.yaml" | head -1 | cut -d: -f1)"
   item="$(sed -n "${s2l:-1},$(( ${s2l:-1} + 6 ))p" "$WF/common/create-issue.yaml")"; say '```'; say "$item"; say '```'
-  if [ -n "$s2l" ] && sed -n "$((s2l+1))p" "$WF/common/create-issue.yaml" | grep -q '^    TRUE:'; then mark S2 CONFIRMED "create-issue.yaml:$s2l-$((s2l+6)) TRUE:/FALSE: sit at the same indent as '- CHECK' (not under it); both branches STOP so behaviour survives by luck"; else mark S2 REFUTED "indentation is regular"; fi
+  if [ -n "$s2l" ] && sed -n "$((s2l+1))p" "$WF/common/create-issue.yaml" | grep -q '^    TRUE:'; then mark S2 CONFIRMED "create-issue.yaml:$s2l-$((s2l+6)) TRUE:/FALSE: sit at the same indent as '- CHECK' (not under it); both branches STOP so behaviour survives by luck"; else mark S2 REFUTED "no mis-indented 'CHECK: empty issue_id' block in create-issue.yaml — the adopt path is ONE branch (SET, rm, OUTPUT, STOP) since #78"; fi
   # S3 env vars in sync SKILL.md
   local envs; envs="$(grep -c 'BMAD_[A-Z_]*ACTION' "$MOD/skills/bmad-issue-tracking-sync/SKILL.md")"; local inwf; inwf="$(grep -rl 'BMAD_MR_ACTION\|BMAD_ISSUE_ACTION' "$WF" | wc -l)"
   say "sync SKILL.md references BMAD_*_ACTION env vars on $envs lines; workflow files reading them: $inwf"
