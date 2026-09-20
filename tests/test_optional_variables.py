@@ -7,7 +7,10 @@ undefined -> Stop workflow", and the section 5 table says the same for a CHECK).
 headless interpreters have already read the same file the two different ways. The rule
 chosen is the strict one: the defaults are SET, and section 4.5 now says so.
 `merge-mr.yaml`'s `error` is the same shape — a documented OUTPUT its success path never
-assigned.
+assigned — and so is `head_sha` (#81): the CI lookups interpolate `{head_sha}` to pin
+themselves to the commit that was pushed, and a caller that pushed nothing must still reach
+them, so `common/check-config.yaml` seeds it "" and `common/post-dev-complete.yaml`
+overwrites it after each push.
 
 This test keeps them set. It walks the INCLUDE graph from every entry workflow (a file no
 other file INCLUDEs — the ones the TOML overrides point at) and requires that whenever the
@@ -24,8 +27,10 @@ from conftest import WORKFLOWS_DIR
 # Flags a CHECK branches on. A new one is fixed with a SET at the entry point, never
 # with a spec change.
 GUARDED_FLAGS = ("lookup_after_create", "review_producer", "label_color", "allow_merge")
-# Plus `error`, which no file reads but every caller of common/merge-mr.yaml is told to.
-GUARDED_VARS = GUARDED_FLAGS + ("error",)
+# Plus two names no CHECK branches on, so §4.5 is the only thing that guards them:
+# `error`, which no file reads but every caller of common/merge-mr.yaml is told to, and
+# `head_sha` (#81), which the CI lookups interpolate and only a phase that PUSHES can know.
+GUARDED_VARS = GUARDED_FLAGS + ("error", "head_sha")
 
 _INCLUDE_RE = re.compile(r"^\s*-\s*INCLUDE:\s*(\S+)\s*$", re.MULTILINE)
 _SET_RE = re.compile(r"^\s*-\s*SET:\s*\{\s*variable:\s*(\w+)", re.MULTILINE)
