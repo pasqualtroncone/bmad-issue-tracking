@@ -60,7 +60,8 @@ All workflows that create issues use these title formats. They must stay consist
 | Epic | `Epic {n}: {title}` | `sync-issues.yaml` |
 | Retrospective | `Retrospective: Epic {n}` | `retrospective/complete.yaml` |
 
-For stories, `{title}` comes from **one shared atomic**, `common/story-title.yaml`:
+For stories, the spec's LOCATION and `{title}` both come from **one shared atomic**,
+`common/story-title.yaml`, which returns `spec_path` and `story_title`:
 frontmatter `title:` first, then a real H1 (`# Story 1.4: Login Form`), then the entry
 key's slug segments (`1-4-login-form` → `Login Form`) — and a leading `Story N.M:` is
 stripped on **every** one of those paths, because the prefix is the caller's to add
@@ -69,7 +70,11 @@ carry their own copies, which had drifted, and a frontmatter `title: 'Story 1.1:
 Form'` then produced `Story 1.1: Story 1.1: Login Form` on one path and `Story 1.1: Login
 Form` on the other — two identities for one story, and the title IS what `create-issue`
 dedupes by. During initial sync (sprint-planning) story files don't exist yet, so the
-key-derived tier answers; every path produces the same format.
+key-derived tier answers; every path produces the same format. The candidate list is
+shared too (`{spec_path}` hint, `{spec_file}`, `spec-<prefix>-*.md`,
+`stories/<prefix>-*.md`, the legacy `{implementation_artifacts}/{story_key}.md`):
+`ensure-issue.yaml` used to try only the last two, so a sprint-mode story with an empty
+`{spec_file}` produced no body and no issue.
 
 ## Branch/MR flow
 

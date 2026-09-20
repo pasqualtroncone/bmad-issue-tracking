@@ -1051,13 +1051,19 @@ for line in open(sys.argv[1], encoding='utf-8'):
   # and lets the atomic glob). The locators follow the parser to where it now lives; the
   # composition of "Story N.M: <title>" stayed behind in sync-issues and is replayed as a
   # second step, because that is where the prefix is added.
-  local le ls lc
+  # Since #66 the atomic resolves the spec in a step of its own (STORE: spec_path) and the
+  # title step reads only that path, so the sync path — which hands the atomic no path at
+  # all — is replayed as resolve-then-read. Rendering the title step with spec_path="" here
+  # would answer from the key's slug and prove nothing about the glob.
+  local le ls lc lr
   le="$(run_line_of common/story-title.yaml 'STORE: story_title')"
   ls="$le"
+  lr="$(run_line_of common/story-title.yaml 'STORE: spec_path')"
   lc="$(run_line_of common/sync-issues.yaml "print\('Story ' \+ parts\[0\]")"
   replay $c tmpl   common/story-title.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
   replay $c legacy common/story-title.yaml "$le" spec_path="$work/legacy-h1.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
-  replay $c sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-resolve common/story-title.yaml "$lr" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-title common/story-title.yaml "$ls" spec_path="$(head -1 "$d/sync-resolve.out")" story_key=1-1-login-form
   replay $c sync-tmpl common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/sync-title.out")"
   local a b s old_e old_s
   a="$(head -1 "$d/tmpl.out")"; b="$(head -1 "$d/legacy.out")"; s="$(head -1 "$d/sync-tmpl.out")"
@@ -1099,7 +1105,8 @@ if lines and lines[0].strip() == '---':
 print('Story 1.1: ' + title)
 " "$pre/ia/spec-1-1-login-form.md" > "$d/old-rule-prefixed.out" 2>&1
   replay $c prefixed-ensure common/story-title.yaml "$le" spec_path="$pre/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
-  replay $c prefixed-sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync-resolve common/story-title.yaml "$lr" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync-title common/story-title.yaml "$ls" spec_path="$(head -1 "$d/prefixed-sync-resolve.out")" story_key=1-1-login-form
   replay $c prefixed-sync common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/prefixed-sync-title.out")"
   local pe pst ps old_p
   pe="$(head -1 "$d/prefixed-ensure.out")"; pst="$(head -1 "$d/prefixed-sync-title.out")"; ps="$(head -1 "$d/prefixed-sync.out")"
@@ -1139,7 +1146,8 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   local sp sb
   sp="$(head -1 "$d/status-pair.out")"; sb="$(head -1 "$d/status-bare.out")"
   # the derived key feeds the title step and the description file name
-  replay $c story-title common/story-title.yaml "$lpt" spec_path="" spec_file="" story_key="$kp" implementation_artifacts="$work/ia"
+  replay $c story-resolve common/story-title.yaml "$(run_line_of common/story-title.yaml 'STORE: spec_path')" spec_path="" spec_file="" story_key="$kp" implementation_artifacts="$work/ia"
+  replay $c story-title common/story-title.yaml "$lpt" spec_path="$(head -1 "$d/story-resolve.out")" story_key="$kp"
   replay $c title common/sync-issues.yaml "$lt" entry_key="$kp" story_title="$(head -1 "$d/story-title.out")"
   local title fname title_leak=0
   title="$(head -1 "$d/title.out")"
@@ -1163,6 +1171,39 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
     verdict $c REFUTED "sync-issues.yaml:$lk takes the KEY from the loop item under both renderings ('key: status' → '$kp', bare 'key' → '$kb') and sync-issues.yaml:$lst reads the STATUS from sprint-status.yaml by that key → '$sp' / '$sb' (#52: the bare rendering used to leave it empty, so the label was 'status{sep}' with nothing behind it). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
   else
     verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb', want 'backlog'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
+  fi
+}
+
+case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, story-title from five
+  # In sprint mode with an empty {spec_file} ensure-issue's own two-candidate resolution
+  # found nothing, `cat ""` gave an empty story_body, and the "Story spec not found" OUTPUT
+  # carried no `stop: true` — so the hook carried on with issue_id="" and labelled,
+  # commented on and linked issue "". The spec was sitting at spec-1-1-login-form.md the
+  # whole time, which the shared atomic's glob finds. Local: no lab API is touched.
+  local c=r13; load_lab; local d; d="$(case_dir $c)"
+  local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
+  local lr; lr="$(run_line_of common/story-title.yaml 'STORE: spec_path')"
+  [ -n "$lr" ] || { verdict $c BLOCKED "common/story-title.yaml has no 'STORE: spec_path' step to render"; return; }
+  replay $c resolve common/story-title.yaml "$lr" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  local got want; got="$(head -1 "$d/resolve.out")"; want="$work/ia/spec-1-1-login-form.md"
+  # the pre-fix ensure-issue rule over the same inputs, for the record: {spec_file} empty,
+  # then the legacy {implementation_artifacts}/{story_key}.md
+  local pre=""
+  [ -f "$work/ia/1-1-login-form.md" ] && pre="$work/ia/1-1-login-form.md"
+  # and the two halves of the fix in ensure-issue itself
+  local own linc lbody stopped
+  own="$(grep -c 'STORE: spec_path' "$WF/common/ensure-issue.yaml")"
+  linc="$(grep -n 'INCLUDE: common/story-title' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
+  lbody="$(grep -n 'STORE: story_body' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
+  stopped="$(grep -A2 'Story spec not found' "$WF/common/ensure-issue.yaml" | grep -c 'stop: true')"
+  { echo "story-title.yaml:$lr with spec_file='' and implementation_artifacts=$work/ia → '$got'"
+    echo "  want: $want"
+    echo "  the pre-fix two-candidate rule over the same inputs → '${pre:-(nothing)}'"
+    echo "ensure-issue.yaml: own 'STORE: spec_path' steps=$own (want 0), INCLUDE story-title at :${linc:-absent} before the body read at :${lbody:-absent}, not-found OUTPUT carries stop: true ×$stopped"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$got" = "$want" ] && [ -z "$pre" ] && [ "$own" = 0 ] && [ -n "$linc" ] && [ -n "$lbody" ] && [ "$linc" -lt "$lbody" ] && [ "$stopped" -ge 1 ]; then
+    verdict $c REFUTED "one resolution for both callers: story-title.yaml:$lr answers '$got' for spec_file='' — the sprint-mode name the pre-fix ensure-issue never looked at (its two candidates found '${pre:-nothing}', so story_body was empty). ensure-issue.yaml resolves nothing of its own ($own steps), INCLUDEs the atomic at :$linc before reading the body at :$lbody, and its not-found OUTPUT now halts (stop: true ×$stopped) instead of returning issue_id=''"
+  else
+    verdict $c CONFIRMED "the resolutions still differ or the miss still continues: story-title.yaml:$lr → '$got' (want '$want'), pre-fix rule → '${pre:-nothing}', ensure-issue own resolution steps=$own (want 0), INCLUDE at :${linc:-absent} vs body read at :${lbody:-absent}, stop: true on the not-found OUTPUT ×$stopped (want ≥1)"
   fi
 }
 

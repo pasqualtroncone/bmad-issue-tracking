@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A hook could label, comment on and link issue `""`. `common/ensure-issue.yaml` resolved
+  the story spec from two candidates while `common/story-title.yaml`, INCLUDEd two steps
+  below, resolved it from five: in sprint mode with an empty `{spec_file}` the body came
+  out empty and the "Story spec not found" OUTPUT returned without `stop: true`, while the
+  spec sat at `spec-<storyId>-<slug>.md`. `common/story-title.yaml` now owns the
+  resolution and returns `spec_path` as an output, both callers read the body from it, and
+  a miss halts the run with the paths it tried.
+
 - A GitLab project whose `ci_config_path` points anywhere but `.gitlab-ci.yml` was read as
   CI-less. `common/check-mr-ci.yaml` decided `ci_defined` with `test -f .gitlab-ci.yml`
   alone, so on those projects the empty pipeline list right after a push mapped to `no_ci`
