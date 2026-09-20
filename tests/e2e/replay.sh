@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -32,6 +32,11 @@ replay() {
   printf '      rc=%s stdout=%s\n' "$rc" "$(head -c 160 "$d/$n.out" | tr '\n' '|')" >&2
   return 0
 }
+
+# Since #81 every CI lookup filters on {head_sha}, the commit the hook pushed. A case that is
+# not about that pin renders it EMPTY (`head_sha=`), which is the module's own no-push
+# fallback: `gh run list --commit ""` applies no filter and the GitLab bodies skip theirs, so
+# those cases read exactly the run/pipeline they read before. Only r24 renders a real sha.
 
 # ============================================================================
 case_static() {
@@ -151,7 +156,7 @@ case_d18() {
   local c=d18; load_lab; local d; d="$(case_dir $c)"
   local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
   # (a) the STATUS mapping snippet alone, with a real value, redirect removed
-  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="github.com/$REPO_GH" source_branch=ci-green > "$d/github-loop.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha= > "$d/github-loop.cmd"
   awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( no_run)?( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
@@ -166,7 +171,7 @@ case_d18() {
   log "  (c) patched round (+import sys), polls_per_round=2 (≈25 s)…"
   ( cd "$CONSUMER" && time bash "$d/github-loop-2-patched.cmd" ) > "$d/github-loop-2-patched.out" 2> "$d/github-loop-2-patched.err"; echo $? > "$d/github-loop-2-patched.rc"
   # gitlab variant is the same text; render it for the record
-  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc=x mr_iid=1 host=gitlab.com > "$d/gitlab-loop.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" project_enc=x mr_iid=1 host=gitlab.com head_sha= > "$d/gitlab-loop.cmd"
   local latest; latest="$(uv run --no-project python -c 'import json,sys; r=json.load(open(sys.argv[1])); print((r[0]["conclusion"] or r[0]["status"]) if r else "none")' "$d/latest-run-before.json")"
   if grep -q "NameError: name 'sys' is not defined" "$d/status-snippet.err" && [ "$(tr -d '[:space:]' < "$d/github-loop-2.out")" = timeout ] && [ "$(tr -d '[:space:]' < "$d/github-loop-2-patched.out")" != timeout ]; then
     verdict $c CONFIRMED "STATUS mapping (wait-for-green-ci.yaml:$gh block, also :$gl) NameErrors under 2>/dev/null → STATUS='' → loop never breaks: latest run '$latest' still yields 'timeout' after the round's polls; with 'import sys' the same loop prints '$(tr -d '[:space:]' < "$d/github-loop-2-patched.out")' on the first poll. Real run: the whole 30-min budget elapses → masks D03"
@@ -193,8 +198,8 @@ case_d2() {
   # variables: the step reads {mr_repo}/{source_branch} (set by check-mr-ci) where it used to
   # read {host}/{project} and no branch at all.
   local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 1)"; l2="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 2)"
-  replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green
-  replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green
+  replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha=
+  replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" host=github.com project="$REPO_GH" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha=
   gh run list -R "$REPO_GH" --branch ci-green --limit 1 --json conclusion,headBranch,databaseId > "$d/control-branch-filter.json"
   local got ctrl; got="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; ctrl="$(uv run --no-project python -c 'import json,sys; print(json.load(open(sys.argv[1]))[0]["conclusion"])' "$d/control-branch-filter.json")"
   git checkout -q main
@@ -644,8 +649,8 @@ case_r3() {  # #49 — an empty run list seconds after a push must not read as "
   git push -q -u origin "$fbr" >> "$d/push.log" 2>&1 || warn "push $fbr failed: $(tail -1 "$d/push.log")"
   # --- live: what the module sees in the first seconds after that push ---
   local t0; t0="$(date +%s)"
-  replay $c pipeline_status common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch="$fbr"
-  replay $c pipeline_status_ci_green common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green
+  replay $c pipeline_status common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch="$fbr" head_sha=
+  replay $c pipeline_status_ci_green common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha=
   replay $c ci_defined common/check-mr-ci.yaml "$ldef"
   local ps def; ps="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; def="$(tr -d '[:space:]' < "$d/ci_defined.out")"
   local emptyans=no_ci; [ "$def" = true ] && emptyans=running
@@ -881,8 +886,8 @@ case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the proj
   local l1 l2; l1="$(line_of common/get-mr-pipeline.yaml 'glab api' 1)"; l2="$(line_of common/get-mr-pipeline.yaml 'glab api' 2)"
   # since #40 the GitLab steps address the GIT REMOTE's project (git_project_enc/git_host,
   # resolved by check-config), not the tracker's — on this lab the two are the same project
-  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH"
-  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH"
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_id common/get-mr-pipeline.yaml "$l1" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" head_sha=
+  REPLAY_CWD="$CONSUMER_GL" replay $c pipeline_status common/get-mr-pipeline.yaml "$l2" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" head_sha=
   local got latest; got="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; latest="$(uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d[0]["ref"]+"="+d[0]["status"])' "$(case_dir gl-ci)/latest-pipelines.json")"
   if [ "$got" = success ]; then verdict $c REFUTED "GitLab path is per-MR and correct: get-mr-pipeline.yaml:$l2 for the green MR !$GREEN_IID → '$got' while the project's latest pipeline is $latest. D02 is GitHub-only"
   else verdict $c CONFIRMED "GitLab path also wrong: green MR reports '$got' (latest project pipeline $latest)"; fi
@@ -891,7 +896,7 @@ case_gl-d2() {  # does the GitLab side read the pipeline of THE MR (not the proj
 case_gl-d18() {  # the GitLab polling loop, live, against a finished MR pipeline
   local c=gl-d18; case_gl-ci || return; local d; d="$(case_dir $c)"
   local gl; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"
-  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" > "$d/gitlab-loop.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$GREEN_IID" git_host="$GLH" head_sha= > "$d/gitlab-loop.cmd"
   # polls_per_round replaced max_attempts when #14 split the 30-min loop into bounded rounds
   sed -E 's/polls_per_round=[0-9]+/polls_per_round=2/' "$d/gitlab-loop.cmd" > "$d/gitlab-loop-2.cmd"
   log "  (a) literal GitLab round, polls_per_round=2 (≈50 s), MR !$GREEN_IID (pipeline success)…"
@@ -914,7 +919,7 @@ case_d03() {  # #14 — does ONE poll round return long before the Bash tool cap
   git push -q -f -u origin "$br"; git checkout -q main
   local iid; iid="$(gl_mr_for "$br")"; echo "mr=$iid" > "$d/mr.txt"
   [ -n "$iid" ] || { verdict $c BLOCKED "could not create the MR for $br"; cd - >/dev/null; return; }
-  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" > "$d/poll.cmd"
+  $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" head_sha= > "$d/poll.cmd"
   # static half: the rendered round must be bounded — no 60-attempt (30-min) RUN left
   local sl po worst
   sl="$(grep -o 'sleep [0-9]*' "$d/poll.cmd" | awk '{print $2}' | sort -n | tail -1)"
@@ -1034,7 +1039,7 @@ case_g10() {
   # locator anchored on '- RUN:' for the same reason as case_d2, minus the '^': since #15 the
   # MR/CI steps sit inside `CHECK: git_platform eq "gitlab"` and are indented.
   local l1; l1="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 1)"
-  $TT render-step common/get-mr-pipeline.yaml "$l1" host=github.com project=acme/issues-repo mr_repo=gitlab.com/acme/code-repo source_branch=feat/x/1-1 > "$d/get-mr-pipeline.cmd"
+  $TT render-step common/get-mr-pipeline.yaml "$l1" host=github.com project=acme/issues-repo mr_repo=gitlab.com/acme/code-repo source_branch=feat/x/1-1 head_sha= > "$d/get-mr-pipeline.cmd"
   # merge-mr's cross-platform merge. With issues on GitHub and code on GitLab the merge is a
   # GitLab one, so THIS is the step the scenario reaches: before #15 the file routed on
   # `platform` (the tracker) and ran `gh pr merge` here, against a gitlab.com repo path.
@@ -1324,7 +1329,7 @@ case_r11() {  # #64/#77 — a CLI failure inside a poll round is not "no pipelin
   local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
   [ -n "$gl" ] && [ -n "$gh" ] || { verdict $c BLOCKED "cannot locate the poll rounds in wait-for-green-ci.yaml (gitlab=$gl github=$gh)"; return; }
   local bogus="github.com/$GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x}"
-  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="$bogus" source_branch=no-such-branch \
+  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="$bogus" source_branch=no-such-branch head_sha= \
     | sed -E 's/polls_per_round=[0-9]+/polls_per_round=1/' > "$d/github-round.cmd"
   log "  github round against $bogus (one poll, ≈25 s)…"
   ( cd "$CONSUMER" && bash "$d/github-round.cmd" ) > "$d/github-round.out" 2> "$d/github-round.err"; echo $? > "$d/github-round.rc"
@@ -1346,7 +1351,7 @@ print('no_run' if ps in ('none', '') else 'other')
   # the GitLab round is the same shape against a host that does not resolve
   local gls=skipped
   if command -v glab >/dev/null 2>&1; then
-    $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc=no%2Fsuch-project mr_iid=1 git_host=gitlab.invalid \
+    $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc=no%2Fsuch-project mr_iid=1 git_host=gitlab.invalid head_sha= \
       | sed -E 's/polls_per_round=[0-9]+/polls_per_round=1/' > "$d/gitlab-round.cmd"
     log "  gitlab round against gitlab.invalid (one poll, ≈25 s)…"
     ( cd "$CONSUMER" && bash "$d/gitlab-round.cmd" ) > "$d/gitlab-round.out" 2> "$d/gitlab-round.err"; echo $? > "$d/gitlab-round.rc"
@@ -1504,6 +1509,149 @@ except Exception as e:
   fi
 }
 
+case_r24() {  # #81 — right after a push the lookup must not answer the PREVIOUS commit's run
+  # dev-finish and review-finish push and gate in the same breath. `gh run list --branch <src>`
+  # answers with the run of the commit BEFORE the push until Actions registers the new head
+  # (the A5 trace read the run of e22efb6 while 1ef97a3 had just been pushed), and a GitLab MR
+  # lists the previous head's pipeline the same way. A green one of those passes the gate over
+  # a tree CI never built. Every lookup filters on {head_sha} now, and "no run for THIS sha
+  # yet" is the empty answer the #49/#74 mapping turns into `running`.
+  local c=r24; load_lab; local d; d="$(case_dir $c)"
+  local lid lps lmap lglid lglps
+  lid="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 1)"
+  lps="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 2)"
+  lglid="$(line_of common/get-mr-pipeline.yaml 'glab api' 1)"
+  lglps="$(line_of common/get-mr-pipeline.yaml 'glab api' 2)"
+  lmap="$(run_line_of common/check-mr-ci.yaml '^none_is = sys\.argv\[2\]')"
+  [ -n "$lid" ] && [ -n "$lps" ] && [ -n "$lmap" ] || { verdict $c BLOCKED "cannot locate the run lookup ($lid/$lps) or the ci_status mapping ($lmap)"; return; }
+  # r24_id <runs.json> — the databaseId of the first run in a `gh run list --json` file
+  r24_id() { uv run --no-project python -c 'import json,sys; r=json.load(open(sys.argv[1])); print(str(r[0]["databaseId"]) if r else "")' "$1" 2>/dev/null; }
+  # gl_pipe_id <pipelines.json> <sha> — the id of that sha's pipeline in an MR pipeline list
+  r24_gl_id() { uv run --no-project python -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next((str(p["id"]) for p in d if p["sha"]==sys.argv[2]), ""))' "$1" "$2" 2>/dev/null; }
+
+  # --- GitHub: ci-green already carries a COMPLETED run, then one more commit lands ---
+  cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+  git branch -D ci-green >/dev/null 2>&1 || true
+  git checkout -q -b ci-green main; set_outcome . pass
+  local t0; t0="$(date -u +%FT%TZ)"
+  git commit -q --allow-empty -m "r24 previous head $(date +%s)"
+  git push -q -f -u origin ci-green > "$d/push.log" 2>&1 || warn "push ci-green failed: $(tail -1 "$d/push.log")"
+  local prev_sha; prev_sha="$(git rev-parse HEAD)"
+  log "  waiting for the PREVIOUS commit's run to finish…"
+  echo "github prev $prev_sha: $(wait_run ci-green 600 "$t0")" | tee "$d/runs.txt" >&2
+  gh run list -R "$REPO_GH" --branch ci-green --commit "$prev_sha" --limit 1 --json databaseId,headSha,conclusion > "$d/prev-run.json"
+  local prev_id; prev_id="$(r24_id "$d/prev-run.json")"
+  if [ -z "$prev_id" ]; then
+    git checkout -q main
+    verdict $c BLOCKED "the previous commit $prev_sha never produced a run, so there is no older run for the lookup to adopt"; return
+  fi
+  # the push this case is about — the lookups are rendered before Actions can register it
+  local t1; t1="$(date -u +%FT%TZ)"
+  git commit -q --allow-empty -m "r24 new head $(date +%s)"
+  git push -q origin ci-green >> "$d/push.log" 2>&1 || warn "push of the new head failed: $(tail -1 "$d/push.log")"
+  local new_sha; new_sha="$(git rev-parse HEAD)"
+  local ts; ts=$(date +%s)
+  replay $c pinned-id-early common/get-mr-pipeline.yaml "$lid" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha="$new_sha"
+  local dt; dt=$(( $(date +%s) - ts ))
+  replay $c unpinned-id-early common/get-mr-pipeline.yaml "$lid" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha=
+  replay $c pinned-status-early common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha="$new_sha"
+  local pin_early unpin_early ps_early
+  pin_early="$(tr -d '[:space:]' < "$d/pinned-id-early.out")"
+  unpin_early="$(tr -d '[:space:]' < "$d/unpinned-id-early.out")"
+  ps_early="$(tr -d '[:space:]' < "$d/pinned-status-early.out")"
+  # what the gate would conclude from that answer: ci_defined is true on this consumer, so an
+  # empty listing is `running` (#49) — the run is still being registered, not "no CI"
+  replay $c map-early common/check-mr-ci.yaml "$lmap" pipeline_status="$ps_early" empty_ci_status=running
+  local map_early; map_early="$(tr -d '[:space:]' < "$d/map-early.out")"
+  # and once the new head's run exists, the same pinned lookup must find IT
+  log "  waiting for the new head's run to finish…"
+  local conc; conc="$(wait_run ci-green 600 "$t1")"
+  echo "github new $new_sha: $conc" | tee -a "$d/runs.txt" >&2
+  gh run list -R "$REPO_GH" --branch ci-green --commit "$new_sha" --limit 1 --json databaseId,headSha,conclusion > "$d/new-run.json"
+  local new_id; new_id="$(r24_id "$d/new-run.json")"
+  replay $c pinned-id-after common/get-mr-pipeline.yaml "$lid" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha="$new_sha"
+  replay $c pinned-status-after common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green head_sha="$new_sha"
+  local pin_after ps_after
+  pin_after="$(tr -d '[:space:]' < "$d/pinned-id-after.out")"
+  ps_after="$(tr -d '[:space:]' < "$d/pinned-status-after.out")"
+  replay $c map-after common/check-mr-ci.yaml "$lmap" pipeline_status="$ps_after" empty_ci_status=running
+  local map_after; map_after="$(tr -d '[:space:]' < "$d/map-after.out")"
+  git checkout -q main
+  # the race window: `open` means the unpinned lookup really did answer the older run at that
+  # instant, which is the defect reproduced; `closed` means Actions had already registered the
+  # new one, so the run is weaker evidence — the pinned assertions below hold either way
+  local window=closed; [ "$unpin_early" = "$prev_id" ] && window=open
+  local gh_ok=0
+  [ "$pin_early" != "$prev_id" ] && [ -n "$new_id" ] && [ "$pin_after" = "$new_id" ] && [ "$map_after" = passed ] && gh_ok=1
+  # an empty early answer must read as `running`; a non-empty one must already be the new run
+  if [ -z "$pin_early" ]; then [ "$map_early" = running ] || gh_ok=0; else [ "$pin_early" = "$new_id" ] || gh_ok=0; fi
+
+  # --- GitLab: the MR's pipeline list lags the push the same way ---
+  # gl_setup writes a BLOCKED verdict of its own, which would replace this case's, so the
+  # GitLab half checks the same preconditions itself and reports `skipped` when they fail.
+  local gl_ok=0 gl_note="no GitLab consumer in this lab"
+  if [ -n "${REPO_GL:-}" ] && command -v glab >/dev/null 2>&1; then
+    GLH="${GL_HOST:-gitlab.com}"; export GITLAB_HOST="$GLH"
+    if glab auth status --hostname "$GLH" >/dev/null 2>&1; then
+      ENC="$(uv run --no-project python -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$REPO_GL")"
+      gl_ok=1
+    else gl_note="glab not authenticated on $GLH"; fi
+  fi
+  local glv=skipped
+  if [ "$gl_ok" = 1 ]; then
+    local br=gl-r24
+    cd "$CONSUMER_GL"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
+    git branch -D "$br" >/dev/null 2>&1 || true
+    git checkout -q -b "$br" main; set_outcome . pass
+    git commit -q --allow-empty -m "r24 previous head $(date +%s)"
+    git push -q -f -u origin "$br" > "$d/gl-push.log" 2>&1 || warn "push $br failed: $(tail -1 "$d/gl-push.log")"
+    local iid; iid="$(gl_mr_for "$br")"
+    local gl_prev_sha; gl_prev_sha="$(git rev-parse HEAD)"
+    log "  waiting for the GitLab previous-head pipeline…"
+    echo "gitlab prev $gl_prev_sha: $(gl_wait_pipeline "$br" 600)" | tee -a "$d/runs.txt" >&2
+    glab api "projects/$ENC/merge_requests/$iid/pipelines" --hostname "$GLH" --paginate > "$d/gl-prev-pipelines.json" 2>"$d/gl-prev-pipelines.err"
+    local gl_prev_id; gl_prev_id="$(r24_gl_id "$d/gl-prev-pipelines.json" "$gl_prev_sha")"
+    git commit -q --allow-empty -m "r24 new head $(date +%s)"
+    git push -q origin "$br" >> "$d/gl-push.log" 2>&1 || warn "push of the GitLab new head failed"
+    local gl_new_sha; gl_new_sha="$(git rev-parse HEAD)"
+    REPLAY_CWD="$CONSUMER_GL" replay $c gl-pinned-id-early common/get-mr-pipeline.yaml "$lglid" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" head_sha="$gl_new_sha"
+    REPLAY_CWD="$CONSUMER_GL" replay $c gl-unpinned-id-early common/get-mr-pipeline.yaml "$lglid" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" head_sha=
+    log "  waiting for the GitLab new-head pipeline…"
+    echo "gitlab new $gl_new_sha: $(gl_wait_pipeline "$br" 900)" | tee -a "$d/runs.txt" >&2
+    glab api "projects/$ENC/merge_requests/$iid/pipelines" --hostname "$GLH" --paginate > "$d/gl-new-pipelines.json" 2>>"$d/gl-prev-pipelines.err"
+    local gl_new_id; gl_new_id="$(r24_gl_id "$d/gl-new-pipelines.json" "$gl_new_sha")"
+    REPLAY_CWD="$CONSUMER_GL" replay $c gl-pinned-id-after common/get-mr-pipeline.yaml "$lglid" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" head_sha="$gl_new_sha"
+    REPLAY_CWD="$CONSUMER_GL" replay $c gl-pinned-status-after common/get-mr-pipeline.yaml "$lglps" git_project_enc="$ENC" mr_iid="$iid" git_host="$GLH" head_sha="$gl_new_sha"
+    local glp_early glu_early glp_after gls_after
+    glp_early="$(tr -d '[:space:]' < "$d/gl-pinned-id-early.out")"
+    glu_early="$(tr -d '[:space:]' < "$d/gl-unpinned-id-early.out")"
+    glp_after="$(tr -d '[:space:]' < "$d/gl-pinned-id-after.out")"
+    gls_after="$(tr -d '[:space:]' < "$d/gl-pinned-status-after.out")"
+    replay $c gl-map-after common/check-mr-ci.yaml "$lmap" pipeline_status="$gls_after" empty_ci_status=running
+    local gl_map_after; gl_map_after="$(tr -d '[:space:]' < "$d/gl-map-after.out")"
+    git checkout -q main; cd - >/dev/null
+    gl_note="MR !$iid: prev pipeline ${gl_prev_id:-(none)} for $gl_prev_sha, new pipeline ${gl_new_id:-(none)} for $gl_new_sha; pinned lookup right after the push → '${glp_early:-(empty)}' (unpinned → '${glu_early:-(empty)}'), after the pipeline finished → '${glp_after:-(empty)}' status '$gls_after' → ci_status '$gl_map_after'"
+    if [ -z "$gl_prev_id" ] || [ -z "$gl_new_id" ]; then glv=blocked
+    elif [ "$glp_early" != "$gl_prev_id" ] && [ "$glp_after" = "$gl_new_id" ] && [ "$gl_map_after" = passed ] \
+         && { [ -z "$glp_early" ] || [ "$glp_early" = "$gl_new_id" ]; }; then glv=ok
+    else glv=bad; fi
+  fi
+
+  { echo "github: prev run $prev_id ($prev_sha) → new head $new_sha pushed, first pinned lookup ${dt}s later"
+    echo "  pinned   → '${pin_early:-(empty)}'  (must never be $prev_id) → ci_status '$map_early'"
+    echo "  unpinned → '${unpin_early:-(empty)}'  → race window $window"
+    echo "  after the run finished ($conc): pinned → '${pin_after:-(empty)}' (want $new_id), status '$ps_after' → ci_status '$map_after'"
+    echo "gitlab ($glv): $gl_note"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+
+  if [ "$glv" = blocked ]; then
+    verdict $c BLOCKED "the GitLab half found no pipeline to compare: $gl_note"
+  elif [ "$gh_ok" = 1 ] && { [ "$glv" = ok ] || [ "$glv" = skipped ]; }; then
+    verdict $c REFUTED "get-mr-pipeline.yaml:$lid/:$lps read the run of the commit they were given, not the newest one on the branch: ${dt}s after pushing $new_sha over $prev_sha the pinned lookup answered '${pin_early:-(empty)}' — never $prev_id, the previous commit's run — and check-mr-ci.yaml:$lmap turned that into ci_status='$map_early', so the gate kept waiting; the unpinned lookup answered '${unpin_early:-(empty)}' at the same instant (race window $window). Once the run existed the same pinned lookup answered $pin_after with status '$ps_after' → '$map_after'. GitLab half: $glv — $gl_note"
+  else
+    verdict $c CONFIRMED "the CI lookup can still adopt the previous commit's run: ${dt}s after pushing $new_sha the pinned lookup answered '${pin_early:-(empty)}' (previous run $prev_id, unpinned answer '${unpin_early:-(empty)}', window $window) → ci_status '$map_early'; after the run finished pinned='${pin_after:-(empty)}' (want '$new_id'), status '$ps_after' → '$map_after'. GitLab half: $glv — $gl_note"
+  fi
+}
+
 case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually see
   # Static (no lab, no API): the defect IS the order of the dev-finish INCLUDEs. With the
   # CI gate ahead of ensure-mr there is no PR on a story's first dev-finish, check-mr-ci
@@ -1598,10 +1746,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|r18|r19|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
