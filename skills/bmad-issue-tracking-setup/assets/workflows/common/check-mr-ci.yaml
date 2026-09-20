@@ -7,11 +7,14 @@
 #   - platform: issue tracker platform (from check-config)
 #   - mr_repo: the GIT REMOTE's "host/project" (from check-config, which resolves the
 #       remote's coordinates once — they are the tracker's whenever the platforms agree)
+#   - git_host, git_project_enc: the GIT REMOTE's hostname and URL-encoded project path
+#       (from check-config) — the GitLab CI definition is read off the project API
 # Output variables:
 #   - ci_status: "passed", "failed", "running", "no_ci", "no_mr"
-#   - ci_defined: "true" when the branch carries a CI definition (.gitlab-ci.yml /
-#       .github/workflows/*.yml), "false" otherwise — what tells "no run YET" from
-#       "this repo has no CI"
+#   - ci_defined: "true" when the branch carries a CI definition, "false" otherwise —
+#       what tells "no run YET" from "this repo has no CI". GitLab reads the project's
+#       `ci_config_path` first (it may name another file, or a file in another repo) and
+#       falls back to .gitlab-ci.yml; GitHub reads .github/workflows/*.yml
 # Side effects: none
 
 # mr_repo comes from check-config, which resolves the git remote's coordinates once
@@ -41,7 +44,22 @@
   FALSE:
     - CHECK: git_platform eq "gitlab"
       TRUE:
-        - RUN: test -f .gitlab-ci.yml && echo true || echo false
+        # `test -f .gitlab-ci.yml` alone misreads every project whose `ci_config_path`
+        # names another file in the repo, or a file in another repo: the branch DOES
+        # define a pipeline, the empty list seconds after a push is a run that has not
+        # started, and calling that `no_ci` ends the gate green — the race below, again.
+        # The project API answers what GitLab itself uses; the local file stays the
+        # fallback for a project the API cannot be asked about (no token, no network),
+        # so a genuinely CI-less project is still `false` and still green at no cost.
+        - RUN: uv run --no-project python -c "
+import json, os, subprocess
+try:
+    raw = subprocess.run(['glab', 'api', 'projects/{git_project_enc}', '--hostname', '{git_host}'], capture_output=True, text=True, check=True).stdout
+    configured = bool((json.loads(raw).get('ci_config_path') or '').strip())
+except Exception:
+    configured = False
+print('true' if (configured or os.path.exists('.gitlab-ci.yml')) else 'false')
+"
           STORE: ci_defined
       FALSE:
         - RUN: ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 | grep -q . && echo true || echo false

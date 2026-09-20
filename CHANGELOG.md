@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A GitLab project whose `ci_config_path` points anywhere but `.gitlab-ci.yml` was read as
+  CI-less. `common/check-mr-ci.yaml` decided `ci_defined` with `test -f .gitlab-ci.yml`
+  alone, so on those projects the empty pipeline list right after a push mapped to `no_ci`
+  instead of `running` and the gate STOPped green — the race #49 closed everywhere else.
+  The probe now asks the project API for `ci_config_path` and keeps the local file as the
+  fallback, so a genuinely CI-less project is still green at no cost.
+
 - Three empty CI poll rounds ended the gate green even when they were not consecutive.
   `common/wait-for-green-ci.yaml` incremented `no_run_rounds` but never reset it, so a
   single transient empty listing, arriving rounds after two others, reached the "three in
