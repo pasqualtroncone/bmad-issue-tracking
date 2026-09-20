@@ -16,7 +16,8 @@
 #       of the whole repo, i.e. some other branch's pipeline.
 # Output variables:
 #   - ci_status: "passed", "no_ci", "no_mr", "running", "failed", "timeout"
-#   - no_run_rounds: how many consecutive rounds saw no pipeline at all (internal)
+#   - no_run_rounds: how many consecutive rounds saw no pipeline at all (internal);
+#       reset to 0 by the first round that sees one, so "three in a row" means in a row
 #   - pipeline_id: id of the failed pipeline (set on failure-path, passed to get-failed-jobs)
 #   - jobs: failed-job diagnostics from get-failed-jobs (TSV on gitlab, raw text on github)
 # Side effects: polls CI every 25s while running, in 18 bounded rounds of 4 polls each
@@ -94,11 +95,20 @@
                     poll=$((poll + 1))
                     # get-mr-pipeline equivalent: fetch latest pipeline for the existing mr_iid
                     raw=$(glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate 2>/dev/null)
+                    cli_rc=$?
                     pipeline_status=$(echo "$raw" | uv run --no-project python -c "
 import json, sys
-ps = json.load(sys.stdin)
-print(ps[0]['status'] if ps else 'none')
-" 2>/dev/null)
+try:
+    ps = json.load(sys.stdin)
+except Exception:
+    ps = None
+print('unreadable' if ps is None else (ps[0]['status'] if ps else 'none'))
+")
+                    # A CLI that FAILED did not answer 'no pipeline'. Token expiry, a rate
+                    # limit or a network error leaves the listing empty, and an empty
+                    # listing is the one answer that ends this gate green: only a
+                    # SUCCESSFUL empty listing may count as no_run.
+                    [ $cli_rc -eq 0 ] || pipeline_status=unreadable
                     # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci's mapping step;
                     # `none` is `no_run` here, because the initial check already proved CI is defined)
                     STATUS=$(uv run --no-project python -c "
@@ -108,16 +118,15 @@ if ps == 'success':
     print('passed')
 elif ps in ('failed', 'failure'):
     print('failed')
-elif ps in ('running', 'pending', 'queued', 'in_progress'):
+elif ps in ('running', 'pending', 'queued', 'in_progress', 'unreadable'):
     print('running')
 elif ps in ('none', ''):
     print('no_run')
 else:
     print('no_ci')
 " "$pipeline_status")
-                    # An unreadable answer counts as "still running": the round budget,
-                    # not a parse error, decides when to give up. An empty STATUS would
-                    # store an empty ci_status matching none of the branches below.
+                    # An empty STATUS would store an empty ci_status matching none of the
+                    # branches below.
                     [ -n "$STATUS" ] || STATUS=running
                     if [ "$STATUS" != "running" ] && [ "$STATUS" != "no_run" ]; then
                       break
@@ -138,11 +147,17 @@ else:
                         # get-mr-pipeline equivalent: latest workflow run of the MR's source branch
                         # (--branch is mandatory: without it this reads the repo's newest run, any branch)
                         raw=$(gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion 2>/dev/null)
+                        cli_rc=$?
                         pipeline_status=$(echo "$raw" | uv run --no-project python -c "
 import json, sys
-rs = json.load(sys.stdin)
-print((rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else 'none')
-" 2>/dev/null)
+try:
+    rs = json.load(sys.stdin)
+except Exception:
+    rs = None
+print('unreadable' if rs is None else (rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else 'none')
+")
+                        # Only a SUCCESSFUL empty listing may count as no_run (see the gitlab branch)
+                        [ $cli_rc -eq 0 ] || pipeline_status=unreadable
                         # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci's mapping step;
                         # `none` is `no_run` here, because the initial check already proved CI is defined)
                         STATUS=$(uv run --no-project python -c "
@@ -152,14 +167,14 @@ if ps == 'success':
     print('passed')
 elif ps in ('failed', 'failure'):
     print('failed')
-elif ps in ('running', 'pending', 'queued', 'in_progress'):
+elif ps in ('running', 'pending', 'queued', 'in_progress', 'unreadable'):
     print('running')
 elif ps in ('none', ''):
     print('no_run')
 else:
     print('no_ci')
 " "$pipeline_status")
-                        # An unreadable answer counts as "still running" (see the gitlab branch)
+                        # An empty STATUS would store an empty ci_status (see the gitlab branch)
                         [ -n "$STATUS" ] || STATUS=running
                         if [ "$STATUS" != "running" ] && [ "$STATUS" != "no_run" ]; then
                           break
@@ -184,6 +199,12 @@ print(int(sys.argv[1]) + 1)
               - SET: { variable: ci_status, value: "no_ci" }
             FALSE:
               - SET: { variable: ci_status, value: "running" }
+        FALSE:
+          # CONSECUTIVE is the whole claim: a round that saw a pipeline proves the run
+          # exists, so the empty rounds before it say nothing any more. Without this reset
+          # one transient empty listing, rounds after two others, ends the gate green over
+          # a pipeline that is still running or already red.
+          - SET: { variable: no_run_rounds, value: "0" }
 # Still "running" after the last round — the 30-minute budget is spent
 - CHECK: ci_status eq "running"
   TRUE:

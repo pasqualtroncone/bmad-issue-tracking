@@ -11,6 +11,7 @@
 #   - git_host / git_project / git_project_enc: the same three coordinates for the GIT
 #       REMOTE. Equal to the tracker's when git_platform eq platform; read from
 #       issue_tracking.git_host / git_project otherwise.
+#   - lookup_after_create: "" (the optional flag common/find-issue.yaml CHECKs)
 #   - mr_repo: "{git_host}/{git_project}", the repo argument every MR/PR and CI step takes
 #   - worktree_base: base directory for worktrees (required — set by /bmad-issue-tracking-setup step 6)
 #   - branch_patterns: the configured branch patterns object
@@ -90,3 +91,9 @@ print(urllib.parse.quote(sys.argv[1], safe=''))
 " {git_project}
       STORE: git_project_enc
 - SET: { variable: mr_repo, value: "{git_host}/{git_project}" }
+# Optional-variable defaults. lang §4.5 stops a workflow on a CHECK that reads an
+# undefined variable, and common/find-issue.yaml's retry gate is a CHECK on a flag that
+# only common/create-issue.yaml raises, later in the same run. Seeding it here — the one
+# atomic every entry point INCLUDEs, always before any create — keeps that CHECK legal
+# without weakening §4.5 and without erasing a flag: nothing has raised it yet.
+- SET: { variable: lookup_after_create, value: "" }

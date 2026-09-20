@@ -41,13 +41,13 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
 " {implementation_artifacts}/retrospectives/{retro_key}.md
   STORE: retrospective_content
 - WRITE:
-    file: /tmp/retro-desc.md
+    file: /tmp/retro-desc-epic-{epic_number}.md
     content: "**Sprint Key:** `epic-{epic_number}-retrospective`\n**Epic:** {epic_number}\n\n---\n\n{retrospective_content}"
     mode: overwrite
 # Create the issue
 - SET: { variable: title, value: "Retrospective: Epic {epic_number}" }
 - SET: { variable: labels, value: "type{sep}retrospective\nstatus{sep}done\nprd{sep}{prd_key}\n{prd_key}{sep}epic-{epic_number}" }
-- SET: { variable: description_file, value: "/tmp/retro-desc.md" }
+- SET: { variable: description_file, value: "/tmp/retro-desc-epic-{epic_number}.md" }
 - INCLUDE: common/create-issue
 # Commit and push
 - RUN: git add .
@@ -58,4 +58,4 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
 - SET: { variable: new_status, value: "done" }
 - SET: { variable: close, value: "true" }
 - INCLUDE: common/update-issue-status
-- RUN: rm -f /tmp/retro-desc.md
+- RUN: rm -f /tmp/retro-desc-epic-{epic_number}.md

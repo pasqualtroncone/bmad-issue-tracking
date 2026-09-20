@@ -3,7 +3,9 @@
 # Purpose: Updates issue descriptions for any artifacts modified during a course correction.
 # Input variables: (none)
 # Output variables: (none)
-# Side effects: updates issue descriptions on the issue tracker; creates/removes /tmp/desc.md
+# Side effects: updates issue descriptions on the issue tracker; creates/removes
+#               /tmp/desc-<key>.md (one name per entity: two hooks at once must not
+#               overwrite each other's body between the WRITE and the API call)
 
 - INCLUDE: common/check-config
 # Detect which artifacts were modified
@@ -74,7 +76,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
 " {implementation_artifacts}/{story_file}
             STORE: story_body
           - WRITE:
-              file: /tmp/desc.md
+              file: /tmp/desc-{story_key}.md
               content: "**Sprint Key:** `{story_key}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{story_body}"
               mode: overwrite
           - SET: { variable: search_text, value: "{story_key}" }
@@ -84,7 +86,7 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
               - OUTPUT:
                   message: "Story issue not found for '{story_file}'. Skipping."
             FALSE:
-              - SET: { variable: description_file, value: "/tmp/desc.md" }
+              - SET: { variable: description_file, value: "/tmp/desc-{story_key}.md" }
               - INCLUDE: common/update-issue-description
 # PRD: if modified, update issue description
 - CHECK: modified_files contains "{planning_artifacts}/prd.md"
@@ -105,7 +107,7 @@ print(''.join(lines[start:]).strip())
 " {planning_artifacts}/prd.md
       STORE: prd_body
     - WRITE:
-        file: /tmp/desc.md
+        file: /tmp/desc-prd-{prd_key}.md
         content: "**PRD:** {prd_key}\n\n---\n\n{prd_body}"
         mode: overwrite
     - SET: { variable: search_text, value: "PRD: {prd_key}" }
@@ -115,7 +117,7 @@ print(''.join(lines[start:]).strip())
         - OUTPUT:
             message: "PRD issue not found. Skipping PRD description update."
       FALSE:
-        - SET: { variable: description_file, value: "/tmp/desc.md" }
+        - SET: { variable: description_file, value: "/tmp/desc-prd-{prd_key}.md" }
         - INCLUDE: common/update-issue-description
 # Epics: if modified, update each epic issue description
 - CHECK: modified_files contains "{planning_artifacts}/epics.md"
@@ -152,7 +154,7 @@ print(content[start:end].strip())
 " {section_info}
             STORE: epic_body
           - WRITE:
-              file: /tmp/desc.md
+              file: /tmp/desc-epic-{epic_num}.md
               content: "**Epic:** {epic_num}\n\n---\n\n{epic_body}"
               mode: overwrite
           - SET: { variable: search_text, value: "Epic {epic_num}:" }
@@ -162,5 +164,5 @@ print(content[start:end].strip())
               - OUTPUT:
                   message: "Epic {epic_num} issue not found. Skipping."
             FALSE:
-              - SET: { variable: description_file, value: "/tmp/desc.md" }
+              - SET: { variable: description_file, value: "/tmp/desc-epic-{epic_num}.md" }
               - INCLUDE: common/update-issue-description

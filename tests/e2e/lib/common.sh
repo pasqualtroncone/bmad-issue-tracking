@@ -91,7 +91,7 @@ snapshot() {
     gh issue list -R "$REPO_GH" --state all --limit 100 --json number,title,state,labels,createdAt > "$d/gh-issues.json" 2>&1 || true
     gh pr list -R "$REPO_GH" --state all --limit 50 --json number,title,state,isDraft,headRefName,baseRefName,body > "$d/gh-prs.json" 2>&1 || true
   fi
-  ls -la /tmp/issue-desc*.md /tmp/ensure-mr*.md /tmp/prd-desc.md /tmp/review-findings.md /tmp/dev-story-comment.md > "$d/tmp-leftovers.txt" 2>/dev/null || echo "(none)" > "$d/tmp-leftovers.txt"
+  ls -la /tmp/issue-desc*.md /tmp/issue-desc*.title /tmp/ensure-mr*.md /tmp/prd-desc*.md /tmp/retro-desc*.md /tmp/desc-*.md /tmp/review-findings*.md /tmp/dev-story-comment*.md > "$d/tmp-leftovers.txt" 2>/dev/null || echo "(none)" > "$d/tmp-leftovers.txt"
   echo "$d"
 }
 

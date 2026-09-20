@@ -19,11 +19,11 @@
 - CHECK: empty issue_id
   TRUE:
     - WRITE:
-        file: /tmp/issue-desc-prd.md
+        file: /tmp/issue-desc-prd-{prd_key}.md
         content: "**PRD:** {prd_key}"
         mode: overwrite
     - SET: { variable: title, value: "PRD: {prd_key}" }
     - SET: { variable: labels, value: "type{sep}prd\nprd{sep}{prd_key}" }
-    - SET: { variable: description_file, value: "/tmp/issue-desc-prd.md" }
+    - SET: { variable: description_file, value: "/tmp/issue-desc-prd-{prd_key}.md" }
     - INCLUDE: common/create-issue
-    - RUN: rm -f /tmp/issue-desc-prd.md
+    - RUN: rm -f /tmp/issue-desc-prd-{prd_key}.md

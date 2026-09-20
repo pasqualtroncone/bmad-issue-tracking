@@ -9,53 +9,50 @@
 #   - story_num: the story number (second dash segment)
 #   - prd_key: the PRD key (from scope)
 #   - story_branch: the story branch name (for reference)
-#   - spec_file: the spec path the runtime resolved (optional; the legacy
-#     {implementation_artifacts}/{story_key}.md is the fallback)
+#   - spec_file: the spec path the runtime resolved (optional; common/story-title.yaml
+#     owns the full candidate list when it is empty)
 # Output variables:
-#   - issue_id: the issue IID (GitLab) or number (GitHub); empty if story file missing
-#   - spec_path: the resolved spec file (see the resolution step below); empty if none
-# Side effects: creates the issue on the tracker if not found; writes /tmp/issue-desc.md
-
-# Resolve the spec file. {spec_file} is the path the runtime already resolved, in
-# whichever mode applies (sprint: spec-<storyId>-<slug>.md; stories:
-# stories/<id>-<slug>.md). The legacy {implementation_artifacts}/{story_key}.md is
-# still tried second so existing consumers do not regress — but it never matches in
-# sprint mode, because the slug comes from the story TITLE, not the story key.
-- RUN: if [ -n "{spec_file}" ] && [ -f "{spec_file}" ]; then echo "{spec_file}"; elif [ -f "{implementation_artifacts}/{story_key}.md" ]; then echo "{implementation_artifacts}/{story_key}.md"; fi
-  STORE: spec_path
-# Derive story title and body from the story spec file
-- RUN: cat "{spec_path}" 2>/dev/null
+#   - issue_id: the issue IID (GitLab) or number (GitHub)
+#   - spec_path: the spec file common/story-title.yaml resolved; empty if none
+# Side effects: creates the issue on the tracker if not found; writes /tmp/issue-desc-{story_key}.md
+#
+# ONE rule for BOTH the spec's location and its title, shared with common/sync-issues.yaml:
+# common/story-title.yaml. This file used to resolve the spec itself, from {spec_file} and
+# the legacy {implementation_artifacts}/{story_key}.md only, while the atomic it then
+# INCLUDEd looked at five candidates — so in sprint mode with an empty {spec_file} the body
+# came out empty while the spec sat at spec-<storyId>-<slug>.md, which the atomic finds.
+# spec_path is seeded empty: this file has no path of its own to offer, and the atomic must
+# not adopt one a previous INCLUDE left in scope.
+# The atomic returns the BARE title; the prefix is composed below, once. An empty answer
+# (no spec, and a key with no slug segments) keeps the wording this file has always used.
+- SET: { variable: spec_path, value: "" }
+- INCLUDE: common/story-title
+# The body comes from the path the atomic resolved, so body and title read the same file.
+# The guard keeps the step at exit 0 when nothing was found (lang §5 stops a workflow on a
+# RUN with an unexpected exit code).
+- RUN: if [ -n "{spec_path}" ] && [ -f "{spec_path}" ]; then cat "{spec_path}"; fi
   STORE: story_body
 - CHECK: empty story_body
   TRUE:
-    - SET: { variable: issue_id, value: "" }
+    # HALT, not "return with issue_id unset": every caller reads an empty issue_id as
+    # "no issue yet", so the hook went on to label, comment on and link issue "".
     - OUTPUT:
-        message: "Story spec not found — tried '{spec_file}' then '{implementation_artifacts}/{story_key}.md' — cannot create issue"
+        message: "Story spec not found for '{story_key}' — common/story-title.yaml resolved none of its candidates ({spec_file}, {implementation_artifacts}/spec-*.md, {implementation_artifacts}/stories/*.md, {implementation_artifacts}/{story_key}.md) — cannot create issue"
+        stop: true
   FALSE:
-    # ONE title rule, shared with common/sync-issues.yaml: common/story-title.yaml. Both
-    # files used to carry their own copy and the copies had drifted — sync-issues let a
-    # title that already began with "Story " through untouched, this one stripped a
-    # "Story N.M:" prefix off an H1 but never off the frontmatter, so a spec whose
-    # frontmatter reads `title: 'Story 1.1: Login Form'` came out as
-    # "Story 1.1: Story 1.1: Login Form" here and "Story 1.1: Login Form" there. That
-    # string is the identity create-issue.yaml dedupes by.
-    # The atomic returns the BARE title; the prefix is composed below, once. An empty
-    # answer (no spec, and a key with no slug segments) keeps the wording this file has
-    # always used.
-    - INCLUDE: common/story-title
     - CHECK: empty story_title
       TRUE:
         - SET: { variable: story_title, value: "Untitled" }
     - WRITE:
-        file: /tmp/issue-desc.md
+        file: /tmp/issue-desc-{story_key}.md
         content: "**Sprint Key:** `{story_key}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{story_body}"
         mode: overwrite
     - SET: { variable: title, value: "Story {epic_num}.{story_num}: {story_title}" }
     - SET: { variable: labels, value: "type{sep}story\nstatus{sep}ready-for-dev\nprd{sep}{prd_key}\n{prd_key}{sep}epic-{epic_num}" }
-    - SET: { variable: description_file, value: "/tmp/issue-desc.md" }
+    - SET: { variable: description_file, value: "/tmp/issue-desc-{story_key}.md" }
     - SET: { variable: search_text, value: "{story_key}" }
     - INCLUDE: common/find-issue
     - CHECK: empty issue_id
       TRUE:
         - INCLUDE: common/create-issue
-    - RUN: rm -f /tmp/issue-desc.md
+    - RUN: rm -f /tmp/issue-desc-{story_key}.md

@@ -7,7 +7,12 @@
 # Input variables: (none — dispatcher reads spec itself)
 # Output variables:
 #   - allow_merge: "true" (enables the interactive merge prompt in review-finish)
+#   - review_producer: "" (this flow guarantees no review section; see post-dev-complete)
 # Side effects: dispatches to common/post-dev-complete with phase set and allow_merge=true
 
+# review_producer names the producer whose step-04 always writes a review section, and
+# bmad-build is not it (one row per finding, nothing on a clean review). It is SET rather
+# than left unset because review-finish CHECKs it (lang §4.5).
+- SET: { variable: review_producer, value: "" }
 - SET: { variable: allow_merge, value: "true" }
 - INCLUDE: common/post-build-dispatch

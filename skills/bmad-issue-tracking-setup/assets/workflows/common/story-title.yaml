@@ -1,13 +1,16 @@
 # common/story-title.yaml
 #
-# Purpose: Reads a story's human title out of its spec file — ONE rule, so the two
-#          producers of a story issue title cannot disagree about the same story.
+# Purpose: Resolves a story's spec file and reads its human title out of it — ONE rule
+#          for both, so the two producers of a story issue can neither disagree about a
+#          story's title nor look for its spec in different places.
 # Input variables:
 #   - story_key: the sprint-status key (e.g. 1-3-login-form) — must be set
 #   - spec_path: a spec file the caller already resolved (optional; "" when it has none)
 #   - spec_file: the path the runtime resolved (optional; "" when no skill set it)
 #   - implementation_artifacts: where the spec is looked for when neither path is given
 # Output variables:
+#   - spec_path: the resolved spec file, "" when none of the candidates exists. Callers
+#       read the story BODY from this path, so body and title come from the same file.
 #   - story_title: the BARE title, never carrying a "Story N.M:" prefix (e.g. "Login
 #       Form"); empty when the spec is missing and the key holds no slug. The caller
 #       composes "Story {epic}.{story}: {story_title}" and owns the empty-title wording.
@@ -22,21 +25,18 @@
 # on the sync path. That string IS the identity create-issue.yaml dedupes by, so the two
 # paths created and then re-adopted two different issues for one story.
 #
-# The rule, applied on EVERY path:
-#   1. the frontmatter `title:` (quotes stripped),
-#   2. else the first real H1 (`# ...`) — the pre-6.12.0 shape; BMM 6.12.0's spec template
-#      has no H1 at all, its first heading being `## Intent` inside <intent-contract>,
-#   3. else the key's slug segments (`1-1-login-form` → "Login Form"),
-#   4. and then, whatever tier answered, a leading `Story N.M:` is stripped. Tier 4 is the
-#      whole point: the prefix is the CALLER's to add, exactly once.
+# The RESOLUTION had the same split: ensure-issue tried two candidates, this file five, so
+# in sprint mode with an empty {spec_file} ensure-issue read no body at all while the spec
+# sat at spec-<storyId>-<slug>.md, which the glob below finds. It is one step now and
+# spec_path is an OUTPUT: the caller takes the file from here instead of resolving its own.
 #
-# The spec is located here too, so both callers look in the same places: the path the
-# caller resolved, then the path the runtime resolved, then the producer names — sprint
-# mode writes spec-<storyId>-<slug>.md, stories mode stories/<storyId>-<slug>.md — and the
-# legacy {implementation_artifacts}/{story_key}.md last. The legacy form never matches in
-# sprint mode, because the slug comes from the story TITLE, not the story key.
+# The candidate order: the path the caller resolved, then the path the runtime resolved,
+# then the producer names — sprint mode writes spec-<storyId>-<slug>.md, stories mode
+# stories/<storyId>-<slug>.md — and the legacy {implementation_artifacts}/{story_key}.md
+# last. The legacy form never matches in sprint mode, because the slug comes from the story
+# TITLE, not the story key.
 - RUN: uv run --no-project python -c "
-import glob, os, re, sys
+import glob, os, sys
 key = sys.argv[3].strip()
 base = sys.argv[4]
 parts = key.split('-')
@@ -46,9 +46,22 @@ if prefix:
     candidates += sorted(glob.glob(os.path.join(base, 'spec-' + prefix + '-*.md')))
     candidates += sorted(glob.glob(os.path.join(base, 'stories', prefix + '-*.md')))
 candidates.append(os.path.join(base, key + '.md'))
-path = next((c for c in candidates if os.path.exists(c)), None)
+print(next((c for c in candidates if os.path.exists(c)), ''))
+" "{spec_path}" "{spec_file}" "{story_key}" {implementation_artifacts}
+  STORE: spec_path
+# The title rule, applied on EVERY path:
+#   1. the frontmatter `title:` (quotes stripped),
+#   2. else the first real H1 (`# ...`) — the pre-6.12.0 shape; BMM 6.12.0's spec template
+#      has no H1 at all, its first heading being `## Intent` inside <intent-contract>,
+#   3. else the key's slug segments (`1-1-login-form` → "Login Form"),
+#   4. and then, whatever tier answered, a leading `Story N.M:` is stripped. Tier 4 is the
+#      whole point: the prefix is the CALLER's to add, exactly once.
+- RUN: uv run --no-project python -c "
+import os, re, sys
+path = sys.argv[1].strip()
+parts = sys.argv[2].strip().split('-')
 title = ''
-if path:
+if path and os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
         lines = f.read().split(chr(10))
     if lines and lines[0].strip() == '---':
@@ -73,5 +86,5 @@ m = re.match(r'Story\s+\d+\.\d+\s*:\s*(.*)', title)
 if m:
     title = m.group(1).strip()
 print(title)
-" "{spec_path}" "{spec_file}" "{story_key}" {implementation_artifacts}
+" "{spec_path}" "{story_key}"
   STORE: story_title

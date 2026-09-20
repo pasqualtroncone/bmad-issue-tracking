@@ -4,7 +4,7 @@
 # Input variables: (none)
 # Output variables: (none)
 # Side effects: updates the PRD issue description on the issue tracker;
-#               creates and removes /tmp/prd-desc.md
+#               creates and removes /tmp/prd-desc-{prd_key}.md
 
 - INCLUDE: common/check-config
 # Find the PRD issue
@@ -32,9 +32,9 @@ print(''.join(lines[start:]).strip())
 " {planning_artifacts}/prd.md
   STORE: prd_body
 - WRITE:
-    file: /tmp/prd-desc.md
+    file: /tmp/prd-desc-{prd_key}.md
     content: "**PRD:** {prd_key}\n\n---\n\n{prd_body}"
     mode: overwrite
 # Update issue description via common sub-workflow
-- SET: { variable: description_file, value: "/tmp/prd-desc.md" }
+- SET: { variable: description_file, value: "/tmp/prd-desc-{prd_key}.md" }
 - INCLUDE: common/update-issue-description

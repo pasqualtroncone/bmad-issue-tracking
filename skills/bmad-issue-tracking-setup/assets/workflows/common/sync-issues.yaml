@@ -250,17 +250,22 @@ print(n)
             TRUE:
               - READ: {planning_artifacts}/epics.md
                 STORE: epic_content
+              # The section ends at the NEXT epic header, whichever epic it belongs to.
+              # Matching only `^## Epic <n>:` finds one header, so the end offset fell back
+              # to len(content) and epic 1's issue body carried epic 2 and every later
+              # section in full. Same rule as correct-course/complete.yaml's epic loop.
               - RUN: uv run --no-project python -c "
 import sys, re
 content = sys.argv[1]
 n = sys.argv[2]
-sections = list(re.finditer(r'^## Epic ' + n + r':', content, re.MULTILINE))
-if sections:
-    start = sections[0].start()
-    end = sections[1].start() if len(sections) > 1 else len(content)
-    print(content[start:end].strip())
-else:
-    print('')
+headers = list(re.finditer(r'^## Epic (\d+):', content, re.MULTILINE))
+body = ''
+for i, m in enumerate(headers):
+    if m.group(1) == n:
+        end = headers[i + 1].start() if i + 1 < len(headers) else len(content)
+        body = content[m.start():end].strip()
+        break
+print(body)
 " {epic_content} {epic_num}
                 STORE: epic_body
               - CHECK: empty epic_body

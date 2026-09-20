@@ -60,7 +60,8 @@ All workflows that create issues use these title formats. They must stay consist
 | Epic | `Epic {n}: {title}` | `sync-issues.yaml` |
 | Retrospective | `Retrospective: Epic {n}` | `retrospective/complete.yaml` |
 
-For stories, `{title}` comes from **one shared atomic**, `common/story-title.yaml`:
+For stories, the spec's LOCATION and `{title}` both come from **one shared atomic**,
+`common/story-title.yaml`, which returns `spec_path` and `story_title`:
 frontmatter `title:` first, then a real H1 (`# Story 1.4: Login Form`), then the entry
 key's slug segments (`1-4-login-form` → `Login Form`) — and a leading `Story N.M:` is
 stripped on **every** one of those paths, because the prefix is the caller's to add
@@ -69,7 +70,11 @@ carry their own copies, which had drifted, and a frontmatter `title: 'Story 1.1:
 Form'` then produced `Story 1.1: Story 1.1: Login Form` on one path and `Story 1.1: Login
 Form` on the other — two identities for one story, and the title IS what `create-issue`
 dedupes by. During initial sync (sprint-planning) story files don't exist yet, so the
-key-derived tier answers; every path produces the same format.
+key-derived tier answers; every path produces the same format. The candidate list is
+shared too (`{spec_path}` hint, `{spec_file}`, `spec-<prefix>-*.md`,
+`stories/<prefix>-*.md`, the legacy `{implementation_artifacts}/{story_key}.md`):
+`ensure-issue.yaml` used to try only the last two, so a sprint-mode story with an empty
+`{spec_file}` produced no body and no issue.
 
 ## Branch/MR flow
 
@@ -215,8 +220,8 @@ When cutting a release:
 
 ## Step-authoring rules the test suite enforces
 
-These three are not style preferences — `tests/` fails a workflow that breaks them, and all
-three have caught real defects:
+These four are not style preferences — `tests/` fails a workflow that breaks them, and all
+four have caught real defects:
 
 - **No raw shell variables in any step.** `test_command_patterns.py::test_no_unresolved_shell_vars`
   rejects `$var` and `${var}` in every step's `raw_value` (only the awk built-in `NF` is
@@ -242,7 +247,19 @@ three have caught real defects:
   needs no early return (`find-prd-key`, `ensure-board`, `mark-mr-ready` all gate their
   body on the positive condition now) and comment the STOPs that stay.
 
-A fourth rule is not checked by `tests/` but by the e2e level-0 report (`make e2e-static`,
+- **A CHECK may only read a variable that is predefined, SET on every path that reaches
+  it, or an output of an INCLUDEd atomic.** Lang §4.5 stops a run on a reference to an
+  undefined variable and the §5 table says the same for a CHECK, so there is no
+  "unset reads false" idiom: an optional flag is one whose DEFAULT is SET at the entry
+  point. `common/check-config.yaml` seeds `lookup_after_create`, the three
+  `post-dev-complete-*` wrappers plus the two dispatchers seed `review_producer` and
+  `allow_merge`, `ensure-labels`/`create-issue` seed `label_color`, and `merge-mr` seeds
+  its `error` output. `test_optional_variables.py` walks the INCLUDE graph from every
+  entry workflow and fails when a closure reaches a reader with no setter. Two headless
+  interpreters have read the same file both ways; the strict reading is the one that
+  holds.
+
+A fifth rule is not checked by `tests/` but by the e2e level-0 report (`make e2e-static`,
 item `D03-static`): **no single `RUN` may block longer than the interpreter's Bash tool
 allows** — 120 s by default, 600 s at most. A long wait is expressed in the workflow
 language, not in bash: `common/wait-for-green-ci.yaml` spends its 30-minute CI budget as a
@@ -315,7 +332,7 @@ caller needs different behaviour it declares that through something a step CAN r
 
 | Channel | Set by | Read by | Effect |
 |---|---|---|---|
-| `review_producer="bmad-build-auto"` | `common/post-build-dispatch-auto.yaml`, used only by the bmad-build-auto hook | post-dev-complete review-finish | halt on an absent/empty review section (the only producer that guarantees one) |
+| `review_producer="bmad-build-auto"` | `common/post-build-dispatch-auto.yaml`, used only by the bmad-build-auto hook (the other entry wrappers seed `""`) | post-dev-complete review-finish | halt on an absent/empty review section (the only producer that guarantees one) |
 | `<worktree>/.bmad-ci-handled` (file) | the caller, before dispatching | `common/post-build-dispatch-auto.yaml`, at its FIRST step | the WHOLE chain does nothing — no `check-config`, no spec read, no routing, no phase |
 
 The marker file exists because a caller (bmad-build-converge) does the whole chain itself —

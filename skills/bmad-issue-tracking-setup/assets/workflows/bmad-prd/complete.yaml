@@ -51,7 +51,7 @@ print(''.join(lines[start:]).strip())
 " {planning_artifacts}/prd.md
       STORE: prd_body
     - WRITE:
-        file: /tmp/prd-desc.md
+        file: /tmp/prd-desc-{prd_key}.md
         content: "**PRD:** {prd_key}\n\n---\n\n{prd_body}"
         mode: overwrite
     # Ensure all required labels exist before creating the issue
@@ -59,7 +59,7 @@ print(''.join(lines[start:]).strip())
     - INCLUDE: common/ensure-board
     - SET: { variable: title, value: "PRD: {prd_key}" }
     - SET: { variable: labels, value: "type{sep}prd\nprd{sep}{prd_key}" }
-    - SET: { variable: description_file, value: "/tmp/prd-desc.md" }
+    - SET: { variable: description_file, value: "/tmp/prd-desc-{prd_key}.md" }
     - INCLUDE: common/create-issue
     # Commit and push
     - RUN: git add .
@@ -84,18 +84,18 @@ print(''.join(lines[start:]).strip())
     # owner and a repo and joined them back with a slash, which only renamed the string.
     # Write the cross-platform issue reference to a tmp file (the atomic reads from this path)
     - WRITE:
-        file: /tmp/ensure-mr-prd-desc.md
+        file: /tmp/ensure-mr-prd-desc-{prd_key}.md
         content: "{issue_ref}"
         mode: overwrite
     # Translate scope into the new ensure-mr INPUT contract (PRD callers: source=prd_branch, target=default_branch, draft=true)
     - SET: { variable: source_branch, value: "{prd_branch}" }
     - SET: { variable: target_branch, value: "{default_branch}" }
     - SET: { variable: mr_title, value: "PRD: {prd_key}" }
-    - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-prd-desc.md" }
+    - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-prd-desc-{prd_key}.md" }
     - SET: { variable: mr_draft, value: "true" }
     - INCLUDE: common/ensure-mr
-    - RUN: rm -f /tmp/ensure-mr-prd-desc.md
-    - RUN: rm -f /tmp/prd-desc.md
+    - RUN: rm -f /tmp/ensure-mr-prd-desc-{prd_key}.md
+    - RUN: rm -f /tmp/prd-desc-{prd_key}.md
     - OUTPUT:
         message: "PRD {prd_key} issue created and draft MR ready."
   FALSE:
@@ -117,10 +117,10 @@ print(''.join(lines[start:]).strip())
 " {planning_artifacts}/prd.md
       STORE: prd_body
     - WRITE:
-        file: /tmp/prd-desc.md
+        file: /tmp/prd-desc-{prd_key}.md
         content: "**PRD:** {prd_key}\n\n---\n\n{prd_body}"
         mode: overwrite
     # Update issue description via common sub-workflow
-    - SET: { variable: description_file, value: "/tmp/prd-desc.md" }
+    - SET: { variable: description_file, value: "/tmp/prd-desc-{prd_key}.md" }
     - INCLUDE: common/update-issue-description
-    - RUN: rm -f /tmp/prd-desc.md
+    - RUN: rm -f /tmp/prd-desc-{prd_key}.md

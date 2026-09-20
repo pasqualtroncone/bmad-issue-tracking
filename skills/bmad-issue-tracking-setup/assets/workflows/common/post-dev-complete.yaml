@@ -93,14 +93,14 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     - SET: { variable: target_branch, value: "{prd_branch}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
     - WRITE:
-        file: /tmp/ensure-mr-desc.md
+        file: /tmp/ensure-mr-desc-{story_key}.md
         content: "Sprint key: {story_key}\n\nRelated to #{issue_id}"
         mode: overwrite
-    - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-desc.md" }
+    - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-desc-{story_key}.md" }
     - SET: { variable: mr_draft, value: "false" }
     # Ensure trace MR exists (create if missing, with issue reference)
     - INCLUDE: common/ensure-mr
-    - RUN: rm -f /tmp/ensure-mr-desc.md
+    - RUN: rm -f /tmp/ensure-mr-desc-{story_key}.md
     - OUTPUT:
         message: "Story {story_key} issue created and MR ready."
 # =============================================================================
@@ -135,14 +135,14 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     - SET: { variable: target_branch, value: "{prd_branch}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
     - WRITE:
-        file: /tmp/ensure-mr-desc.md
+        file: /tmp/ensure-mr-desc-{story_key}.md
         content: "Sprint key: {story_key}\n\nRelated to #{issue_id}"
         mode: overwrite
-    - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-desc.md" }
+    - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-desc-{story_key}.md" }
     - SET: { variable: mr_draft, value: "false" }
     # Ensure trace MR exists (create if missing)
     - INCLUDE: common/ensure-mr
-    - RUN: rm -f /tmp/ensure-mr-desc.md
+    - RUN: rm -f /tmp/ensure-mr-desc-{story_key}.md
     # Wait CI + write ci-status.json (contract for ci-status.sh).
     #
     # The gate comes AFTER the MR, and the order is the gate. On the first dev-finish of
@@ -162,17 +162,17 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
         - SET: { variable: close, value: "false" }
         - INCLUDE: common/update-issue-status
         - OUTPUT:
-            message: "Provide a brief implementation summary for the review comment (what was implemented, key changes, notes for the reviewer). Write the full comment body to /tmp/dev-story-comment.md using markdown format."
-        - RUN: test -f /tmp/dev-story-comment.md && echo "yes" || echo "no"
+            message: "Provide a brief implementation summary for the review comment (what was implemented, key changes, notes for the reviewer). Write the full comment body to /tmp/dev-story-comment-{story_key}.md using markdown format."
+        - RUN: test -f /tmp/dev-story-comment-{story_key}.md && echo "yes" || echo "no"
           STORE: comment_file_exists
           EXPECT_EXIT: any
         - CHECK: comment_file_exists eq "yes"
           TRUE:
             - CHECK: empty issue_id
               FALSE:
-                - SET: { variable: comment_file, value: "/tmp/dev-story-comment.md" }
+                - SET: { variable: comment_file, value: "/tmp/dev-story-comment-{story_key}.md" }
                 - INCLUDE: common/post-issue-comment
-            - RUN: rm -f /tmp/dev-story-comment.md
+            - RUN: rm -f /tmp/dev-story-comment-{story_key}.md
     - CHECK: story_status eq "done"
       TRUE:
         - SET: { variable: new_status, value: "done" }
@@ -286,9 +286,10 @@ print(body)
         # (bmad-build: one row per finding; bmad-code-review via its on_complete hook),
         # so for them a missing section is legitimate and only warns.
         # review_producer is set by common/post-build-dispatch-auto.yaml — a workflow
-        # step, not hook prose — and is absent on every other path. allow_merge cannot
-        # be used for this: it marks the interactive merge prompt and is unset on BOTH
-        # the unattended and the bmad-code-review paths.
+        # step, not hook prose — and seeded "" by the other three entry wrappers, because
+        # lang §4.5 stops a run on a CHECK that reads an undefined variable. allow_merge
+        # cannot be used for this: it marks the interactive merge prompt and is "" on
+        # BOTH the unattended and the bmad-code-review paths.
         #
         # The warn branch must clear review_section: the block below posts whatever the
         # variable holds, so leaving the sentinel there would post the literal string
@@ -319,11 +320,11 @@ print(body)
         - CHECK: empty review_section
           FALSE:
             - WRITE:
-                file: /tmp/review-findings.md
+                file: /tmp/review-findings-{story_key}.md
                 content: "{review_section}"
-            - SET: { variable: comment_file, value: "/tmp/review-findings.md" }
+            - SET: { variable: comment_file, value: "/tmp/review-findings-{story_key}.md" }
             - INCLUDE: common/post-issue-comment
-            - RUN: rm -f /tmp/review-findings.md
+            - RUN: rm -f /tmp/review-findings-{story_key}.md
     # CI gate before merge + write ci-status.json (contract for ci-status.sh)
     - CHECK: review_status eq "done"
       TRUE:

@@ -7,6 +7,9 @@
 #       `gh label create --color` takes exactly that form; `glab label create --color`
 #       wants the '#', which the GitLab branch adds. Empty (the common case) means
 #       "let the tracker choose": gh picks a random colour, glab defaults to #428BCA.
+#       It must be DEFINED: lang §4.5 stops a run on a CHECK that reads an undefined
+#       variable, so every caller SETs it (ensure-labels, ensure-dynamic-labels,
+#       create-issue, update-issue-status), "" where it does not care.
 # Output variables: (none)
 # Side effects: creates the label on the tracker if it doesn't exist
 #

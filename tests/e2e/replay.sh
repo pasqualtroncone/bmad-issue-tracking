@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7  # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17  # GitHub lab (d15/d21/d29/r13/r17 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -499,15 +499,17 @@ case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not ex
   done
   echo "expected issue number for 'PRD: $key': #$want (after ${t}s)" | tee "$d/expected.txt" >&2
   local l; l="$(line_of common/create-issue.yaml '^- RUN: set -o pipefail; gh api "repos/' 1)"
-  # since #53 the lookup reads the title from /tmp/issue-title.txt (written by the WRITE
-  # step at the top of the file) instead of taking it as a rendered argv
-  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
-  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
-  printf '%s' "PRD: $key" > /tmp/issue-title.txt
-  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # Since #53 the lookup reads the title from a file the WRITE step at the top of
+  # create-issue.yaml lays down, never from a rendered argv; since #68 that file is named
+  # after {description_file} instead of a fixed /tmp path, so the case stages it there.
+  local titlef="$d/desc.md.title"
+  printf '%s' "Story 1.1: Login Form" > "$titlef"
+  replay $c absent      common/create-issue.yaml "$l" description_file="$d/desc.md" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  printf '%s' "PRD: $key" > "$titlef"
+  replay $c present     common/create-issue.yaml "$l" description_file="$d/desc.md" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   # #33: the same step over the 105-issue label seeded by d4 (>1 page of 100)
-  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
-  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd
+  printf '%s' "Story 1.1: Login Form" > "$titlef"
+  replay $c bulk-absent common/create-issue.yaml "$l" description_file="$d/desc.md" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd
   gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:bulkprd" --paginate 2>/dev/null | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
@@ -544,10 +546,10 @@ case_r1() {  # #47 — `gh issue create` prints a URL, not JSON: reading `number
   lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
   lx="$(run_line_of common/create-issue.yaml 'm = re\.search')"
   [ -n "$lc" ] && [ -n "$lx" ] || { verdict $c BLOCKED "cannot locate the create step ($lc) or the id extraction ($lx) in create-issue.yaml"; return; }
-  # since #53 the title travels in /tmp/issue-title.txt (the WRITE step at the top of the
-  # file), never on the command line — so the case lays the file down instead of
-  # rendering a {title} placeholder
-  printf '%s' "$title" > /tmp/issue-title.txt
+  # since #53 the title travels in a file the WRITE step at the top of create-issue.yaml
+  # lays down, never on the command line — so the case lays the file down instead of
+  # rendering a {title} placeholder. Since #68 that file is {description_file}.title.
+  printf '%s' "$title" > "$d/desc.md.title"
   replay $c create common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH"
   local url want; url="$(tail -1 "$d/create.out")"; want="${url##*/}"
   replay $c extract common/create-issue.yaml "$lx" create_result="$(cat "$d/create.out")"
@@ -571,6 +573,25 @@ except Exception as e:
     verdict $c REFUTED "create-issue.yaml:$lc created issue #$want and printed only its URL ($(head -c 60 "$d/create.out" | tr -d '\n')); create-issue.yaml:$lx reads the trailing integer off it → issue_id='$got'. The pre-fix 'FILTER select: number' had nothing to read ($(cat "$d/prefix-filter.txt")) and lang §5 halted the workflow there, after the issue existed"
   else
     verdict $c CONFIRMED "create-issue.yaml:$lx does not recover the issue number from the create output: created #$want, extracted '#${got:-(empty)}' (rc=$(cat "$d/extract.rc")) from '$(head -c 80 "$d/create.out" | tr -d '\n')'"
+  fi
+  # --- R14 (#67): a create that fails must say WHY ---------------------------
+  # The wrapper runs the CLI with capture_output=True (the argument list is what keeps the
+  # title off the command line, #53), and that swallows the CLI's stderr — the only place
+  # an unknown label, a missing scope or a rate limit is reported. Rendered against a
+  # repository that does not exist: the step must exit non-zero AND carry gh's own message,
+  # not a traceback about a variable the caller never sees.
+  printf '%s' "R14 probe $(date +%s)" > "$d/desc.md.title"
+  replay $c create-fail common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x}"
+  rm -f "$d/desc.md.title"
+  local frc ftrace=0 fbytes
+  frc="$(cat "$d/create-fail.rc")"; fbytes="$(wc -c < "$d/create-fail.err")"
+  grep -q 'Traceback (most recent call last)' "$d/create-fail.err" && ftrace=1
+  { echo "create against a repo that does not exist: rc=$frc, stderr ${fbytes}B, python traceback=$ftrace"
+    echo "stderr: $(head -c 300 "$d/create-fail.err" | tr '\n' ' ')"; } > "$d/r14-summary.txt"; cat "$d/r14-summary.txt" >&2
+  if [ "$frc" != 0 ] && [ "$fbytes" -gt 0 ] && [ "$ftrace" = 0 ]; then
+    verdict $c-R14 REFUTED "create-issue.yaml:$lc fails with the CLI's reason: against $GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x} it exits $frc and writes gh's own ${fbytes} bytes to stderr ('$(head -c 120 "$d/create-fail.err" | tr '\n' ' ')'), with no python traceback. The wrapper catches CalledProcessError and re-emits e.stderr; before that, capture_output=True swallowed it and the step died on a NameError about 'out'"
+  else
+    verdict $c-R14 CONFIRMED "create-issue.yaml:$lc hides why the create failed: rc=$frc, stderr ${fbytes}B, python traceback=$ftrace — '$(head -c 200 "$d/create-fail.err" | tr '\n' ' ')'"
   fi
 }
 
@@ -647,7 +668,7 @@ case_r7() {  # #53 — a title carrying a quote or $(…) must reach the tracker
   gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
   local title
   title='R7 "quoted" $(echo INJECTED) `backtick` probe '"$(date +%s)"
-  printf '%s' "$title" > /tmp/issue-title.txt
+  printf '%s' "$title" > "$d/desc.md.title"
   printf '**Sprint Key:** `r7probe`\n' > "$d/desc.md"
   local lc; lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
   [ -n "$lc" ] || { verdict $c BLOCKED "cannot locate the GitHub create step in create-issue.yaml"; return; }
@@ -675,10 +696,10 @@ case_r7() {  # #53 — a title carrying a quote or $(…) must reach the tracker
     echo "title stored:[$got]"
     echo "\$(echo INJECTED) executed? $inj"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   [ -n "$n" ] && gh issue close "$n" -R "$REPO_GH" >/dev/null 2>&1
-  rm -f /tmp/issue-title.txt
+  rm -f "$d/desc.md.title"
   if [ "$(cat "$d/syntax.rc")" = 0 ] && [ "$(cat "$d/create.rc")" = 0 ] && [ -n "$n" ] \
      && [ "$got" = "$title" ] && [ "$inj" = 0 ] && [ "$online" = 0 ]; then
-    verdict $c REFUTED "create-issue.yaml:$lc never puts the title on the command line: the render does not name {title} at all (it is read from /tmp/issue-title.txt and handed to gh as one argv element), bash -n accepts the command, and issue #$n came back with the title '[$got]' byte for byte — the literal \$(echo INJECTED), the backtick and the double quotes all survived (executed=$inj)"
+    verdict $c REFUTED "create-issue.yaml:$lc never puts the title on the command line: the render does not name {title} at all (it is read from {description_file}.title and handed to gh as one argv element), bash -n accepts the command, and issue #$n came back with the title '[$got]' byte for byte — the literal \$(echo INJECTED), the backtick and the double quotes all survived (executed=$inj)"
   else
     verdict $c CONFIRMED "create-issue.yaml:$lc takes the title apart: bash -n rc=$(cat "$d/syntax.rc"), create rc=$(cat "$d/create.rc") → issue '#${n:-(none)}', title stored '[$got]' vs sent '[$title]', \$(echo INJECTED) executed=$inj, title on the command line=$online; err '$(head -c 120 "$d/create.err" | tr '\n' ' ')'"
   fi
@@ -931,10 +952,10 @@ hit = [(n, i) for n, i in enumerate(issues) if i['title'] == 'Seed 1 (bulkprd)']
 print((str(hit[0][1]['iid']) + ' ' + str(hit[0][0] + 1) + '/' + str(len(issues))) if hit else ' ')
 ")"
   echo "oldest seeded title 'Seed 1 (bulkprd)' is !${want:-(none)} at position ${pos:-?} of the concatenated stream" | tee "$d/oldest.txt" >&2
-  printf '%s' "Seed 1 (bulkprd)" > /tmp/issue-title.txt
+  printf '%s' "Seed 1 (bulkprd)" > "$d/desc.md.title"
   local l; l="$(line_of common/create-issue.yaml 'glab api --paginate' 1)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/create-issue.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
-  rm -f /tmp/issue-title.txt
+  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/create-issue.yaml "$l" description_file="$d/desc.md" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
+  rm -f "$d/desc.md.title"
   local got; got="$(tr -d '[:space:]' < "$d/bulk-fetch.out")"
   if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ -n "$want" ] && [ "$got" = "$want" ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: create-issue.yaml:$l answers !$got for 'Seed 1 (bulkprd)', the issue at position $pos of the 105 ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step's raw_decode loop parsed every one of them; a first-document-only parse could not have reached it"
   else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") selected='${got:-(empty)}' want=!${want:-?} (position ${pos:-?}) $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi
@@ -1051,13 +1072,19 @@ for line in open(sys.argv[1], encoding='utf-8'):
   # and lets the atomic glob). The locators follow the parser to where it now lives; the
   # composition of "Story N.M: <title>" stayed behind in sync-issues and is replayed as a
   # second step, because that is where the prefix is added.
-  local le ls lc
+  # Since #66 the atomic resolves the spec in a step of its own (STORE: spec_path) and the
+  # title step reads only that path, so the sync path — which hands the atomic no path at
+  # all — is replayed as resolve-then-read. Rendering the title step with spec_path="" here
+  # would answer from the key's slug and prove nothing about the glob.
+  local le ls lc lr
   le="$(run_line_of common/story-title.yaml 'STORE: story_title')"
   ls="$le"
+  lr="$(run_line_of common/story-title.yaml 'STORE: spec_path')"
   lc="$(run_line_of common/sync-issues.yaml "print\('Story ' \+ parts\[0\]")"
   replay $c tmpl   common/story-title.yaml "$le" spec_path="$work/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
   replay $c legacy common/story-title.yaml "$le" spec_path="$work/legacy-h1.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
-  replay $c sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-resolve common/story-title.yaml "$lr" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  replay $c sync-title common/story-title.yaml "$ls" spec_path="$(head -1 "$d/sync-resolve.out")" story_key=1-1-login-form
   replay $c sync-tmpl common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/sync-title.out")"
   local a b s old_e old_s
   a="$(head -1 "$d/tmpl.out")"; b="$(head -1 "$d/legacy.out")"; s="$(head -1 "$d/sync-tmpl.out")"
@@ -1099,7 +1126,8 @@ if lines and lines[0].strip() == '---':
 print('Story 1.1: ' + title)
 " "$pre/ia/spec-1-1-login-form.md" > "$d/old-rule-prefixed.out" 2>&1
   replay $c prefixed-ensure common/story-title.yaml "$le" spec_path="$pre/ia/spec-1-1-login-form.md" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
-  replay $c prefixed-sync-title common/story-title.yaml "$ls" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync-resolve common/story-title.yaml "$lr" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$pre/ia"
+  replay $c prefixed-sync-title common/story-title.yaml "$ls" spec_path="$(head -1 "$d/prefixed-sync-resolve.out")" story_key=1-1-login-form
   replay $c prefixed-sync common/sync-issues.yaml "$lc" entry_key=1-1-login-form story_title="$(head -1 "$d/prefixed-sync-title.out")"
   local pe pst ps old_p
   pe="$(head -1 "$d/prefixed-ensure.out")"; pst="$(head -1 "$d/prefixed-sync-title.out")"; ps="$(head -1 "$d/prefixed-sync.out")"
@@ -1139,7 +1167,8 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   local sp sb
   sp="$(head -1 "$d/status-pair.out")"; sb="$(head -1 "$d/status-bare.out")"
   # the derived key feeds the title step and the description file name
-  replay $c story-title common/story-title.yaml "$lpt" spec_path="" spec_file="" story_key="$kp" implementation_artifacts="$work/ia"
+  replay $c story-resolve common/story-title.yaml "$(run_line_of common/story-title.yaml 'STORE: spec_path')" spec_path="" spec_file="" story_key="$kp" implementation_artifacts="$work/ia"
+  replay $c story-title common/story-title.yaml "$lpt" spec_path="$(head -1 "$d/story-resolve.out")" story_key="$kp"
   replay $c title common/sync-issues.yaml "$lt" entry_key="$kp" story_title="$(head -1 "$d/story-title.out")"
   local title fname title_leak=0
   title="$(head -1 "$d/title.out")"
@@ -1163,6 +1192,141 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
     verdict $c REFUTED "sync-issues.yaml:$lk takes the KEY from the loop item under both renderings ('key: status' → '$kp', bare 'key' → '$kb') and sync-issues.yaml:$lst reads the STATUS from sprint-status.yaml by that key → '$sp' / '$sb' (#52: the bare rendering used to leave it empty, so the label was 'status{sep}' with nothing behind it). Downstream uses {entry_key}: the title step renders '$title' and the description file '$fname' — no ': $sp' in either, and $leaks step still uses {entry} as a key"
   else
     verdict $c CONFIRMED "the loop item still leaks: key='$kp' status='$sp' (bare: key='$kb' status='$sb', want 'backlog'); title='$title' carries ': $sp'? $title_leak; description file='$fname' (want '/tmp/issue-desc-1-1-login-form.md'); $leaks step(s) still render {entry} as a key: $(tr '\n' ' ' < "$d/raw-entry-uses.txt")"
+  fi
+}
+
+case_r17() {  # #71 — an epic's issue body swallowed every later epic's section
+  # The extraction matched only `^## Epic <n>:`, so sections[1] never existed, the end
+  # offset fell back to len(content) and epic 1's issue body carried epic 2 (and every
+  # later epic) in full. Local: the fixture is the lab's own epics.md, no API is touched.
+  local c=r17; load_lab; local d; d="$(case_dir $c)"
+  local fixture="$E2E_ROOT/fixtures/consumer/planning-artifacts/epics.md"
+  local l; l="$(run_line_of common/sync-issues.yaml 'STORE: epic_body')"
+  [ -n "$l" ] || { verdict $c BLOCKED "cannot locate the epic-body step in sync-issues.yaml"; return; }
+  # The step interpolates {epic_content} UNQUOTED, and the fixture carries double quotes
+  # ("remember me"), so the case renders a marker and hands the content through a shell
+  # variable. The extraction rule under test is rendered exactly as written.
+  $TT render-step common/sync-issues.yaml "$l" epic_content=@EPICS@ epic_num=1 > "$d/rendered.cmd"
+  sed 's/@EPICS@/"$EPIC_CONTENT"/' "$d/rendered.cmd" > "$d/run.cmd"
+  EPIC_CONTENT="$(cat "$fixture")" bash "$d/run.cmd" > "$d/epic1.out" 2> "$d/epic1.err"; echo $? > "$d/epic1.rc"
+  # the pre-fix rule over the same fixture, for the record
+  uv run --no-project python -c "
+import re, sys
+content = open(sys.argv[1], encoding='utf-8').read()
+n = sys.argv[2]
+sections = list(re.finditer(r'^## Epic ' + n + r':', content, re.MULTILINE))
+if sections:
+    start = sections[0].start()
+    end = sections[1].start() if len(sections) > 1 else len(content)
+    print(content[start:end].strip())
+else:
+    print('')
+" "$fixture" 1 > "$d/prefix-epic1.out" 2>&1
+  local leak=0 preleak=0 first
+  grep -q '## Epic 2:' "$d/epic1.out" && leak=1
+  grep -q '## Epic 2:' "$d/prefix-epic1.out" && preleak=1
+  first="$(head -1 "$d/epic1.out")"
+  { echo "sync-issues.yaml:$l on $(basename "$fixture"), epic 1 → $(wc -l < "$d/epic1.out") lines, first line '$first', carries '## Epic 2:'? $leak"
+    echo "the pre-fix one-header rule on the same file → $(wc -l < "$d/prefix-epic1.out") lines, carries '## Epic 2:'? $preleak"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$(cat "$d/epic1.rc")" = 0 ] && [ "$first" = "## Epic 1: Authentication" ] && [ "$leak" = 0 ] && [ "$preleak" = 1 ]; then
+    verdict $c REFUTED "sync-issues.yaml:$l ends epic 1's body at the NEXT epic header: $(wc -l < "$d/epic1.out") lines starting '$first', with no '## Epic 2:' in them. The pre-fix rule matched only its own header, found no second one and ran to the end of the file — $(wc -l < "$d/prefix-epic1.out") lines carrying epic 2 in full, which is what epic 1's issue description used to say"
+  else
+    verdict $c CONFIRMED "sync-issues.yaml:$l still swallows the later epics: rc=$(cat "$d/epic1.rc"), first line '$first', '## Epic 2:' present=$leak (pre-fix rule: $preleak), err '$(head -c 160 "$d/epic1.err" | tr '\n' ' ')'"
+  fi
+}
+
+case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, story-title from five
+  # In sprint mode with an empty {spec_file} ensure-issue's own two-candidate resolution
+  # found nothing, `cat ""` gave an empty story_body, and the "Story spec not found" OUTPUT
+  # carried no `stop: true` — so the hook carried on with issue_id="" and labelled,
+  # commented on and linked issue "". The spec was sitting at spec-1-1-login-form.md the
+  # whole time, which the shared atomic's glob finds. Local: no lab API is touched.
+  local c=r13; load_lab; local d; d="$(case_dir $c)"
+  local work="$d/work"; rm -rf "$work"; spec_fixtures "$work"
+  local lr; lr="$(run_line_of common/story-title.yaml 'STORE: spec_path')"
+  [ -n "$lr" ] || { verdict $c BLOCKED "common/story-title.yaml has no 'STORE: spec_path' step to render"; return; }
+  replay $c resolve common/story-title.yaml "$lr" spec_path="" spec_file="" story_key=1-1-login-form implementation_artifacts="$work/ia"
+  local got want; got="$(head -1 "$d/resolve.out")"; want="$work/ia/spec-1-1-login-form.md"
+  # the pre-fix ensure-issue rule over the same inputs, for the record: {spec_file} empty,
+  # then the legacy {implementation_artifacts}/{story_key}.md
+  local pre=""
+  [ -f "$work/ia/1-1-login-form.md" ] && pre="$work/ia/1-1-login-form.md"
+  # and the two halves of the fix in ensure-issue itself
+  local own linc lbody stopped
+  own="$(grep -c 'STORE: spec_path' "$WF/common/ensure-issue.yaml")"
+  linc="$(grep -n 'INCLUDE: common/story-title' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
+  lbody="$(grep -n 'STORE: story_body' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
+  stopped="$(grep -A2 'Story spec not found' "$WF/common/ensure-issue.yaml" | grep -c 'stop: true')"
+  { echo "story-title.yaml:$lr with spec_file='' and implementation_artifacts=$work/ia → '$got'"
+    echo "  want: $want"
+    echo "  the pre-fix two-candidate rule over the same inputs → '${pre:-(nothing)}'"
+    echo "ensure-issue.yaml: own 'STORE: spec_path' steps=$own (want 0), INCLUDE story-title at :${linc:-absent} before the body read at :${lbody:-absent}, not-found OUTPUT carries stop: true ×$stopped"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$got" = "$want" ] && [ -z "$pre" ] && [ "$own" = 0 ] && [ -n "$linc" ] && [ -n "$lbody" ] && [ "$linc" -lt "$lbody" ] && [ "$stopped" -ge 1 ]; then
+    verdict $c REFUTED "one resolution for both callers: story-title.yaml:$lr answers '$got' for spec_file='' — the sprint-mode name the pre-fix ensure-issue never looked at (its two candidates found '${pre:-nothing}', so story_body was empty). ensure-issue.yaml resolves nothing of its own ($own steps), INCLUDEs the atomic at :$linc before reading the body at :$lbody, and its not-found OUTPUT now halts (stop: true ×$stopped) instead of returning issue_id=''"
+  else
+    verdict $c CONFIRMED "the resolutions still differ or the miss still continues: story-title.yaml:$lr → '$got' (want '$want'), pre-fix rule → '${pre:-nothing}', ensure-issue own resolution steps=$own (want 0), INCLUDE at :${linc:-absent} vs body read at :${lbody:-absent}, stop: true on the not-found OUTPUT ×$stopped (want ≥1)"
+  fi
+}
+
+case_r11() {  # #64 — a CLI failure inside a poll round must not read as "no pipeline yet"
+  # Three `no_run` rounds end the gate green (`no_ci`), and write-ci-status then writes
+  # ci-status.json green for a pipeline nobody read. A token expiry, a rate limit or a
+  # network error produced exactly that answer: the exit code was discarded, the empty
+  # listing failed to parse under 2>/dev/null and pipeline_status came out '' → no_run.
+  # The round is replayed against a repo/host that does not exist, which is the same
+  # failure shape with a deterministic trigger; polls_per_round is shortened to 1 so the
+  # case costs one sleep per platform (the defect is the classification, not the budget).
+  local c=r11; load_lab; local d; d="$(case_dir $c)"
+  local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
+  [ -n "$gl" ] && [ -n "$gh" ] || { verdict $c BLOCKED "cannot locate the poll rounds in wait-for-green-ci.yaml (gitlab=$gl github=$gh)"; return; }
+  local bogus="github.com/$GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x}"
+  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="$bogus" source_branch=no-such-branch \
+    | sed -E 's/polls_per_round=[0-9]+/polls_per_round=1/' > "$d/github-round.cmd"
+  log "  github round against $bogus (one poll, ≈25 s)…"
+  ( cd "$CONSUMER" && bash "$d/github-round.cmd" ) > "$d/github-round.out" 2> "$d/github-round.err"; echo $? > "$d/github-round.rc"
+  local ghs; ghs="$(tr -d '[:space:]' < "$d/github-round.out")"
+  # the pre-fix rule over the same failing CLI, for the record: rc discarded, the parse
+  # error swallowed, pipeline_status='' — and the mapper calls that no_run
+  local raw prerc=0 ps_pre pre
+  raw="$(gh run list --limit 1 --branch no-such-branch -R "$bogus" --json databaseId,status,conclusion 2>/dev/null)" || prerc=$?
+  ps_pre="$(printf '%s' "$raw" | uv run --no-project python -c "
+import json, sys
+rs = json.load(sys.stdin)
+print((rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else 'none')
+" 2>/dev/null)"
+  pre="$(uv run --no-project python -c "
+import sys
+ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+print('no_run' if ps in ('none', '') else 'other')
+" "$ps_pre")"
+  # the GitLab round is the same shape against a host that does not resolve
+  local gls=skipped
+  if command -v glab >/dev/null 2>&1; then
+    $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc=no%2Fsuch-project mr_iid=1 git_host=gitlab.invalid \
+      | sed -E 's/polls_per_round=[0-9]+/polls_per_round=1/' > "$d/gitlab-round.cmd"
+    log "  gitlab round against gitlab.invalid (one poll, ≈25 s)…"
+    ( cd "$CONSUMER" && bash "$d/gitlab-round.cmd" ) > "$d/gitlab-round.out" 2> "$d/gitlab-round.err"; echo $? > "$d/gitlab-round.rc"
+    gls="$(tr -d '[:space:]' < "$d/gitlab-round.out")"
+  fi
+  # R12 (#65): the counter is only meaningful if a round that SEES a pipeline clears it.
+  # Structural, because a transient empty listing cannot be produced on demand: the
+  # `no_run` CHECK must carry a FALSE branch that resets no_run_rounds to 0.
+  local lnr reset=0
+  lnr="$(grep -n 'CHECK: ci_status eq "no_run"' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d: -f1)"
+  if [ -n "$lnr" ]; then
+    awk -v n="$lnr" 'NR>n && /^      - /{exit} NR>n && /^        FALSE:/{f=1} f && /variable: no_run_rounds, value: "0"/{print; found=1} END{exit !found}' \
+      "$WF/common/wait-for-green-ci.yaml" > "$d/no-run-reset.txt" && reset=1
+  fi
+  { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want running)"
+    echo "  the CLI it calls: rc=$prerc, pipeline_status under the pre-fix parse='$ps_pre' → pre-fix classification='$pre'"
+    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want running; 'skipped' = no glab on PATH)"
+    echo "the no_run CHECK at :${lnr:-?} resets no_run_rounds on a round that saw a pipeline: $reset $(cat "$d/no-run-reset.txt" 2>/dev/null)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$prerc" = 0 ]; then
+    verdict $c BLOCKED "the bogus repo answered rc=0 ($bogus), so there is no CLI failure to classify"
+  elif [ "$ghs" = running ] && { [ "$gls" = running ] || [ "$gls" = skipped ]; } && [ "$reset" = 1 ]; then
+    verdict $c REFUTED "a failing CLI inside a poll round comes out 'running', not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', and the gitlab round at :$gl printed '$gls'. The round captures the exit code and only a SUCCESSFUL empty listing is no_run — the pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green. The counter is consecutive again: the no_run CHECK at :${lnr:-?} resets no_run_rounds on any round that saw a pipeline"
+  else
+    verdict $c CONFIRMED "a failing CLI is still classified as 'no pipeline' (or the counter never resets): wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want running), gitlab round at :$gl printed '$gls', no_run_rounds reset present=$reset; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
   fi
 }
 
@@ -1260,10 +1424,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d19 d2 d18 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

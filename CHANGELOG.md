@@ -49,6 +49,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Four CHECKs read a variable nothing had defined. `common/find-issue.yaml`
+  (`lookup_after_create`), `common/post-dev-complete.yaml` (`review_producer`),
+  `common/create-label.yaml` (`label_color`) and the `allow_merge` merge prompt relied on
+  an "optional-flag idiom" — an unset variable reading false — that
+  `bmad-workflow-lang.md` §4.5 contradicts, and a strict interpreter halts there;
+  `common/merge-mr.yaml` declared an `error` output its success path never assigned. §4.5
+  now states the rule explicitly (a CHECK may only read a variable that is predefined, SET
+  on every path, or an INCLUDE output), the defaults are SET at the entry points, and
+  `tests/test_optional_variables.py` walks the INCLUDE graph to keep them there.
+
+- An epic's issue description carried every later epic. The body extraction in
+  `common/sync-issues.yaml` searched for `^## Epic <n>:` only, so it found a single header,
+  the end offset fell back to the end of the file and epic 1's issue repeated epics 2..N in
+  full. The section now ends at the next epic header, whichever epic it belongs to — the
+  rule `correct-course/complete.yaml` already used.
+
+- Two hooks running at once could create each other's issues. `common/create-issue.yaml`
+  staged the issue title — the identity it dedupes by — at the FIXED `/tmp/issue-title.txt`,
+  so a second run overwriting it between the first run's WRITE and its read made the first
+  create an issue under the wrong title, which no later exact-title lookup finds. The title
+  is now staged at `{description_file}.title`, and the description files that were fixed
+  paths are per-key too: `/tmp/issue-desc-{story_key}.md`,
+  `/tmp/ensure-mr-desc-{story_key}.md`, `/tmp/dev-story-comment-{story_key}.md`,
+  `/tmp/review-findings-{story_key}.md`, `/tmp/prd-desc-{prd_key}.md`,
+  `/tmp/ensure-mr-prd-desc-{prd_key}.md`, `/tmp/issue-desc-prd-{prd_key}.md`,
+  `/tmp/retro-desc-epic-{epic_number}.md` and correct-course's three `/tmp/desc-*.md`.
+
+- A failed issue create showed a python traceback instead of the reason. The
+  `subprocess.run(..., capture_output=True, check=True)` wrappers in
+  `common/create-issue.yaml` and the retry in `common/find-issue.yaml` discarded the CLI's
+  stderr, which is the only place gh/glab report an unknown label, a missing scope or a
+  rate limit. They now catch `CalledProcessError`, re-emit `e.stderr` and exit with the
+  CLI's code.
+
+- A hook could label, comment on and link issue `""`. `common/ensure-issue.yaml` resolved
+  the story spec from two candidates while `common/story-title.yaml`, INCLUDEd two steps
+  below, resolved it from five: in sprint mode with an empty `{spec_file}` the body came
+  out empty and the "Story spec not found" OUTPUT returned without `stop: true`, while the
+  spec sat at `spec-<storyId>-<slug>.md`. `common/story-title.yaml` now owns the
+  resolution and returns `spec_path` as an output, both callers read the body from it, and
+  a miss halts the run with the paths it tried.
+
+- A GitLab project whose `ci_config_path` points anywhere but `.gitlab-ci.yml` was read as
+  CI-less. `common/check-mr-ci.yaml` decided `ci_defined` with `test -f .gitlab-ci.yml`
+  alone, so on those projects the empty pipeline list right after a push mapped to `no_ci`
+  instead of `running` and the gate STOPped green — the race #49 closed everywhere else.
+  The probe now asks the project API for `ci_config_path` and keeps the local file as the
+  fallback, so a genuinely CI-less project is still green at no cost.
+
+- Three empty CI poll rounds ended the gate green even when they were not consecutive.
+  `common/wait-for-green-ci.yaml` incremented `no_run_rounds` but never reset it, so a
+  single transient empty listing, arriving rounds after two others, reached the "three in
+  a row" threshold and mapped `ci_status` to `no_ci` while the real pipeline was still
+  running or already red. A round that sees a pipeline now resets the counter.
+
+- The CI gate could go green over a pipeline it never read. Inside a
+  `common/wait-for-green-ci.yaml` poll round the CLI's exit code was discarded, so a token
+  expiry, a rate limit or a network error left an empty listing that parsed to
+  `pipeline_status=""` and was classified `no_run` — three of those map to `no_ci`, the gate
+  STOPs green and `common/write-ci-status.yaml` writes `ci-status.json` green for a run
+  nobody looked at. The round now captures the exit code on both platforms: a failed CLI is
+  `running`, and only a SUCCESSFUL empty listing counts as `no_run`.
+
 - A sync could die at its second step. `bmad-workflow-lang.md` section 2.10 said `STOP`
   "halts workflow execution immediately", while the workflow files used `- STOP` as
   "return from this sub-workflow"; two headless interpreters read the same step two

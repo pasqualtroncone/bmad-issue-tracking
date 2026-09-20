@@ -96,6 +96,23 @@ if [ "$REDEPLOY" = 1 ]; then
       if [ -n "$prd_wt" ]; then git -C "$prd_wt" reset -q --hard origin/main
       else git branch -f "feat/$PRD_KEY/prd" origin/main 2>/dev/null || true; fi
       git push -q -f origin "feat/$PRD_KEY/prd:feat/$PRD_KEY/prd"
+      # STORY worktrees were cut BEFORE this redeploy and carry their own commits, so
+      # neither the reset above nor a branch move reaches them: a level-2 scenario running
+      # in one of them executes the PREVIOUS assets while main and the PRD branch carry the
+      # new ones, and the improvisation report then blames the agent for commands the
+      # deployed files really do contain. The assets are copied in and committed on the
+      # story branch, which is what the consumer does with everything else anyway.
+      for wt in $(git worktree list --porcelain | awk '/^worktree /{print $2}'); do
+        [ "$wt" = "$PWD" ] && continue
+        [ "$wt" = "${prd_wt:-}" ] && continue
+        [ -d "$wt/_bmad/_config/custom" ] || continue
+        rm -f "$wt"/_bmad/custom/bmad-*.toml; cp -f "$ASSETS"/custom/*.toml "$wt"/_bmad/custom/
+        rm -rf "$wt"/_bmad/_config/custom/workflows/*; cp -rf "$ASSETS"/workflows/* "$wt"/_bmad/_config/custom/workflows/
+        cp -f "$ASSETS"/bmad-workflow-lang.md "$wt"/_bmad/_config/custom/
+        git -C "$wt" add -A _bmad/custom _bmad/_config/custom
+        git -C "$wt" commit -q -m "chore: redeploy bmad-issue-tracking from $(git -C "$MOD" rev-parse --short HEAD)" \
+          && echo "  worktree $(basename "$wt")=$(git -C "$wt" rev-parse --short HEAD)" || echo "  worktree $(basename "$wt") already current"
+      done
       echo "  main=$(git rev-parse --short origin/main) prd=$(git rev-parse --short origin/feat/$PRD_KEY/prd)" )
   done
   exit 0

@@ -27,6 +27,7 @@
 #                  common dispatcher)
 # Output variables:
 #   - review_producer: "bmad-build-auto" (the only value that guarantees a review section)
+#   - allow_merge: "" (the unattended flow never offers the interactive merge prompt)
 #   - worktree: the worktree root, captured here because the marker lives in it
 #   - ci_handled: non-empty when the caller owns the post-completion chain
 # Side effects: when the marker is ABSENT, dispatches to common/post-build-complete with
@@ -50,5 +51,8 @@
     - OUTPUT:
         message: "The caller owns this story's post-completion chain ({worktree}/.bmad-ci-handled is present), so this hook does nothing — no push, no CI wait, no issue write. bmad-build-converge does all of it."
         stop: true
+# allow_merge marks the INTERACTIVE merge prompt, which this flow never offers. It is
+# SET rather than left unset because review-finish CHECKs it (lang §4.5).
+- SET: { variable: allow_merge, value: "" }
 - SET: { variable: review_producer, value: "bmad-build-auto" }
 - INCLUDE: common/post-build-dispatch

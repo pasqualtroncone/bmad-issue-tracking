@@ -9,6 +9,10 @@
 # NOTE: || true suppresses ALL errors (not just "already exists"), including auth/network
 # failures. The sync skill (/bmad-issue-tracking-sync) handles additional dynamic/extended labels.
 
+# The static labels take the tracker's own colour. label_color must be DEFINED before
+# common/create-label's `empty label_color` CHECK (lang §4.5), and "" is also what keeps
+# an epic colour left in scope by common/ensure-dynamic-labels off these labels.
+- SET: { variable: label_color, value: "" }
 # Type labels
 - SET: { variable: label_name, value: "type{sep}prd" }
 - INCLUDE: common/create-label
