@@ -68,22 +68,43 @@ print('true' if (configured or os.path.exists('.gitlab-ci.yml')) else 'false')
       FALSE:
         - RUN: ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 | grep -q . && echo true || echo false
           STORE: ci_defined
+    # The answer for an EMPTY but SUCCESSFUL listing is the only thing that differs
+    # between this mapping and the poll rounds' in common/wait-for-green-ci.yaml: a
+    # branch that defines CI has a run on the way (`running`), one that does not is
+    # genuinely CI-less (`no_ci`). The table itself is the same text in all three
+    # places — tests/test_ci_status_mapping.py compares them byte for byte.
+    - CHECK: ci_defined eq "true"
+      TRUE:
+        - SET: { variable: empty_ci_status, value: "running" }
+      FALSE:
+        - SET: { variable: empty_ci_status, value: "no_ci" }
     - RUN: uv run --no-project python -c "
 import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
-defined = (sys.argv[2].strip() if len(sys.argv) > 2 else '') == 'true'
-# GitLab pipeline.status: success/failed/running/pending/canceled/skipped/created/manual
-# GitHub conclusion/status: success/failure/cancelled/skipped/timed_out/queued/in_progress/...
-if ps == 'success':
+none_is = sys.argv[2].strip() if len(sys.argv) > 2 else 'no_run'
+# Every state the two APIs answer, named. GitLab pipeline.status: created,
+# waiting_for_resource, preparing, pending, running, success, failed, canceled,
+# skipped, manual, scheduled. GitHub run status: queued, waiting, requested,
+# in_progress, pending, completed; conclusion: success, failure, cancelled, skipped,
+# timed_out, neutral, action_required, startup_failure, stale.
+running = ('created', 'waiting_for_resource', 'preparing', 'pending', 'running',
+           'scheduled', 'queued', 'waiting', 'requested', 'in_progress')
+# manual and action_required are pipelines parked on an operator: they never go green
+# on their own, so the gate reports them red instead of waiting out its budget.
+failed = ('failed', 'failure', 'canceled', 'cancelled', 'timed_out', 'stale',
+          'action_required', 'startup_failure', 'manual')
+# skipped and neutral are GREEN by choice: a run that had nothing to do is not a red
+# one, and a pipeline whose jobs were skipped reports 'success' for itself anyway.
+if ps in ('success', 'skipped', 'neutral'):
     print('passed')
-elif ps in ('failed', 'failure'):
+elif ps in failed:
     print('failed')
-elif ps in ('running', 'pending', 'queued', 'in_progress'):
+elif ps in running:
     print('running')
 elif ps in ('none', ''):
-    # no run at all: still coming if this branch defines CI, absent for good if it does not
-    print('running' if defined else 'no_ci')
+    print(none_is)
 else:
-    print('no_ci')
-" "{pipeline_status}" "{ci_defined}"
+    # Never green by default: a state nobody named keeps the gate waiting.
+    print('running')
+" "{pipeline_status}" "{empty_ci_status}"
       STORE: ci_status

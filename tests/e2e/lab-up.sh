@@ -91,10 +91,11 @@ if [ "$REDEPLOY" = 1 ]; then
       # branch — the one every level-2 scenario runs in — on the PREVIOUS assets while
       # main carried the new ones, so a redeploy printed main=<new> prd=<old> and the
       # scenario exercised the code the redeploy was meant to replace. Reset inside the
-      # worktree when there is one.
+      # worktree when there is one; on the other path a failure is FATAL, because the
+      # push below would otherwise force the stale branch back onto the remote.
       prd_wt="$(git worktree list --porcelain | awk -v b="refs/heads/feat/$PRD_KEY/prd" '/^worktree /{w=$2} $1=="branch" && $2==b {print w}')"
       if [ -n "$prd_wt" ]; then git -C "$prd_wt" reset -q --hard origin/main
-      else git branch -f "feat/$PRD_KEY/prd" origin/main 2>/dev/null || true; fi
+      else git branch -f "feat/$PRD_KEY/prd" origin/main || die "cannot move feat/$PRD_KEY/prd to origin/main in $c (detached worktree? locked ref?) — refusing to force-push the stale branch"; fi
       git push -q -f origin "feat/$PRD_KEY/prd:feat/$PRD_KEY/prd"
       # STORY worktrees were cut BEFORE this redeploy and carry their own commits, so
       # neither the reset above nor a branch move reaches them: a level-2 scenario running
@@ -113,6 +114,13 @@ if [ "$REDEPLOY" = 1 ]; then
         git -C "$wt" commit -q -m "chore: redeploy bmad-issue-tracking from $(git -C "$MOD" rev-parse --short HEAD)" \
           && echo "  worktree $(basename "$wt")=$(git -C "$wt" rev-parse --short HEAD)" || echo "  worktree $(basename "$wt") already current"
       done
+      # The redeploy only counts if the PRD branch carries what main carries: the
+      # scenarios run in it, and a level-2 verdict taken on the previous assets reads as an
+      # agent that improvised. Checked, not just printed.
+      git fetch -q origin
+      main_sha="$(git rev-parse origin/main)"
+      prd_sha="$(git rev-parse "origin/feat/$PRD_KEY/prd")"
+      [ "$main_sha" = "$prd_sha" ] || die "redeploy left $c with main=${main_sha:0:7} but feat/$PRD_KEY/prd=${prd_sha:0:7} — every A*/P* scenario runs in the PRD branch and would exercise the PREVIOUS assets"
       echo "  main=$(git rev-parse --short origin/main) prd=$(git rev-parse --short origin/feat/$PRD_KEY/prd)" )
   done
   exit 0

@@ -49,6 +49,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `tests/e2e/lab-up.sh --redeploy` could publish the PREVIOUS assets. When no worktree held
+  the PRD branch, a failing `branch -f` was swallowed by `|| true` and the unconditional
+  force-push then put the stale branch back on the remote — the `main=<new> prd=<old>` state
+  #72 set out to remove, on the path #72 did not cover. The failure is fatal now, and the
+  redeploy asserts `origin/feat/<prd>/prd` equals `origin/main` in every consumer before it
+  exits 0.
+
+- `common/create-issue.yaml`'s adopt path kept a branch that could not execute: after
+  `SET issue_id = {found_issue_id}` — inside the CHECK that proved `found_issue_id`
+  non-empty — it asked `empty issue_id` again and STOPped on the TRUE side. The path is now
+  one branch (SET, rm, OUTPUT, STOP), so the file's remaining STOPs are all reachable
+  returns; `tests/test_stop_semantics.py` keeps it that way.
+
+- The review-finish phase halted on a spec that was on disk. `common/post-dev-complete.yaml`
+  resolved the spec for its review-section read from `{spec_file}` and the legacy
+  `{implementation_artifacts}/{story_key}.md` — the two candidates #72 removed from
+  `common/ensure-issue.yaml` for the same reason. In sprint mode with an empty `{spec_file}`
+  neither exists (the slug comes from the story title), so `SPEC_NOT_FOUND` ended the run
+  before the CI gate, the ci-status write and the merge while the spec sat at
+  `spec-<storyId>-<slug>.md`. The phase now INCLUDEs `common/story-title.yaml` and reads the
+  `spec_path` it resolves; the halt is kept for a spec that really is missing.
+
+- An unreadable poll round cleared the "no pipeline yet" counter. `no_run_rounds` was reset
+  by every round that did not end `no_run`, including a round whose polls were all CLI
+  failures — which #64 maps to `running`. CI defined but never triggering for the branch,
+  plus an intermittent rate limit, alternated no_run / unreadable rounds, the count never
+  reached three, and `common/wait-for-green-ci.yaml` burnt its whole 30-minute budget
+  instead of concluding `no_ci`. A round now answers `round_status`, with `unreadable` as
+  its own marker: the gate reads it as `running` and keeps waiting, and only a round that
+  actually saw a pipeline resets the counter.
+
+- A CI timeout left no `ci-status.json` at all. The `timeout` path of
+  `common/wait-for-green-ci.yaml` ended with `OUTPUT ... stop: true`, which halts the
+  ENTIRE run (lang §2.5), so the caller's `INCLUDE: common/write-ci-status` never executed
+  and write-ci-status's own `timeout` branch — the red file carrying "CI timeout after 30
+  minutes" — was dead code. `ci-status.sh` then reported the file missing and bmad-loop
+  opened a repair session on a story whose code was fine. The OUTPUT now informs and
+  returns; callers read `ci_status`. `common/post-dev-complete.yaml` gains the guard that
+  halt used to provide: the review-finish merge prompt is offered only when the CI verdict
+  is `passed`, `no_ci` or `no_mr` — never on `failed`, `timeout`, or a review that did not
+  end `done`.
+
+- The CI gate reported green for every pipeline state it did not name.
+  `common/check-mr-ci.yaml` and both poll rounds of `common/wait-for-green-ci.yaml` mapped
+  anything unrecognised to `no_ci`, so GitLab's `created` / `preparing` / `scheduled` (the
+  first seconds of an MR pipeline) and any `canceled`, `timed_out` or `action_required` run
+  ended the gate green and `ci-status.json` said `{"status": "green"}`. The table now names
+  every state both APIs answer, sends an unknown one to `running`, calls `skipped`/`neutral`
+  green and `manual`/`action_required` red, and leaves `no_ci` / `no_run` to the caller as
+  the answer for an empty but successful listing. `tests/test_ci_status_mapping.py` keeps
+  the three copies of the table byte-identical.
+
 - Four CHECKs read a variable nothing had defined. `common/find-issue.yaml`
   (`lookup_after_create`), `common/post-dev-complete.yaml` (`review_producer`),
   `common/create-label.yaml` (`label_color`) and the `allow_merge` merge prompt relied on

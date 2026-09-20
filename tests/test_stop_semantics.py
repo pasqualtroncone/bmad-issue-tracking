@@ -89,6 +89,22 @@ class TestStopIsAReturn:
         )
 
 
+class TestNoStopSitsOnADeadBranch:
+    """A STOP the interpreter can never reach is not a return — it is noise (#78)."""
+
+    def test_create_issue_adopt_path_is_one_branch(self):
+        text = (WORKFLOWS_DIR / "common/create-issue.yaml").read_text(encoding="utf-8")
+        adopt = text.split("- CHECK: empty found_issue_id", 1)[1].split("\n# Create the issue", 1)[0]
+        assert "empty issue_id" not in adopt, (
+            "common/create-issue.yaml branches on `empty issue_id` right after SETting it "
+            "from a found_issue_id the enclosing CHECK proved non-empty: the branch cannot "
+            "execute, and its STOP counts as a live return site that is not one"
+        )
+        assert adopt.count("- STOP") == 1, (
+            f"the adopt path must return exactly once, found {adopt.count('- STOP')}"
+        )
+
+
 @pytest.fixture(scope="module")
 def spec():
     return LANG_SPEC.read_text(encoding="utf-8")

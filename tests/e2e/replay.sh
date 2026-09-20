@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17  # GitHub lab (d15/d21/d29/r13/r17 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -51,7 +51,7 @@ case_static() {
   # hardcoded `sed -n 36,42p` would have quietly reported REFUTED for the wrong reason.
   local s2l; s2l="$(grep -n '^    - CHECK: empty issue_id' "$WF/common/create-issue.yaml" | head -1 | cut -d: -f1)"
   item="$(sed -n "${s2l:-1},$(( ${s2l:-1} + 6 ))p" "$WF/common/create-issue.yaml")"; say '```'; say "$item"; say '```'
-  if [ -n "$s2l" ] && sed -n "$((s2l+1))p" "$WF/common/create-issue.yaml" | grep -q '^    TRUE:'; then mark S2 CONFIRMED "create-issue.yaml:$s2l-$((s2l+6)) TRUE:/FALSE: sit at the same indent as '- CHECK' (not under it); both branches STOP so behaviour survives by luck"; else mark S2 REFUTED "indentation is regular"; fi
+  if [ -n "$s2l" ] && sed -n "$((s2l+1))p" "$WF/common/create-issue.yaml" | grep -q '^    TRUE:'; then mark S2 CONFIRMED "create-issue.yaml:$s2l-$((s2l+6)) TRUE:/FALSE: sit at the same indent as '- CHECK' (not under it); both branches STOP so behaviour survives by luck"; else mark S2 REFUTED "no mis-indented 'CHECK: empty issue_id' block in create-issue.yaml — the adopt path is ONE branch (SET, rm, OUTPUT, STOP) since #78"; fi
   # S3 env vars in sync SKILL.md
   local envs; envs="$(grep -c 'BMAD_[A-Z_]*ACTION' "$MOD/skills/bmad-issue-tracking-sync/SKILL.md")"; local inwf; inwf="$(grep -rl 'BMAD_MR_ACTION\|BMAD_ISSUE_ACTION' "$WF" | wc -l)"
   say "sync SKILL.md references BMAD_*_ACTION env vars on $envs lines; workflow files reading them: $inwf"
@@ -152,7 +152,7 @@ case_d18() {
   local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
   # (a) the STATUS mapping snippet alone, with a real value, redirect removed
   $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="github.com/$REPO_GH" source_branch=ci-green > "$d/github-loop.cmd"
-  awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
+  awk '/STATUS=\$\(uv run/{f=1; sub(/.*STATUS=\$\(/,""); print; next} f&&/^" "\$pipeline_status"( no_run)?( 2>\/dev\/null)?\)/{print "\" success"; f=0; next} f{print}' "$d/github-loop.cmd" > "$d/status-snippet.cmd"
   log "  (a) STATUS mapping snippet with 'success', stderr visible"
   ( cd "$CONSUMER" && bash "$d/status-snippet.cmd" ) > "$d/status-snippet.out" 2> "$d/status-snippet.err"; echo $? > "$d/status-snippet.rc"
   # (b) one GitHub poll round, polls_per_round shortened to 2, against a repo whose latest run is complete
@@ -624,7 +624,9 @@ case_r3() {  # #49 — an empty run list seconds after a push must not read as "
   local c=r3; load_lab; local d; d="$(case_dir $c)"
   local ldef lmap lps
   ldef="$(line_of common/check-mr-ci.yaml '- RUN: ls \.github/workflows' 1)"
-  lmap="$(run_line_of common/check-mr-ci.yaml 'defined = \(sys\.argv\[2\]')"
+  # the mapping body moved to an enumerated table (#74); its second argument is now the
+  # answer for an EMPTY listing, which the CHECK above this step derives from ci_defined
+  lmap="$(run_line_of common/check-mr-ci.yaml '^none_is = sys\.argv\[2\]')"
   lps="$(line_of common/get-mr-pipeline.yaml '- RUN: gh run list' 2)"
   [ -n "$ldef" ] && [ -n "$lmap" ] && [ -n "$lps" ] || { verdict $c BLOCKED "cannot locate the ci_defined probe ($ldef), the mapping ($lmap) or the run lookup ($lps)"; return; }
   cd "$CONSUMER"; git checkout -q main; git pull -q --ff-only origin main 2>/dev/null || true
@@ -646,13 +648,14 @@ case_r3() {  # #49 — an empty run list seconds after a push must not read as "
   replay $c pipeline_status_ci_green common/get-mr-pipeline.yaml "$lps" mr_repo="github.com/$REPO_GH" source_branch=ci-green
   replay $c ci_defined common/check-mr-ci.yaml "$ldef"
   local ps def; ps="$(tr -d '[:space:]' < "$d/pipeline_status.out")"; def="$(tr -d '[:space:]' < "$d/ci_defined.out")"
-  replay $c mapping common/check-mr-ci.yaml "$lmap" pipeline_status="$ps" ci_defined="$def"
+  local emptyans=no_ci; [ "$def" = true ] && emptyans=running
+  replay $c mapping common/check-mr-ci.yaml "$lmap" pipeline_status="$ps" empty_ci_status="$emptyans"
   local dt; dt=$(( $(date +%s) - t0 ))
   local live; live="$(tr -d '[:space:]' < "$d/mapping.out")"
   # --- deterministic: the same mapping on the two answers `none` can mean ---
-  replay $c map-none-defined  common/check-mr-ci.yaml "$lmap" pipeline_status=none ci_defined=true
-  replay $c map-none-noci     common/check-mr-ci.yaml "$lmap" pipeline_status=none ci_defined=false
-  replay $c map-failure       common/check-mr-ci.yaml "$lmap" pipeline_status=failure ci_defined=true
+  replay $c map-none-defined  common/check-mr-ci.yaml "$lmap" pipeline_status=none empty_ci_status=running
+  replay $c map-none-noci     common/check-mr-ci.yaml "$lmap" pipeline_status=none empty_ci_status=no_ci
+  replay $c map-failure       common/check-mr-ci.yaml "$lmap" pipeline_status=failure empty_ci_status=running
   local mnd mnn mf
   mnd="$(tr -d '[:space:]' < "$d/map-none-defined.out")"
   mnn="$(tr -d '[:space:]' < "$d/map-none-noci.out")"
@@ -1256,7 +1259,7 @@ else:
   fi
 }
 
-case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, story-title from five
+case_r13() {  # #66/#76 — two callers resolved the spec from two candidates, the atomic from five
   # In sprint mode with an empty {spec_file} ensure-issue's own two-candidate resolution
   # found nothing, `cat ""` gave an empty story_body, and the "Story spec not found" OUTPUT
   # carried no `stop: true` — so the hook carried on with issue_id="" and labelled,
@@ -1278,18 +1281,38 @@ case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, stor
   linc="$(grep -n 'INCLUDE: common/story-title' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
   lbody="$(grep -n 'STORE: story_body' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
   stopped="$(grep -A2 'Story spec not found' "$WF/common/ensure-issue.yaml" | grep -c 'stop: true')"
+  # R20 (#76): post-dev-complete's review-finish read carried the SAME two candidates #72
+  # removed from ensure-issue, so in sprint mode with an empty {spec_file} it printed
+  # SPEC_NOT_FOUND and the next OUTPUT halted the run — before the CI gate, the ci-status
+  # write and the merge — while the spec was at spec-1-1-login-form.md. It now reads the
+  # {spec_path} the atomic resolved; the halt stays for a genuinely missing spec.
+  local lrf sec secmiss linc_rf args_rf legacy_rf
+  lrf="$(run_line_of common/post-dev-complete.yaml '^if path is None or not path\.is_file\(\):')"
+  if [ -n "$lrf" ]; then
+    replay $c review-section common/post-dev-complete.yaml "$lrf" spec_path="$got"
+    replay $c review-section-missing common/post-dev-complete.yaml "$lrf" spec_path=""
+    sec="$(head -1 "$d/review-section.out")"; secmiss="$(head -1 "$d/review-section-missing.out")"
+  fi
+  linc_rf="$(grep -n 'INCLUDE: common/story-title' "$WF/common/post-dev-complete.yaml" | head -1 | cut -d: -f1)"
+  args_rf="$(grep -c '^" "{spec_path}"$' "$WF/common/post-dev-complete.yaml")"
+  legacy_rf="$(grep -c '^" "{spec_file}" "{implementation_artifacts}/{story_key}.md"$' "$WF/common/post-dev-complete.yaml")"
   { echo "story-title.yaml:$lr with spec_file='' and implementation_artifacts=$work/ia → '$got'"
     echo "  want: $want"
     echo "  the pre-fix two-candidate rule over the same inputs → '${pre:-(nothing)}'"
-    echo "ensure-issue.yaml: own 'STORE: spec_path' steps=$own (want 0), INCLUDE story-title at :${linc:-absent} before the body read at :${lbody:-absent}, not-found OUTPUT carries stop: true ×$stopped"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
-  if [ "$got" = "$want" ] && [ -z "$pre" ] && [ "$own" = 0 ] && [ -n "$linc" ] && [ -n "$lbody" ] && [ "$linc" -lt "$lbody" ] && [ "$stopped" -ge 1 ]; then
-    verdict $c REFUTED "one resolution for both callers: story-title.yaml:$lr answers '$got' for spec_file='' — the sprint-mode name the pre-fix ensure-issue never looked at (its two candidates found '${pre:-nothing}', so story_body was empty). ensure-issue.yaml resolves nothing of its own ($own steps), INCLUDEs the atomic at :$linc before reading the body at :$lbody, and its not-found OUTPUT now halts (stop: true ×$stopped) instead of returning issue_id=''"
+    echo "ensure-issue.yaml: own 'STORE: spec_path' steps=$own (want 0), INCLUDE story-title at :${linc:-absent} before the body read at :${lbody:-absent}, not-found OUTPUT carries stop: true ×$stopped"
+    echo "post-dev-complete.yaml review-finish read at :${lrf:-absent} with the resolved path → '${sec:-(not rendered)}' (want a section, not SPEC_NOT_FOUND)"
+    echo "  the same step with nothing resolved → '${secmiss:-(not rendered)}' (want SPEC_NOT_FOUND)"
+    echo "  INCLUDE story-title at :${linc_rf:-absent} before it, argument lines: {spec_path} ×$args_rf (want ≥1), the two-candidate pair ×$legacy_rf (want 0)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$got" = "$want" ] && [ -z "$pre" ] && [ "$own" = 0 ] && [ -n "$linc" ] && [ -n "$lbody" ] && [ "$linc" -lt "$lbody" ] && [ "$stopped" -ge 1 ] \
+     && [ -n "$lrf" ] && [ -n "$sec" ] && [ "$sec" != SPEC_NOT_FOUND ] && [ "$secmiss" = SPEC_NOT_FOUND ] \
+     && [ -n "$linc_rf" ] && [ "$linc_rf" -lt "$lrf" ] && [ "$args_rf" -ge 1 ] && [ "$legacy_rf" = 0 ]; then
+    verdict $c REFUTED "one resolution for all three callers: story-title.yaml:$lr answers '$got' for spec_file='' — the sprint-mode name the pre-fix rule never looked at (its two candidates found '${pre:-nothing}'). ensure-issue.yaml resolves nothing of its own ($own steps), INCLUDEs the atomic at :$linc before reading the body at :$lbody, and halts on a miss (stop: true ×$stopped). post-dev-complete.yaml's review-finish read at :$lrf INCLUDEs the atomic at :$linc_rf and takes {spec_path} alone (×$args_rf, two-candidate pair ×$legacy_rf): with spec_file='' it returns '$sec' instead of the SPEC_NOT_FOUND that halted the phase, and a genuinely missing spec still returns '$secmiss'"
   else
-    verdict $c CONFIRMED "the resolutions still differ or the miss still continues: story-title.yaml:$lr → '$got' (want '$want'), pre-fix rule → '${pre:-nothing}', ensure-issue own resolution steps=$own (want 0), INCLUDE at :${linc:-absent} vs body read at :${lbody:-absent}, stop: true on the not-found OUTPUT ×$stopped (want ≥1)"
+    verdict $c CONFIRMED "the resolutions still differ or the miss still continues: story-title.yaml:$lr → '$got' (want '$want'), pre-fix rule → '${pre:-nothing}', ensure-issue own resolution steps=$own (want 0), INCLUDE at :${linc:-absent} vs body read at :${lbody:-absent}, stop: true on the not-found OUTPUT ×$stopped (want ≥1); review-finish read at :${lrf:-absent} → '${sec:-?}' (want a section) and '${secmiss:-?}' for a missing spec, INCLUDE at :${linc_rf:-absent}, {spec_path} args ×$args_rf, legacy pair ×$legacy_rf (want 0)"
   fi
 }
 
-case_r11() {  # #64 — a CLI failure inside a poll round must not read as "no pipeline yet"
+case_r11() {  # #64/#77 — a CLI failure inside a poll round is not "no pipeline yet"
   # Three `no_run` rounds end the gate green (`no_ci`), and write-ci-status then writes
   # ci-status.json green for a pipeline nobody read. A token expiry, a rate limit or a
   # network error produced exactly that answer: the exit code was discarded, the empty
@@ -1329,25 +1352,155 @@ print('no_run' if ps in ('none', '') else 'other')
     ( cd "$CONSUMER" && bash "$d/gitlab-round.cmd" ) > "$d/gitlab-round.out" 2> "$d/gitlab-round.err"; echo $? > "$d/gitlab-round.rc"
     gls="$(tr -d '[:space:]' < "$d/gitlab-round.out")"
   fi
-  # R12 (#65): the counter is only meaningful if a round that SEES a pipeline clears it.
-  # Structural, because a transient empty listing cannot be produced on demand: the
-  # `no_run` CHECK must carry a FALSE branch that resets no_run_rounds to 0.
-  local lnr reset=0
+  # R12 (#65) + R21 (#77): the counter is only meaningful if a round that SEES a pipeline
+  # clears it — and only such a round. Structural, because a transient empty listing
+  # cannot be produced on demand: the `no_run` CHECK must carry a FALSE branch that resets
+  # no_run_rounds, that branch must be gated on the round having been readable, and the
+  # `unreadable` marker must reach ci_status as `running` so the gate keeps waiting.
+  local lnr reset=0 gated=0 maps=0
   lnr="$(grep -n 'CHECK: ci_status eq "no_run"' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d: -f1)"
   if [ -n "$lnr" ]; then
     awk -v n="$lnr" 'NR>n && /^      - /{exit} NR>n && /^        FALSE:/{f=1} f && /variable: no_run_rounds, value: "0"/{print; found=1} END{exit !found}' \
       "$WF/common/wait-for-green-ci.yaml" > "$d/no-run-reset.txt" && reset=1
+    awk -v n="$lnr" 'NR>n && /^      - /{exit} NR>n && /^        FALSE:/{f=1} f && /- CHECK: round_status ne "unreadable"/{print; found=1} END{exit !found}' \
+      "$WF/common/wait-for-green-ci.yaml" > "$d/no-run-reset-gate.txt" && gated=1
   fi
-  { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want running)"
+  grep -A3 -- '- CHECK: round_status eq "unreadable"' "$WF/common/wait-for-green-ci.yaml" > "$d/marker-mapping.txt" 2>/dev/null
+  grep -q 'variable: ci_status, value: "running"' "$d/marker-mapping.txt" && maps=1
+  { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want the unreadable marker)"
     echo "  the CLI it calls: rc=$prerc, pipeline_status under the pre-fix parse='$ps_pre' → pre-fix classification='$pre'"
-    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want running; 'skipped' = no glab on PATH)"
-    echo "the no_run CHECK at :${lnr:-?} resets no_run_rounds on a round that saw a pipeline: $reset $(cat "$d/no-run-reset.txt" 2>/dev/null)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want unreadable; 'skipped' = no glab on PATH)"
+    echo "the marker reaches ci_status as 'running': $maps $(tr '\n' ' ' < "$d/marker-mapping.txt")"
+    echo "the no_run CHECK at :${lnr:-?} resets no_run_rounds: $reset $(cat "$d/no-run-reset.txt" 2>/dev/null)"
+    echo "  and the reset is gated on a readable round: $gated $(cat "$d/no-run-reset-gate.txt" 2>/dev/null)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$prerc" = 0 ]; then
     verdict $c BLOCKED "the bogus repo answered rc=0 ($bogus), so there is no CLI failure to classify"
-  elif [ "$ghs" = running ] && { [ "$gls" = running ] || [ "$gls" = skipped ]; } && [ "$reset" = 1 ]; then
-    verdict $c REFUTED "a failing CLI inside a poll round comes out 'running', not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', and the gitlab round at :$gl printed '$gls'. The round captures the exit code and only a SUCCESSFUL empty listing is no_run — the pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green. The counter is consecutive again: the no_run CHECK at :${lnr:-?} resets no_run_rounds on any round that saw a pipeline"
+  elif [ "$ghs" = unreadable ] && { [ "$gls" = unreadable ] || [ "$gls" = skipped ]; } && [ "$reset" = 1 ] && [ "$gated" = 1 ] && [ "$maps" = 1 ]; then
+    verdict $c REFUTED "a round whose polls all failed answers its own marker, not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', the gitlab round at :$gl printed '$gls'. The pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green. The marker maps to ci_status='running' so the gate keeps waiting ($maps), and the no_run counter at :${lnr:-?} is reset ONLY by a round that saw a pipeline ($reset, gated $gated) — an unreadable round leaves it where it was"
   else
-    verdict $c CONFIRMED "a failing CLI is still classified as 'no pipeline' (or the counter never resets): wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want running), gitlab round at :$gl printed '$gls', no_run_rounds reset present=$reset; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
+    verdict $c CONFIRMED "a failing CLI is still read as a pipeline answer, or the counter still moves on it: wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want unreadable), gitlab round at :$gl printed '$gls', marker→running=$maps, no_run_rounds reset present=$reset gated=$gated; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
+  fi
+}
+
+case_r18() {  # #74 — every pipeline state the mapping did not name was treated as green
+  # `created` (GitLab answers it for the first seconds of an MR pipeline), `canceled`,
+  # `timed_out`, `action_required`: none of them was named, so the mapper's `else` printed
+  # `no_ci` — which the gate reads as green and write-ci-status writes as
+  # {"status": "green"}. The table is enumerated now and an unnamed state is `running`,
+  # never green. The three copies (check-mr-ci + both poll rounds) must stay ONE text: a
+  # poll round is a bash RUN and cannot INCLUDE a workflow atomic. Local: no lab API is
+  # touched.
+  local c=r18; load_lab; local d; d="$(case_dir $c)"
+  local lmap; lmap="$(run_line_of common/check-mr-ci.yaml '^none_is = sys\.argv\[2\]')"
+  [ -n "$lmap" ] || { verdict $c BLOCKED "cannot locate the ci_status mapping step in check-mr-ci.yaml"; return; }
+  # (a) the copies of the table, extracted from the files themselves
+  $PY - "$d" "$WF/common/check-mr-ci.yaml" "$WF/common/wait-for-green-ci.yaml" > "$d/bodies.txt" <<'PY'
+import pathlib, re, sys
+out = pathlib.Path(sys.argv[1])
+rx = re.compile(r'python -c "\n(import sys\nps = sys\.argv\[1\][\s\S]*?)\n"')
+bodies = []
+for f in sys.argv[2:]:
+    bodies += rx.findall(pathlib.Path(f).read_text(encoding='utf-8'))
+for i, b in enumerate(bodies, 1):
+    (out / ('body-%d.py' % i)).write_text(b, encoding='utf-8')
+print(len(bodies), len(set(bodies)))
+PY
+  local copies distinct; read -r copies distinct < "$d/bodies.txt"
+  # (b) the table itself: the workflow step rendered once per state
+  local bad=0 st want got pair
+  : > "$d/table.txt"
+  for pair in created:running waiting_for_resource:running preparing:running pending:running \
+              running:running scheduled:running queued:running waiting:running \
+              requested:running in_progress:running \
+              failed:failed failure:failed canceled:failed cancelled:failed \
+              timed_out:failed stale:failed action_required:failed \
+              startup_failure:failed manual:failed \
+              success:passed skipped:passed neutral:passed \
+              banana:running completed:running unreadable:running; do
+    st="${pair%%:*}"; want="${pair#*:}"
+    replay $c "map-$st" common/check-mr-ci.yaml "$lmap" pipeline_status="$st" empty_ci_status=no_run
+    got="$(tr -d '[:space:]' < "$d/map-$st.out")"
+    printf '%-20s → %-8s (want %s)\n' "$st" "$got" "$want" >> "$d/table.txt"
+    [ "$got" = "$want" ] || bad=$((bad+1))
+  done
+  # an EMPTY but successful listing is the one answer the caller decides (#49/#72)
+  replay $c map-none-norun common/check-mr-ci.yaml "$lmap" pipeline_status=none empty_ci_status=no_run
+  replay $c map-none-noci  common/check-mr-ci.yaml "$lmap" pipeline_status=none empty_ci_status=no_ci
+  replay $c map-empty-noci common/check-mr-ci.yaml "$lmap" pipeline_status= empty_ci_status=no_ci
+  local mnr mnc mec
+  mnr="$(tr -d '[:space:]' < "$d/map-none-norun.out")"
+  mnc="$(tr -d '[:space:]' < "$d/map-none-noci.out")"
+  mec="$(tr -d '[:space:]' < "$d/map-empty-noci.out")"
+  # (c) the poll round's OWN copy, executed: identical text, and `no_run` for an empty list
+  local poll_created=absent poll_none=absent
+  if [ -f "$d/body-2.py" ]; then
+    poll_created="$(uv run --no-project python "$d/body-2.py" created no_run 2>&1 | tr -d '[:space:]')"
+    poll_none="$(uv run --no-project python "$d/body-2.py" none no_run 2>&1 | tr -d '[:space:]')"
+  fi
+  # the pre-fix rule over the same states, for the record
+  local prefix_green
+  prefix_green="$(uv run --no-project python -c "
+import sys
+def old(ps):
+    if ps == 'success': return 'passed'
+    if ps in ('failed', 'failure'): return 'failed'
+    if ps in ('running', 'pending', 'queued', 'in_progress'): return 'running'
+    return 'no_ci'
+print(' '.join(s for s in sys.argv[1:] if old(s) == 'no_ci'))
+" created waiting_for_resource preparing scheduled waiting requested canceled cancelled timed_out stale action_required startup_failure manual skipped neutral banana completed)"
+  { cat "$d/table.txt"
+    echo "empty listing: mapping(none,no_run)='$mnr' mapping(none,no_ci)='$mnc' mapping('',no_ci)='$mec'"
+    echo "the poll round's own copy: created → '$poll_created', none → '$poll_none'"
+    echo "copies of the table across check-mr-ci + wait-for-green-ci: $copies (distinct texts: $distinct)"
+    echo "states the PRE-FIX rule called no_ci, i.e. green: $prefix_green"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$bad" = 0 ] && [ "$mnr" = no_run ] && [ "$mnc" = no_ci ] && [ "$mec" = no_ci ] \
+     && [ "$poll_created" = running ] && [ "$poll_none" = no_run ] \
+     && [ "$copies" = 3 ] && [ "$distinct" = 1 ]; then
+    verdict $c REFUTED "check-mr-ci.yaml:$lmap names every state both APIs answer and sends the rest to 'running': the 25 rows in table.txt all match, and only an empty listing takes the caller's answer (none→'$mnr' with no_run, '$mnc' with no_ci). The pre-fix rule called these green: $prefix_green. The table is ONE text in $copies places ($distinct distinct), and the poll round's own copy answers created→'$poll_created', none→'$poll_none'"
+  else
+    verdict $c CONFIRMED "the mapping still lets a state through to green, or the copies have drifted: $bad of the 25 rows wrong (see table.txt), mapping(none,no_run)='$mnr' mapping(none,no_ci)='$mnc' mapping('',no_ci)='$mec', poll-round copy created→'$poll_created' none→'$poll_none', copies=$copies distinct=$distinct (want 3/1). Pre-fix green states: $prefix_green"
+  fi
+}
+
+case_r19() {  # #75 — a CI timeout ended the run before ci-status.json was written
+  # `OUTPUT ... stop: true` halts the ENTIRE run (lang section 2.5), so on a timeout the
+  # caller's `INCLUDE: common/write-ci-status` never ran: ci-status.json stayed absent,
+  # ci-status.sh reported "the hook did not write it" (exit 1, FIXABLE) and bmad-loop
+  # opened a repair session on a story whose code is fine, instead of the documented
+  # deferral. Local: no lab API is touched.
+  local c=r19; load_lab; local d; d="$(case_dir $c)"
+  # (a) static: the timeout OUTPUT informs, it does not end the run
+  local lto stops
+  lto="$(grep -n 'CHECK: ci_status eq "timeout"' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d: -f1)"
+  [ -n "$lto" ] || { verdict $c BLOCKED "wait-for-green-ci.yaml has no 'ci_status eq timeout' branch"; return; }
+  awk -v n="$lto" 'NR>=n && NR<=n+5' "$WF/common/wait-for-green-ci.yaml" > "$d/timeout-branch.txt"
+  stops="$(grep -c 'stop: true' "$d/timeout-branch.txt")"
+  # (b) the branch that halt made dead: write-ci-status's timeout WRITE, rendered and
+  #     handed to ci-status.sh — the bmad-loop [verify] command that reads the file
+  local lw content rc=0
+  lw="$(grep -n 'CHECK: ci_status eq "timeout"' "$WF/common/write-ci-status.yaml" | head -1 | cut -d: -f1)"
+  [ -n "$lw" ] || { verdict $c BLOCKED "write-ci-status.yaml has no timeout branch"; return; }
+  content="$(awk -v n="$lw" 'NR>n && /content:/{sub(/^ *content: /, ""); print; exit}' "$WF/common/write-ci-status.yaml" | sed "s/^'//; s/'\$//")"
+  mkdir -p "$d/wt"; printf '%s\n' "$content" > "$d/wt/ci-status.json"
+  ( cd "$d/wt" && bash "$MOD/skills/bmad-issue-tracking-setup/scripts/bmad-loop/ci-gate/ci-status.sh" ) > "$d/verify.out" 2> "$d/verify.err" || rc=$?
+  local status; status="$(uv run --no-project python -c "
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))['status'])
+except Exception as e:
+    print('unparseable: %s' % e)
+" "$d/wt/ci-status.json")"
+  # (c) and with the run no longer halted there, the merge prompt needs its own guard
+  local guard; guard="$(grep -c 'CHECK: ci_merge_ok eq "true"' "$WF/common/post-dev-complete.yaml")"
+  { echo "wait-for-green-ci.yaml:$lto — the timeout branch carries 'stop: true' x$stops (want 0):"
+    cat "$d/timeout-branch.txt"
+    echo "write-ci-status.yaml:$lw content → $content   (status '$status')"
+    echo "ci-status.sh on that file: rc=$rc (want 1, red = fixable) out=$(tr '\n' ' ' < "$d/verify.out")"
+    echo "post-dev-complete.yaml gates the merge prompt on the CI verdict: x$guard (want >=1)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$stops" = 0 ] && [ "$status" = red ] && printf '%s' "$content" | grep -q timeout && [ "$rc" = 1 ] && [ "$guard" -ge 1 ]; then
+    verdict $c REFUTED "the timeout path informs and returns: wait-for-green-ci.yaml:$lto carries no 'stop: true', so the caller reaches its write-ci-status INCLUDE and write-ci-status.yaml:$lw writes $content — ci-status.sh reads it as rc=$rc (red, fixable) instead of reporting the file missing. The merge cannot follow a non-green verdict either: post-dev-complete.yaml gates the prompt on ci_merge_ok (x$guard)"
+  else
+    verdict $c CONFIRMED "the timeout still ends the run or the red file never lands: 'stop: true' x$stops in the timeout branch (want 0), rendered content '$content' (status '$status'), ci-status.sh rc=$rc (want 1), merge guard x$guard (want >=1)"
   fi
 }
 
@@ -1445,10 +1598,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|r18|r19|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

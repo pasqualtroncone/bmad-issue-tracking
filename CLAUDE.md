@@ -123,6 +123,21 @@ cross-platform setup: the `CHECK` picks the right branch and the `PLATFORM:` fil
 skips the RUN inside it, so its `STORE` variable is never written and the caller reads the
 empty value as "no MR" / "no CI". `tests/test_platform_coverage.py` enforces both halves.
 
+**The CI state table lives in three copies.** `common/check-mr-ci.yaml` and the two poll
+rounds of `common/wait-for-green-ci.yaml` map a raw pipeline state to the `ci_status` enum.
+A poll round is ONE bash `RUN` and cannot `INCLUDE` an atomic, so the table is duplicated —
+and `tests/test_ci_status_mapping.py` compares the three `python -c` bodies byte for byte.
+Rules the table encodes: every state both APIs answer is NAMED, anything unnamed is
+`running` (never green — an unknown state costs wall clock, not a false pass), `skipped`
+and `neutral` are green, `manual`/`action_required`/`canceled`/`timed_out` are red (a
+pipeline parked on an operator never goes green on its own), and `no_ci`/`no_run` are the
+CALLER's answer for an empty but SUCCESSFUL listing, passed in as the second argument —
+`running` when the branch defines CI, `no_ci` when it does not, `no_run` inside the rounds.
+A round whose polls ALL failed answers neither: it stores `unreadable` in `round_status`,
+which the LOOP turns into `ci_status: running` (keep waiting) while leaving
+`no_run_rounds` untouched — it saw no pipeline, so it cannot prove the three consecutive
+empty rounds that end the gate `no_ci`.
+
 **Git remote vs issue tracker:** The git remote (origin) and issue tracker can be on different platforms (e.g., code on GitLab, issues on GitHub). `issue_tracking.platform` is the issue tracker; `issue_tracking.git_platform` (set during setup) is the git remote. Issue operations (create/update/close issues, labels, comments) use `platform`. MR/PR operations (list, create, merge, mark ready) use `git_platform`. When they differ, `host`/`project` apply to the issue tracker and `git_host`/`git_project` apply to the git remote. Issue references in MR descriptions use `Closes #X` for same-platform, full URL for cross-platform.
 
 `check-config` resolves BOTH coordinate sets once and exports them: `host`/`project`/
@@ -337,10 +352,15 @@ Two things NOT to do here, both tried and reverted:
 
 Halt only on a missing spec FILE (`SPEC_NOT_FOUND`): that case is unambiguous and is the
 one that actually killed story 2-1, whose phase read the spec from an invented path
-(`{implementation_artifacts}/{story_key}.md`) with no error handling. The spec is now read
-from `{spec_file}` — the path the runtime resolves, per the predefined-variables table
-in `bmad-workflow-lang.md` §4.4 and BMAD's `tools/skill-validator.md:37` — with the
-legacy path kept as a second candidate so existing consumers do not regress.
+(`{implementation_artifacts}/{story_key}.md`) with no error handling. That path and
+`{spec_file}` — the one the runtime resolves, per the predefined-variables table in
+`bmad-workflow-lang.md` §4.4 and BMAD's `tools/skill-validator.md:37` — were then the
+phase's only two candidates, the same pair #72 removed from `ensure-issue`: neither exists
+in sprint mode with an empty `{spec_file}`, so `SPEC_NOT_FOUND` halted the run before the
+CI gate, the ci-status write and the merge while the spec sat at `spec-1-1-login-form.md`.
+review-finish now `INCLUDE`s `common/story-title.yaml`, the one file that owns the
+candidate list, and reads the `{spec_path}` it returns — the same resolution
+`ensure-issue` and `sync-issues` use.
 
 ## Caller negotiation (both current channels)
 

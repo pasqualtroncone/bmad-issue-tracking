@@ -86,21 +86,19 @@ print(str(match[0]['number']) if match else '')
 " "{description_file}.title"
   STORE: found_issue_id
   PLATFORM: github
-# If found, adopt it as issue_id and RETURN. The STOPs below are returns, not halts
+# If found, adopt it as issue_id and RETURN. The STOP below is a return, not a halt
 # (lang section 2.10): the caller resumes after `INCLUDE: common/create-issue` with
-# issue_id in scope and the creation block skipped. This one is a genuine early return —
-# the rest of the file is the "no such issue yet" path — so it keeps its STOP.
+# issue_id in scope and the creation block skipped. It is a genuine early return — the
+# rest of the file is the "no such issue yet" path — so it keeps its STOP.
+# ONE path: issue_id is SET from a found_issue_id the CHECK has just proved non-empty, so
+# the `empty issue_id -> STOP` branch that used to sit here could never execute.
 - CHECK: empty found_issue_id
   FALSE:
     - SET: { variable: issue_id, value: "{found_issue_id}" }
     - RUN: rm -f "{description_file}.title"
-    - CHECK: empty issue_id
-      TRUE:
-        - STOP
-      FALSE:
-        - OUTPUT:
-            message: "Issue already exists (#{issue_id}). Skipping creation."
-        - STOP
+    - OUTPUT:
+        message: "Issue already exists (#{issue_id}). Skipping creation."
+    - STOP
 # Create the issue
 # Ensure all labels exist (static + dynamic like prd:{prd_key}, {prd_key}:epic-N)
 - RUN: uv run --no-project python -c "

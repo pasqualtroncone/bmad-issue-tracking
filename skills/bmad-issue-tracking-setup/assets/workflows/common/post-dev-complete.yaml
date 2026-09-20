@@ -188,6 +188,10 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     - READ: {implementation_artifacts}/sprint-status.yaml
       EXTRACT:
         review_status: development_status.{story_key}
+    # The CI gate below only runs when the verdict is `done`, and lang section 4.5 stops a
+    # run on a CHECK that reads an undefined variable. Seed the verdict as "no verdict":
+    # the merge guard reads it, and "no verdict" must never be a green one.
+    - SET: { variable: ci_status, value: "" }
     # Commit and push any review modifications
     
     - RUN: git commit --allow-empty -m "code review {story_key}" 2>/dev/null || true
@@ -207,12 +211,14 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
         - INCLUDE: common/update-issue-status
     # Post review findings as comment on issue.
     #
-    # The spec is read from {spec_file} — the path the runtime already resolved, in
-    # whichever mode applies (sprint: spec-<storyId>-<slug>.md; stories:
-    # stories/<id>-<slug>.md). Do NOT re-derive it from {story_key}: the slug comes
-    # from the story TITLE, so {implementation_artifacts}/{story_key}.md never exists in
-    # sprint mode and reading it kills the phase, the CI gate and the merge with it. The
-    # legacy exact-key path is still tried second so existing consumers do not regress.
+    # The spec is resolved by common/story-title.yaml, the one file that owns the rule —
+    # {spec_path} hint, {spec_file}, the sprint-mode spec-<storyId>-<slug>.md, the
+    # stories-mode stories/<id>-<slug>.md, and the legacy
+    # {implementation_artifacts}/{story_key}.md last. This block used to try only the last
+    # two, the pair #72 removed from ensure-issue for the same reason: the slug comes from
+    # the story TITLE, so in sprint mode with an empty {spec_file} neither candidate
+    # exists, SPEC_NOT_FOUND halts the run, and the CI gate, the ci-status write and the
+    # merge die with it while the spec sits at spec-1-1-login-form.md.
     #
     # Two producers write two different sections into the same file:
     #   bmad-build-auto  -> '## Review Triage Log' with '### <date> — Review pass' rows
@@ -225,11 +231,15 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # goes on, because their reviews legitimately write nothing when they find nothing.
     - CHECK: empty issue_id
       FALSE:
+        # spec_path is seeded empty: this phase has no path of its own to offer, and the
+        # atomic must not adopt one an earlier INCLUDE left in scope.
+        - SET: { variable: spec_path, value: "" }
+        - INCLUDE: common/story-title
         - RUN: uv run --no-project python -c "
 import sys, re, pathlib
-candidates = [c for c in sys.argv[1:] if c]
-path = next((pathlib.Path(c) for c in candidates if pathlib.Path(c).is_file()), None)
-if path is None:
+given = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+path = pathlib.Path(given) if given else None
+if path is None or not path.is_file():
     print('SPEC_NOT_FOUND')
     sys.exit(0)
 content = path.read_text()
@@ -247,12 +257,12 @@ if not re.sub(r'^#+ .*$', '', body, flags=re.MULTILINE).strip():
     print('SPEC_EMPTY_REVIEW_SECTION')
     sys.exit(0)
 print(body)
-" "{spec_file}" "{implementation_artifacts}/{story_key}.md"
+" "{spec_path}"
           STORE: review_section
         - CHECK: review_section eq "SPEC_NOT_FOUND"
           TRUE:
             - OUTPUT:
-                message: "No spec file found — tried '{spec_file}' then '{implementation_artifacts}/{story_key}.md'. {spec_file} is the path the runtime resolved, so its absence means no spec was produced for this story. Nothing was posted and the merge must not proceed. Check what bmad-build-auto actually wrote on disk (sprint mode names it spec-<storyId>-<slug>.md)."
+                message: "No spec file found for '{story_key}' — common/story-title.yaml resolved none of its candidates ({spec_file}, {implementation_artifacts}/spec-*.md, {implementation_artifacts}/stories/*.md, {implementation_artifacts}/{story_key}.md), so no spec was produced for this story. Nothing was posted and the merge must not proceed. Check what bmad-build-auto actually wrote on disk (sprint mode names it spec-<storyId>-<slug>.md)."
                 stop: true
         # Halt ONLY when the producer is known to always write a section. That is
         # bmad-build-auto alone: its step-04 appends a review-log entry on EVERY pass.
@@ -304,23 +314,44 @@ print(body)
       TRUE:
         - INCLUDE: common/wait-for-green-ci
         - INCLUDE: common/write-ci-status
+    # Is the CI verdict one that may be merged? The green set is
+    # common/write-ci-status.yaml's: `passed` is a real green pipeline, `no_ci`/`no_mr` are
+    # the flows with no gate to enforce. Everything else — `failed`, `timeout`, and the ""
+    # of a review that did not end `done` — is not. The gate matters since #75: the timeout
+    # path now returns instead of ending the run, so without this the prompt would offer to
+    # merge a story whose pipeline never finished.
+    - SET: { variable: ci_merge_ok, value: "false" }
+    - CHECK: ci_status eq "passed"
+      TRUE:
+        - SET: { variable: ci_merge_ok, value: "true" }
+    - CHECK: ci_status eq "no_ci"
+      TRUE:
+        - SET: { variable: ci_merge_ok, value: "true" }
+    - CHECK: ci_status eq "no_mr"
+      TRUE:
+        - SET: { variable: ci_merge_ok, value: "true" }
     # Optional merge — only in interactive flows (bmad-build manual), never in unattended (bmad-build-auto)
     - CHECK: allow_merge eq "true"
       TRUE:
-        - OUTPUT:
-            message: "Merge the story MR now? (yes/no)"
-            store: do_merge
-        - CHECK: do_merge eq "yes"
+        - CHECK: ci_merge_ok eq "true"
           TRUE:
-            # Resolve mr_iid via the existing source_branch (atomic sets mr_iid in scope).
-            # source_branch is set by common/check-mr-ci inside wait-for-green-ci (called
-            # above when review_status eq "done"); mr_repo comes from check-config.
-            - INCLUDE: common/find-mr
-            # No cross-platform seeding here: common/merge-mr reads git_host/git_project
-            # from the config itself. This block used to derive {git_owner}/{git_repo} for
-            # the atomic; three callers did and one did not, so the one that did not halted
-            # on lang §4.5 with an undefined variable.
-            - INCLUDE: common/merge-mr
-            - RUN: git worktree remove .
+            - OUTPUT:
+                message: "Merge the story MR now? (yes/no)"
+                store: do_merge
+            - CHECK: do_merge eq "yes"
+              TRUE:
+                # Resolve mr_iid via the existing source_branch (atomic sets mr_iid in scope).
+                # source_branch is set by common/check-mr-ci inside wait-for-green-ci (called
+                # above when review_status eq "done"); mr_repo comes from check-config.
+                - INCLUDE: common/find-mr
+                # No cross-platform seeding here: common/merge-mr reads git_host/git_project
+                # from the config itself. This block used to derive {git_owner}/{git_repo} for
+                # the atomic; three callers did and one did not, so the one that did not halted
+                # on lang §4.5 with an undefined variable.
+                - INCLUDE: common/merge-mr
+                - RUN: git worktree remove .
+          FALSE:
+            - OUTPUT:
+                message: "Not offering the merge: the CI gate ended '{ci_status}', which is not a green verdict."
     - OUTPUT:
         message: "Story {story_key} review-finish complete."
