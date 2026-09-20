@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Three empty CI poll rounds ended the gate green even when they were not consecutive.
+  `common/wait-for-green-ci.yaml` incremented `no_run_rounds` but never reset it, so a
+  single transient empty listing, arriving rounds after two others, reached the "three in
+  a row" threshold and mapped `ci_status` to `no_ci` while the real pipeline was still
+  running or already red. A round that sees a pipeline now resets the counter.
+
 - The CI gate could go green over a pipeline it never read. Inside a
   `common/wait-for-green-ci.yaml` poll round the CLI's exit code was discarded, so a token
   expiry, a rate limit or a network error left an empty listing that parsed to

@@ -16,7 +16,8 @@
 #       of the whole repo, i.e. some other branch's pipeline.
 # Output variables:
 #   - ci_status: "passed", "no_ci", "no_mr", "running", "failed", "timeout"
-#   - no_run_rounds: how many consecutive rounds saw no pipeline at all (internal)
+#   - no_run_rounds: how many consecutive rounds saw no pipeline at all (internal);
+#       reset to 0 by the first round that sees one, so "three in a row" means in a row
 #   - pipeline_id: id of the failed pipeline (set on failure-path, passed to get-failed-jobs)
 #   - jobs: failed-job diagnostics from get-failed-jobs (TSV on gitlab, raw text on github)
 # Side effects: polls CI every 25s while running, in 18 bounded rounds of 4 polls each
@@ -198,6 +199,12 @@ print(int(sys.argv[1]) + 1)
               - SET: { variable: ci_status, value: "no_ci" }
             FALSE:
               - SET: { variable: ci_status, value: "running" }
+        FALSE:
+          # CONSECUTIVE is the whole claim: a round that saw a pipeline proves the run
+          # exists, so the empty rounds before it say nothing any more. Without this reset
+          # one transient empty listing, rounds after two others, ends the gate green over
+          # a pipeline that is still running or already red.
+          - SET: { variable: no_run_rounds, value: "0" }
 # Still "running" after the last round — the 30-minute budget is spent
 - CHECK: ci_status eq "running"
   TRUE:

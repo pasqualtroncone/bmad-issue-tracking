@@ -1206,15 +1206,25 @@ print('no_run' if ps in ('none', '') else 'other')
     ( cd "$CONSUMER" && bash "$d/gitlab-round.cmd" ) > "$d/gitlab-round.out" 2> "$d/gitlab-round.err"; echo $? > "$d/gitlab-round.rc"
     gls="$(tr -d '[:space:]' < "$d/gitlab-round.out")"
   fi
+  # R12 (#65): the counter is only meaningful if a round that SEES a pipeline clears it.
+  # Structural, because a transient empty listing cannot be produced on demand: the
+  # `no_run` CHECK must carry a FALSE branch that resets no_run_rounds to 0.
+  local lnr reset=0
+  lnr="$(grep -n 'CHECK: ci_status eq "no_run"' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d: -f1)"
+  if [ -n "$lnr" ]; then
+    awk -v n="$lnr" 'NR>n && /^      - /{exit} NR>n && /^        FALSE:/{f=1} f && /variable: no_run_rounds, value: "0"/{print; found=1} END{exit !found}' \
+      "$WF/common/wait-for-green-ci.yaml" > "$d/no-run-reset.txt" && reset=1
+  fi
   { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want running)"
     echo "  the CLI it calls: rc=$prerc, pipeline_status under the pre-fix parse='$ps_pre' → pre-fix classification='$pre'"
-    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want running; 'skipped' = no glab on PATH)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want running; 'skipped' = no glab on PATH)"
+    echo "the no_run CHECK at :${lnr:-?} resets no_run_rounds on a round that saw a pipeline: $reset $(cat "$d/no-run-reset.txt" 2>/dev/null)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$prerc" = 0 ]; then
     verdict $c BLOCKED "the bogus repo answered rc=0 ($bogus), so there is no CLI failure to classify"
-  elif [ "$ghs" = running ] && { [ "$gls" = running ] || [ "$gls" = skipped ]; }; then
-    verdict $c REFUTED "a failing CLI inside a poll round comes out 'running', not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', and the gitlab round at :$gl printed '$gls'. The round captures the exit code and only a SUCCESSFUL empty listing is no_run — the pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green"
+  elif [ "$ghs" = running ] && { [ "$gls" = running ] || [ "$gls" = skipped ]; } && [ "$reset" = 1 ]; then
+    verdict $c REFUTED "a failing CLI inside a poll round comes out 'running', not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', and the gitlab round at :$gl printed '$gls'. The round captures the exit code and only a SUCCESSFUL empty listing is no_run — the pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green. The counter is consecutive again: the no_run CHECK at :${lnr:-?} resets no_run_rounds on any round that saw a pipeline"
   else
-    verdict $c CONFIRMED "a failing CLI is still classified as 'no pipeline': wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want running), gitlab round at :$gl printed '$gls'; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
+    verdict $c CONFIRMED "a failing CLI is still classified as 'no pipeline' (or the counter never resets): wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want running), gitlab round at :$gl printed '$gls', no_run_rounds reset present=$reset; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
   fi
 }
 
