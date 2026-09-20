@@ -26,7 +26,8 @@ For the full architecture — branch/MR direction table, platform differences, s
 
 The module participates in your CI pipeline via two layers:
 
-- **`common/wait-for-green-ci.yaml`** — the on_complete hook polls the MR/PR pipeline (via `common/get-mr-pipeline.yaml` + `common/get-failed-jobs.yaml`) and blocks until green, for up to 30 minutes. The wait is a `LOOP` of eighteen rounds, each a single command of at most four polls 25 s apart (~100 s, inside the tool's 120 s default): the interpreter runs commands through a tool that times out, so one 30-minute command would be killed before it could report anything and `ci-status.json` would never be written.
+- **`common/wait-for-green-ci.yaml`** — the on_complete hook blocks until the MR/PR pipeline is green, for up to 30 minutes. The initial check goes through `common/check-mr-ci.yaml` → `common/get-mr-pipeline.yaml`; the rounds that follow inline the same lookup, and `common/get-failed-jobs.yaml` is read only on the failure path. The wait is a `LOOP` of eighteen rounds, each a single command of at most four polls 25 s apart (~100 s, inside the tool's 120 s default): the interpreter runs commands through a tool that times out, so one 30-minute command would be killed before it could report anything and `ci-status.json` would never be written.
+  Two answers end the wait green without a pipeline: `no_ci` — the branch defines no pipeline, or three *consecutive* rounds saw an empty run list although it does (the counter resets on any round that sees one) — and `no_mr`, the flow with no remote MR at all, where there is no gate to enforce.
 - **`ci-status.sh`** — the bmad-loop `[verify]` command (deployed to `.bmad-loop/ci-status.sh` by the setup skill). Reads the latest `ci-status.json` written by the unified workflow; exits 0 (green) or 1 (red, with diagnostic). The intelligent work (polling, log parsing, distinguishing flaky from real) is done by the on_complete hook — `ci-status.sh` is a fast, deterministic file-read.
 
 In the manual flow (`/bmad-build`), the hook blocks the workflow on CI. In the bmad-loop flow, a red CI triggers an automatic repair session (re-invoke `bmad-build-auto` with the diagnostic) up to `max_dev_attempts` before deferring the story.
@@ -205,7 +206,7 @@ Issues created by the module follow a fixed naming convention:
 | Epic | `Epic 1: Authentication` |
 | Retrospective | `Retrospective: Epic 1` |
 
-Story and epic titles are derived from the planning artifacts created by BMM workflows.
+Epic titles are derived from the planning artifacts created by BMM workflows (`epics.md`). Story titles come from the spec, through `common/story-title.yaml`: the frontmatter `title:`, else the first `# ` H1, else the story key's slug segments (`1-4-login-form` → `Login Form`). Whichever tier answers, a leading `Story N.M:` is stripped — the prefix is added once, by the caller.
 
 ## Branch strategy
 
@@ -227,10 +228,10 @@ The module is compatible with [`bmad-loop`](https://github.com/bmad-code-org/bma
 
 **Flow:**
 
-1. `bmad-loop run` — each story is implemented/reviewed/verified in its own worktree and merged back locally. At the end of every `bmad-build-auto` session, the skill executes its `on_complete` hook (from `bmad-build-auto.toml`), which runs `common/post-build-dispatch.yaml` → `common/post-dev-complete.yaml`. This unified workflow handles the full lifecycle for the story:
-   - **dev-finish phase** (spec status `in-review` / `in-progress`): pushes the code, waits for CI (`common/wait-for-green-ci.yaml`), writes `ci-status.json` (`common/write-ci-status.yaml`), ensures the issue + trace MR exist (`common/ensure-issue.yaml` / `common/ensure-mr.yaml`), and updates the issue status.
-   - **review-finish phase** (spec status `done`): commits review modifications, pushes, waits for CI, writes `ci-status.json`, posts the review findings comment, and mirrors the story to its issue (status label, result comment, MR link).
-   - **`ci-status.sh`** (`[verify]` command): reads `ci-status.json` written by the unified workflow. A **red CI fails the verify command** (with rich diagnostic), and bmad-loop runs a feedback-driven repair session (re-invoking `bmad-build-auto` with the diagnostic as feedback) — the story is **auto-fixed and re-verified**, up to `max_dev_attempts`, before the merge-back. A **missing `ci-status.json` also fails** (fixable) — the on_complete hook did not write it. Only a budget-exhausted CI defers the story (`bmad-loop resolve` to recover). No bmad-loop plugins are needed — the `on_complete` hook drives everything.
+1. `bmad-loop run` — each story is implemented/reviewed/verified in its own worktree and merged back locally. At the end of every `bmad-build-auto` session, the skill executes its `on_complete` hook (from `bmad-build-auto.toml`), which runs `common/post-build-dispatch-auto.yaml` → `common/post-build-dispatch.yaml` → `common/post-dev-complete.yaml`. This unified workflow handles the full lifecycle for the story:
+   - **dev-finish phase** (spec status `in-review` / `in-progress`): pushes the code, ensures the issue + trace MR exist (`common/ensure-issue.yaml` / `common/ensure-mr.yaml`), waits for CI (`common/wait-for-green-ci.yaml`), writes `ci-status.json` (`common/write-ci-status.yaml`), and updates the issue status. The MR is ensured **before** the gate: with no MR the gate has nothing to read and writes green.
+   - **review-finish phase** (spec status `done`): commits review modifications, pushes, posts the review findings comment, mirrors the story to its issue (status label, result comment, MR link), then waits for CI and writes `ci-status.json`.
+   - **`ci-status.sh`** (`[verify]` command): reads `ci-status.json` written by the unified workflow. A **red CI fails the verify command** (with rich diagnostic), and bmad-loop runs a feedback-driven repair session (re-invoking `bmad-build-auto` with the diagnostic as feedback) — the story is **auto-fixed and re-verified**, up to `max_dev_attempts`, before the merge-back. A **missing `ci-status.json` also fails** (fixable) — the on_complete hook did not write it. Only a budget-exhausted CI defers the story (`bmad-loop resolve` to recover). Nothing else fails it: `passed`, `no_ci` (no pipeline defined, or three consecutive empty poll rounds) and `no_mr` (no remote MR to gate on) all write green. No bmad-loop plugins are needed — the `on_complete` hook drives everything.
 2. `/bmad-issue-tracking-sync` — unattended safety net: mirrors the updated `sprint-status.yaml` to issues (labels, statuses, close `done`), no worktree required, no prompts.
 3. `git push origin main` — the local merge-back is never pushed by bmad-loop.
 
@@ -254,7 +255,7 @@ If you're upgrading from a version that used `ci-wait.sh`:
 2. Delete the old `ci-wait.sh`: `rm .bmad-loop/ci-wait.sh`
 3. If you previously installed the `story-track-dev` / `story-track-review` bmad-loop plugins (now removed — superseded by the `bmad-build-auto.toml` `on_complete` hook): delete them with `rm -rf .bmad-loop/plugins/story-track-dev .bmad-loop/plugins/story-track-review` and remove them from `[plugins] enabled` in `.bmad-loop/policy.toml`.
 
-The architecture is simpler: at the end of every `bmad-build-auto` session, the skill's `on_complete` hook (from `bmad-build-auto.toml`) runs `common/post-build-dispatch.yaml` → `common/post-dev-complete.yaml` (dev-finish / review-finish), which pushes code + waits CI + writes `ci-status.json` + ensures issue/MR + tracks issue. `ci-status.sh` (verify command) reads the latest `ci-status.json`. No polling or API calls in the shell script — the workflow does the polling via `common/wait-for-green-ci.yaml`.
+The architecture is simpler: at the end of every `bmad-build-auto` session, the skill's `on_complete` hook (from `bmad-build-auto.toml`) runs `common/post-build-dispatch-auto.yaml` → `common/post-build-dispatch.yaml` → `common/post-dev-complete.yaml` (dev-finish / review-finish), which pushes code + ensures issue/MR + waits CI + writes `ci-status.json` + tracks issue. `ci-status.sh` (verify command) reads the latest `ci-status.json`. No polling or API calls in the shell script — the workflow does the polling via `common/wait-for-green-ci.yaml`.
 
 **Limits (by design):** no MR discussion threads (the MR is a CI vehicle + trace, not a review conversation); `mark-mr-ready` is not used in this flow.
 
