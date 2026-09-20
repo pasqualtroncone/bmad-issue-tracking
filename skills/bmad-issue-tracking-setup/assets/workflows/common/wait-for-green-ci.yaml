@@ -103,22 +103,40 @@ print('unreadable' if ps is None else (ps[0]['status'] if ps else 'none'))
                     # listing is the one answer that ends this gate green: only a
                     # SUCCESSFUL empty listing may count as no_run.
                     [ $cli_rc -eq 0 ] || pipeline_status=unreadable
-                    # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci's mapping step;
-                    # `none` is `no_run` here, because the initial check already proved CI is defined)
+                    # Map pipeline_status -> ci_status. The table below is the SAME TEXT in the
+                    # other poll round and in check-mr-ci.yaml (tests/test_ci_status_mapping.py
+                    # compares the three byte for byte); only the answer for an empty listing
+                    # differs — `no_run` here, because the initial check already proved this
+                    # branch defines CI.
                     STATUS=$(uv run --no-project python -c "
 import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
-if ps == 'success':
+none_is = sys.argv[2].strip() if len(sys.argv) > 2 else 'no_run'
+# Every state the two APIs answer, named. GitLab pipeline.status: created,
+# waiting_for_resource, preparing, pending, running, success, failed, canceled,
+# skipped, manual, scheduled. GitHub run status: queued, waiting, requested,
+# in_progress, pending, completed; conclusion: success, failure, cancelled, skipped,
+# timed_out, neutral, action_required, startup_failure, stale.
+running = ('created', 'waiting_for_resource', 'preparing', 'pending', 'running',
+           'scheduled', 'queued', 'waiting', 'requested', 'in_progress')
+# manual and action_required are pipelines parked on an operator: they never go green
+# on their own, so the gate reports them red instead of waiting out its budget.
+failed = ('failed', 'failure', 'canceled', 'cancelled', 'timed_out', 'stale',
+          'action_required', 'startup_failure', 'manual')
+# skipped and neutral are GREEN by choice: a run that had nothing to do is not a red
+# one, and a pipeline whose jobs were skipped reports 'success' for itself anyway.
+if ps in ('success', 'skipped', 'neutral'):
     print('passed')
-elif ps in ('failed', 'failure'):
+elif ps in failed:
     print('failed')
-elif ps in ('running', 'pending', 'queued', 'in_progress', 'unreadable'):
+elif ps in running:
     print('running')
 elif ps in ('none', ''):
-    print('no_run')
+    print(none_is)
 else:
-    print('no_ci')
-" "$pipeline_status")
+    # Never green by default: a state nobody named keeps the gate waiting.
+    print('running')
+" "$pipeline_status" no_run)
                     # An empty STATUS would store an empty ci_status matching none of the
                     # branches below.
                     [ -n "$STATUS" ] || STATUS=running
@@ -152,22 +170,40 @@ print('unreadable' if rs is None else (rs[0]['conclusion'] or rs[0]['status'] or
 ")
                         # Only a SUCCESSFUL empty listing may count as no_run (see the gitlab branch)
                         [ $cli_rc -eq 0 ] || pipeline_status=unreadable
-                        # Map atomic pipeline_status -> ci_status enum (mirrors check-mr-ci's mapping step;
-                        # `none` is `no_run` here, because the initial check already proved CI is defined)
+                        # Map pipeline_status -> ci_status. The table below is the SAME TEXT in the
+                        # other poll round and in check-mr-ci.yaml (tests/test_ci_status_mapping.py
+                        # compares the three byte for byte); only the answer for an empty listing
+                        # differs — `no_run` here, because the initial check already proved this
+                        # branch defines CI.
                         STATUS=$(uv run --no-project python -c "
 import sys
 ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
-if ps == 'success':
+none_is = sys.argv[2].strip() if len(sys.argv) > 2 else 'no_run'
+# Every state the two APIs answer, named. GitLab pipeline.status: created,
+# waiting_for_resource, preparing, pending, running, success, failed, canceled,
+# skipped, manual, scheduled. GitHub run status: queued, waiting, requested,
+# in_progress, pending, completed; conclusion: success, failure, cancelled, skipped,
+# timed_out, neutral, action_required, startup_failure, stale.
+running = ('created', 'waiting_for_resource', 'preparing', 'pending', 'running',
+           'scheduled', 'queued', 'waiting', 'requested', 'in_progress')
+# manual and action_required are pipelines parked on an operator: they never go green
+# on their own, so the gate reports them red instead of waiting out its budget.
+failed = ('failed', 'failure', 'canceled', 'cancelled', 'timed_out', 'stale',
+          'action_required', 'startup_failure', 'manual')
+# skipped and neutral are GREEN by choice: a run that had nothing to do is not a red
+# one, and a pipeline whose jobs were skipped reports 'success' for itself anyway.
+if ps in ('success', 'skipped', 'neutral'):
     print('passed')
-elif ps in ('failed', 'failure'):
+elif ps in failed:
     print('failed')
-elif ps in ('running', 'pending', 'queued', 'in_progress', 'unreadable'):
+elif ps in running:
     print('running')
 elif ps in ('none', ''):
-    print('no_run')
+    print(none_is)
 else:
-    print('no_ci')
-" "$pipeline_status")
+    # Never green by default: a state nobody named keeps the gate waiting.
+    print('running')
+" "$pipeline_status" no_run)
                         # An empty STATUS would store an empty ci_status (see the gitlab branch)
                         [ -n "$STATUS" ] || STATUS=running
                         if [ "$STATUS" != "running" ] && [ "$STATUS" != "no_run" ]; then

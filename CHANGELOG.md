@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CI gate reported green for every pipeline state it did not name.
+  `common/check-mr-ci.yaml` and both poll rounds of `common/wait-for-green-ci.yaml` mapped
+  anything unrecognised to `no_ci`, so GitLab's `created` / `preparing` / `scheduled` (the
+  first seconds of an MR pipeline) and any `canceled`, `timed_out` or `action_required` run
+  ended the gate green and `ci-status.json` said `{"status": "green"}`. The table now names
+  every state both APIs answer, sends an unknown one to `running`, calls `skipped`/`neutral`
+  green and `manual`/`action_required` red, and leaves `no_ci` / `no_run` to the caller as
+  the answer for an empty but successful listing. `tests/test_ci_status_mapping.py` keeps
+  the three copies of the table byte-identical.
+
 - Four CHECKs read a variable nothing had defined. `common/find-issue.yaml`
   (`lookup_after_create`), `common/post-dev-complete.yaml` (`review_producer`),
   `common/create-label.yaml` (`label_color`) and the `allow_merge` merge prompt relied on
