@@ -9,6 +9,11 @@
 #       GitLab API takes (hostname + URL-encoded project path).
 #   - source_branch (string): the MR/PR source branch (set by check-mr-ci). GitHub has no
 #       per-PR run listing, so this branch filter is what scopes the lookup to THIS MR.
+#   - head_sha (string, optional — seeded "" by check-config): the commit the caller pushed.
+#       The branch filter alone answers with the PREVIOUS commit's run until the platform
+#       registers the new head, so the lookup is pinned to this sha. EMPTY means the caller
+#       pushed nothing in this run (a standalone check-mr-ci), and the lookup falls back to
+#       the branch's / the MR's newest run — the answer this file has always given.
 #   - git_platform (from check-config): CI runs on the git remote, so it — not `platform` —
 #       chooses which CLI is used.
 # Output variables:
@@ -25,36 +30,49 @@
 # answer only while the two platforms coincide. check-config resolves both pairs once.
 - CHECK: git_platform eq "gitlab"
   TRUE:
-    # GitLab: fetch MR's latest pipeline (paginated, take first)
+    # GitLab: fetch the MR's pipeline FOR THE PUSHED COMMIT (paginated, newest first).
+    # The MR-scoped endpoint is what keeps this per-MR, and every entry it returns carries
+    # the `sha` it ran on — GitLab lists the pipeline of the previous head until the push
+    # hook fires, so the list is filtered here instead of taking [0] blind. No `?sha=`
+    # query: that parameter exists on the PROJECT pipelines endpoint, which would lose the
+    # MR scoping this atomic is for.
     - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate | uv run --no-project python -c "
 import json, sys
+sha = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 ps = json.load(sys.stdin)
-if ps:
-    print(str(ps[0]['id']))
-else:
-    print('')
-"
+if sha:
+    ps = [p for p in ps if p.get('sha') == sha]
+print(str(ps[0]['id']) if ps else '')
+" "{head_sha}"
       STORE: pipeline_id
     # GitLab: also fetch pipeline_status (separate RUN — multi-variable STORE has no precedent in this module; safer to split)
     - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate | uv run --no-project python -c "
 import json, sys
+sha = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 ps = json.load(sys.stdin)
+if sha:
+    ps = [p for p in ps if p.get('sha') == sha]
 print(ps[0]['status'] if ps else 'none')
-"
+" "{head_sha}"
       STORE: pipeline_status
   FALSE:
-    # GitHub: latest workflow run OF THE SOURCE BRANCH (rename run_id → pipeline_id for output unification).
+    # GitHub: the workflow run OF THE SOURCE BRANCH AND OF THE PUSHED COMMIT (rename
+    # run_id → pipeline_id for output unification).
     # Without --branch, `gh run list --limit 1` returns the newest run of the WHOLE repo, so any other
     # branch's red pipeline is reported as this MR's status. The repo is {mr_repo}, not {host}/{project}:
     # those differ when the git remote and the issue tracker are on different platforms.
-    - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
+    # `--commit` is the sha filter the API applies before --limit, so `--limit 1` still means
+    # "the newest run", but of THIS commit: Actions needs a few seconds to register a push and
+    # answers with the previous head's run until it has. An EMPTY --commit is no filter at all
+    # (verified against the API), which is exactly the fallback an unset head_sha wants.
+    - RUN: gh run list --limit 1 --branch "{source_branch}" --commit "{head_sha}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
 print(str(rs[0]['databaseId']) if rs else '')
 "
       STORE: pipeline_id
     # GitHub: pipeline_status from run's conclusion
-    - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
+    - RUN: gh run list --limit 1 --branch "{source_branch}" --commit "{head_sha}" -R "{mr_repo}" --json databaseId,status,conclusion | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
 print(rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else print('none')

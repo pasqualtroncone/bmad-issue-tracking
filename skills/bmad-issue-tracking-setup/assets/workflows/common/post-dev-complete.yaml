@@ -13,6 +13,9 @@
 #   - jobs: set by common/get-failed-jobs (via wait-for-green-ci) on failure — carried into ci-status.json diagnostic
 # Output variables:
 #   - issue_id: the issue IID (GitLab) or number (GitHub)
+#   - head_sha: the commit this phase pushed (dev-finish, review-finish) — every CI lookup
+#       under common/wait-for-green-ci filters on it, so the gate judges the pushed tree and
+#       not whichever run the platform happens to list first. Seeded "" by check-config.
 # Side effects: pushes branch, writes {worktree}/ci-status.json (dev-finish), creates/updates issues on tracker, creates/merges MR
 
 - INCLUDE: common/check-config
@@ -117,6 +120,14 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     
     - RUN: git commit --allow-empty -m "dev {story_key}" 2>/dev/null || true
     - RUN: git push -u origin HEAD
+    # The commit the gate below must judge. `gh run list --branch` and the MR's pipeline
+    # list answer with the PREVIOUS commit's run for the first seconds after a push, until
+    # the platform registers this one — so a gate that reads "the newest run of the branch"
+    # can report green over a tree CI never built (observed live: the run of e22efb6 read
+    # while 1ef97a3 had just been pushed). Every lookup from here on filters on this sha,
+    # and "no run for THIS sha yet" is `running`, never the run before it.
+    - RUN: git rev-parse HEAD
+      STORE: head_sha
     # Ensure issue exists (find or create)
     - INCLUDE: common/ensure-issue
     # common/ensure-mr reads its inputs from the caller's scope, so they are set here.
@@ -196,6 +207,11 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     
     - RUN: git commit --allow-empty -m "code review {story_key}" 2>/dev/null || true
     - RUN: git push -u origin HEAD
+    # The commit the gate below must judge — see the dev-finish phase for why the lookups
+    # cannot read "the newest run of the branch" this soon after a push. This phase is the
+    # one that merges, so an unpinned lookup here merges a tree CI never built.
+    - RUN: git rev-parse HEAD
+      STORE: head_sha
     # Find issue
     - SET: { variable: search_text, value: "{story_key}" }
     - INCLUDE: common/find-issue

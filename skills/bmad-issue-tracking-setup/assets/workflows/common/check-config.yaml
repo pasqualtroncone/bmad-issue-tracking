@@ -12,6 +12,7 @@
 #       REMOTE. Equal to the tracker's when git_platform eq platform; read from
 #       issue_tracking.git_host / git_project otherwise.
 #   - lookup_after_create: "" (the optional flag common/find-issue.yaml CHECKs)
+#   - head_sha: "" (the commit the CI lookups pin to; the phase that pushes overwrites it)
 #   - mr_repo: "{git_host}/{git_project}", the repo argument every MR/PR and CI step takes
 #   - worktree_base: base directory for worktrees (required — set by /bmad-issue-tracking-setup step 6)
 #   - branch_patterns: the configured branch patterns object
@@ -97,3 +98,9 @@ print(urllib.parse.quote(sys.argv[1], safe=''))
 # atomic every entry point INCLUDEs, always before any create — keeps that CHECK legal
 # without weakening §4.5 and without erasing a flag: nothing has raised it yet.
 - SET: { variable: lookup_after_create, value: "" }
+# head_sha is the commit every CI lookup filters on. Only a phase that PUSHES can know it,
+# so it is seeded empty here — the same reason and the same place as the flag above — and
+# common/post-dev-complete.yaml STOREs `git rev-parse HEAD` into it right after its push.
+# Empty means "no push in this run": the lookups then answer with the branch's newest run,
+# which is what a standalone common/check-mr-ci.yaml has always read.
+- SET: { variable: head_sha, value: "" }
