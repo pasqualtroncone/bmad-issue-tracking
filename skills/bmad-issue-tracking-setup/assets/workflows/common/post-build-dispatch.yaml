@@ -2,7 +2,9 @@
 #
 # Purpose: Dispatcher — reads the spec status set by the last step of bmad-build
 #          or bmad-build-auto, and routes to the right phase of post-dev-complete.
-#          Invoked from the on_complete hook of bmad-build and bmad-build-auto.
+#          Never an entry point: the hooks reach it through their wrappers
+#          (post-build-dispatch-interactive.yaml, post-build-dispatch-auto.yaml),
+#          which seed allow_merge and review_producer first.
 # Input variables: (none — dispatcher reads spec itself)
 # Output variables: (none)
 # Side effects: dispatches to common/post-dev-complete with phase set

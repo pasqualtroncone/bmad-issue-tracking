@@ -69,9 +69,8 @@ print(''.join(lines[start:]).strip())
         - SET: { variable: issue_ref, value: "Related to https://{host}/{project}/-/issues/{issue_id}" }
       FALSE:
         - SET: { variable: issue_ref, value: "Related to https://{host}/{project}/issues/{issue_id}" }
-# mr_repo (the git remote's "host/project") comes from check-config, which resolves
-# the remote's coordinates once. The block that stood here split git_project into an
-# owner and a repo and joined them back with a slash, which only renamed the string.
+# mr_repo (the git remote's "host/project") comes from check-config; `gh -R` and
+# `glab -R` take owner/repo whole, so it is never split.
 # Write the cross-platform issue reference to a tmp file (the atomic reads from this path)
 - WRITE:
     file: /tmp/ensure-mr-prd-desc-{prd_key}.md

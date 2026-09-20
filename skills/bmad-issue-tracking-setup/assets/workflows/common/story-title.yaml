@@ -16,19 +16,11 @@
 #       composes "Story {epic}.{story}: {story_title}" and owns the empty-title wording.
 # Side effects: none
 #
-# There were two copies of this parser — ensure-issue.yaml and sync-issues.yaml — and they
-# disagreed on the case that matters. sync-issues honoured a title that already began with
-# "Story ", ensure-issue did not; ensure-issue stripped a "Story N.M:" prefix only when the
-# title came from an H1, never from the frontmatter. So a spec whose frontmatter reads
-# `title: 'Story 1.1: Login Form'` — the shape BMM's own template invites — produced
-# "Story 1.1: Story 1.1: Login Form" on the ensure-issue path and "Story 1.1: Login Form"
-# on the sync path. That string IS the identity create-issue.yaml dedupes by, so the two
-# paths created and then re-adopted two different issues for one story.
-#
-# The RESOLUTION had the same split: ensure-issue tried two candidates, this file five, so
-# in sprint mode with an empty {spec_file} ensure-issue read no body at all while the spec
-# sat at spec-<storyId>-<slug>.md, which the glob below finds. It is one step now and
-# spec_path is an OUTPUT: the caller takes the file from here instead of resolving its own.
+# This file is the ONLY copy of the rule. ensure-issue.yaml and sync-issues.yaml both
+# INCLUDE it, for the spec path as well as the title: a spec whose frontmatter reads
+# `title: 'Story 1.1: Login Form'` must produce the same string on both paths, because
+# that string is the identity create-issue.yaml dedupes by. spec_path is an OUTPUT, so a
+# caller takes the file from here instead of resolving one of its own.
 #
 # The candidate order: the path the caller resolved, then the path the runtime resolved,
 # then the producer names — sprint mode writes spec-<storyId>-<slug>.md, stories mode

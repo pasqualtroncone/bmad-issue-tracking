@@ -4,7 +4,9 @@
 # Input variables: pipeline_id (gitlab pipeline id) or pipeline_id (github workflow run id);
 #   git_platform, git_host, git_project_enc (from check-config) — the jobs belong to the
 #   git remote's CI, so they are looked up in the REMOTE's project, not the tracker's.
-# Output variables: jobs (newline-separated JSON: each line {name, exitCode, trace_tail})
+# Output variables: jobs — a diagnostic blob displayed as-is, NOT parsed: GitLab prints
+#   one TSV line per failed job (name, exit_code, trace_tail), GitHub the raw
+#   `gh run view --log-failed` text. The caller says the same at wait-for-green-ci.yaml.
 # Side effects: none (read-only; fetches job metadata and trace tails)
 #
 # Platform selection: CI jobs belong to the GIT REMOTE, so the two steps are chosen by

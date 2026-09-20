@@ -30,9 +30,10 @@
 #   - allow_merge: "" (the unattended flow never offers the interactive merge prompt)
 #   - worktree: the worktree root, captured here because the marker lives in it
 #   - ci_handled: non-empty when the caller owns the post-completion chain
-# Side effects: when the marker is ABSENT, dispatches to common/post-build-complete with
-#               phase set (and so pushes, writes ci-status.json, updates the issue and
-#               ensures the MR). When the marker is PRESENT, none of that happens.
+# Side effects: when the marker is ABSENT, INCLUDEs common/post-build-dispatch, which
+#               routes to common/post-dev-complete with phase set (and so pushes, ensures
+#               the issue and the MR, writes ci-status.json and updates the issue). When
+#               the marker is PRESENT, none of that happens.
 #
 # `pwd` first: {worktree} is not in scope in this file (post-dev-complete.yaml sets it the
 # same way at its own top). The hook runs with cwd = the story worktree — both of

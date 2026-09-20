@@ -12,24 +12,19 @@
 #       adopted by title). common/find-issue.yaml reads it to decide whether its next
 #       key-shaped GitHub lookup is worth re-checking; see the note at the end.
 # Side effects: creates an issue on the issue tracker if it does not already exist;
-#               writes and removes {description_file}.title
+#               creates every label in {labels} that the tracker does not have yet
+#               (via common/create-label); writes and removes {description_file}.title
 # Requires: host and project in scope (provided by common/check-config via callers)
 #
-# THE TITLE NEVER TOUCHES THE COMMAND LINE. It used to be interpolated inside double
-# quotes three times (`-f "search={title}"`, the python argv `"{title}"`, `gh issue
-# create --title "{title}"`), and story titles come from user-typed spec frontmatter: a
-# double quote made the shell split the command (syntax error → halt on every dev-finish
-# of that story), a `$(…)` was EXECUTED before the CLI saw it. Same class as D09, which
-# ensure-mr.yaml fixed by handing the body to the CLI as a file. Here the title is
-# written to a file with WRITE (no shell involved at all) and every step reads it back in
-# python, which then calls gh/glab with an ARGUMENT LIST — no shell, no quoting.
+# THE TITLE NEVER TOUCHES THE COMMAND LINE. Story titles come from user-typed spec
+# frontmatter, where a double quote splits the command and a `$(…)` is executed before
+# the CLI sees it. The title is written to a file with WRITE (no shell at all) and every
+# step reads it back in python, which calls gh/glab with an ARGUMENT LIST.
 #
 # The staging file is named after {description_file}, which every caller already makes
-# per-entity (/tmp/issue-desc-<key>.md, /tmp/prd-desc-<key>.md, ...). A FIXED /tmp path is
-# not safe here: the title is the identity this file dedupes by, so two hooks running at
-# once — two sessions, or the lab on a second consumer — could have run B overwrite the
-# file between run A's WRITE and its read, and A would create an issue under B's title
-# that neither exact-title lookup finds again.
+# per-entity (/tmp/issue-desc-<key>.md, /tmp/prd-desc-<key>.md, ...). A FIXED /tmp path
+# is not safe: the title is the identity this file dedupes by, so two hooks running at
+# once could swap titles between one run's WRITE and its read.
 #
 # `capture_output=True` is what makes the argument list possible, and it also swallows the
 # CLI's stderr — the ONLY place a create says why it failed (unknown label, missing scope,

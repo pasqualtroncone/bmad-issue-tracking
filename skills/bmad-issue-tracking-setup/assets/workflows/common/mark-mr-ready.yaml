@@ -5,7 +5,8 @@
 # Input variables: (none — uses platform, git_platform, mr_repo, prd_key, branch_patterns
 #   from scope; mr_repo is the git remote's "host/project", resolved once by check-config)
 # Output variables: (none)
-# Side effects: marks draft MR/PR as ready on the issue tracker
+# Side effects: marks the draft MR/PR ready on the GIT REMOTE (the MR does not live on
+#   the issue tracker)
 
 # Check if all epics have status "done"
 - READ: {implementation_artifacts}/sprint-status.yaml
@@ -33,7 +34,7 @@ print('yes' if all_done and epic_found else 'no')
 # literally turned into a halt of the whole sync.
 - CHECK: all_epics_done eq "yes"
   TRUE:
-    # Resolve PRD branch and default branch
+    # Resolve the PRD branch — the source branch whose MR/PR is marked ready
     - READ: _bmad/custom/issue-tracking.yaml
       EXTRACT:
         prd_pattern: issue_tracking.branch_patterns.prd
@@ -42,12 +43,8 @@ import sys
 print(sys.argv[1].replace('{prd_key}', sys.argv[2]))
 " {prd_pattern} {prd_key}
       STORE: prd_branch
-    - RUN: git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'
-      STORE: default_branch
-    # mr_repo (the git remote's "host/project") comes from check-config. The block that used
-    # to stand here split git_project into an owner and a repo and joined them back with a
-    # slash — `gh -R` takes owner/repo whole, so the round trip only produced a second name
-    # for the same string, and check-config never defined the git_owner/git_repo it used.
+    # mr_repo (the git remote's "host/project") comes from check-config; `gh -R` and
+    # `glab -R` take owner/repo whole, so it is never split.
     # Find MR/PR by source branch (atomic returns mr_iid, empty if none)
     - SET: { variable: source_branch, value: "{prd_branch}" }
     - INCLUDE: common/find-mr

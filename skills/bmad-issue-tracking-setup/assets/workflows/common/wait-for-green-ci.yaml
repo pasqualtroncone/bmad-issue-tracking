@@ -57,14 +57,8 @@
 # default, 600 s at most), so a single RUN that blocks for the whole budget is killed
 # before it prints anything, ci_status is never stored and common/write-ci-status never
 # writes ci-status.json. Each iteration below runs ONE bounded RUN of at most 4 polls
-# x 25 s; the LOOP supplies the repetition.
-#
-# 4 polls, not 8: a round of 8 blocks ~200 s, and the 120 s DEFAULT of that same tool is
-# the very cap this shape exists to respect — the round only survived where the
-# interpreter had raised the timeout, and where it had not, the round was killed,
-# ci_status was never stored and ci-status.json was never written: the symptom the split
-# into rounds was meant to remove. ~100 s leaves the round inside the default cap, and
-# the rounds are doubled so the 30-minute budget is unchanged.
+# x 25 s (~100 s, inside that 120 s DEFAULT); the LOOP supplies the repetition, and 18
+# rounds of it keep the 30-minute budget.
 #
 # poll_rounds is the literal list 1..18, one number per line. The numbers are never read —
 # they only make the LOOP body run eighteen times.
