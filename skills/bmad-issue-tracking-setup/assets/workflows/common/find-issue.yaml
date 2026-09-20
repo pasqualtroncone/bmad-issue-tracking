@@ -83,7 +83,8 @@ print(str(match[0]['iid']) if match else '')
 # common/create-issue.yaml raises right after a successful create. An unset flag reads
 # FALSE (the optional-flag idiom `review_producer` uses in post-dev-complete.yaml), so a
 # caller that never creates keeps the single-shot lookup and returns on the miss at once.
-# A `gh` failure raises (check=True) and the step exits non-zero, as #32 requires.
+# A `gh` failure raises (check=True) and the step exits non-zero, as #32 requires — with
+# the CLI's own stderr, which capture_output=True would otherwise swallow.
 # GitLab's REST `search=` is not index-backed and needs none of this.
 - CHECK: lookup_after_create eq "true"
   TRUE:
@@ -139,10 +140,14 @@ for attempt in range(attempts):
     if attempt == attempts - 1:
         break
     time.sleep(3)
-    text = subprocess.run(
-        ['gh', 'api', sys.argv[2], '--hostname', sys.argv[3], '--paginate'],
-        capture_output=True, text=True, check=True
-    ).stdout
+    try:
+        text = subprocess.run(
+            ['gh', 'api', sys.argv[2], '--hostname', sys.argv[3], '--paginate'],
+            capture_output=True, text=True, check=True
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write(e.stderr or '')
+        sys.exit(e.returncode or 1)
 print(found)
 " "{search_text}" "repos/{project}/issues?state=all&per_page=100&labels=prd{sep}{prd_key}" {host} {lookup_attempts}
       STORE: issue_id

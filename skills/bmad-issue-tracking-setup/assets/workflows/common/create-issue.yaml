@@ -23,6 +23,12 @@
 # ensure-mr.yaml fixed by handing the body to the CLI as a file. Here the title is
 # written to a file with WRITE (no shell involved at all) and every step reads it back in
 # python, which then calls gh/glab with an ARGUMENT LIST — no shell, no quoting.
+#
+# `capture_output=True` is what makes the argument list possible, and it also swallows the
+# CLI's stderr — the ONLY place a create says why it failed (unknown label, missing scope,
+# rate limit). Every wrapper below therefore catches CalledProcessError, writes e.stderr to
+# its own stderr and exits with the CLI's code, so the step fails with the CLI's message
+# instead of a traceback about a variable the caller never sees.
 
 - WRITE:
     file: /tmp/issue-title.txt
@@ -116,7 +122,11 @@ print(','.join(labels))
 - RUN: uv run --no-project python -c "
 import subprocess, sys
 title = open(sys.argv[1], encoding='utf-8').read().strip()
-out = subprocess.run(['glab', 'api', '--method', 'POST', 'projects/{project_enc}/issues', '--hostname', '{host}', '-f', 'title=' + title, '-F', 'description=@{description_file}', '-f', 'labels={label_arg}'], capture_output=True, text=True, check=True).stdout
+try:
+    out = subprocess.run(['glab', 'api', '--method', 'POST', 'projects/{project_enc}/issues', '--hostname', '{host}', '-f', 'title=' + title, '-F', 'description=@{description_file}', '-f', 'labels={label_arg}'], capture_output=True, text=True, check=True).stdout
+except subprocess.CalledProcessError as e:
+    sys.stderr.write(e.stderr or '')
+    sys.exit(e.returncode or 1)
 print(out.strip())
 " /tmp/issue-title.txt
   STORE: create_result
@@ -124,7 +134,11 @@ print(out.strip())
 - RUN: uv run --no-project python -c "
 import subprocess, sys
 title = open(sys.argv[1], encoding='utf-8').read().strip()
-out = subprocess.run(['gh', 'issue', 'create', '--title', title, '--body-file', '{description_file}', '--label', '{label_arg}', '-R', '{host}/{project}'], capture_output=True, text=True, check=True).stdout
+try:
+    out = subprocess.run(['gh', 'issue', 'create', '--title', title, '--body-file', '{description_file}', '--label', '{label_arg}', '-R', '{host}/{project}'], capture_output=True, text=True, check=True).stdout
+except subprocess.CalledProcessError as e:
+    sys.stderr.write(e.stderr or '')
+    sys.exit(e.returncode or 1)
 print(out.strip())
 " /tmp/issue-title.txt
   STORE: create_result

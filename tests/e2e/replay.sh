@@ -572,6 +572,25 @@ except Exception as e:
   else
     verdict $c CONFIRMED "create-issue.yaml:$lx does not recover the issue number from the create output: created #$want, extracted '#${got:-(empty)}' (rc=$(cat "$d/extract.rc")) from '$(head -c 80 "$d/create.out" | tr -d '\n')'"
   fi
+  # --- R14 (#67): a create that fails must say WHY ---------------------------
+  # The wrapper runs the CLI with capture_output=True (the argument list is what keeps the
+  # title off the command line, #53), and that swallows the CLI's stderr — the only place
+  # an unknown label, a missing scope or a rate limit is reported. Rendered against a
+  # repository that does not exist: the step must exit non-zero AND carry gh's own message,
+  # not a traceback about a variable the caller never sees.
+  printf '%s' "R14 probe $(date +%s)" > /tmp/issue-title.txt
+  replay $c create-fail common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x}"
+  rm -f /tmp/issue-title.txt
+  local frc ftrace=0 fbytes
+  frc="$(cat "$d/create-fail.rc")"; fbytes="$(wc -c < "$d/create-fail.err")"
+  grep -q 'Traceback (most recent call last)' "$d/create-fail.err" && ftrace=1
+  { echo "create against a repo that does not exist: rc=$frc, stderr ${fbytes}B, python traceback=$ftrace"
+    echo "stderr: $(head -c 300 "$d/create-fail.err" | tr '\n' ' ')"; } > "$d/r14-summary.txt"; cat "$d/r14-summary.txt" >&2
+  if [ "$frc" != 0 ] && [ "$fbytes" -gt 0 ] && [ "$ftrace" = 0 ]; then
+    verdict $c-R14 REFUTED "create-issue.yaml:$lc fails with the CLI's reason: against $GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x} it exits $frc and writes gh's own ${fbytes} bytes to stderr ('$(head -c 120 "$d/create-fail.err" | tr '\n' ' ')'), with no python traceback. The wrapper catches CalledProcessError and re-emits e.stderr; before that, capture_output=True swallowed it and the step died on a NameError about 'out'"
+  else
+    verdict $c-R14 CONFIRMED "create-issue.yaml:$lc hides why the create failed: rc=$frc, stderr ${fbytes}B, python traceback=$ftrace — '$(head -c 200 "$d/create-fail.err" | tr '\n' ' ')'"
+  fi
 }
 
 case_r3() {  # #49 — an empty run list seconds after a push must not read as "no CI"

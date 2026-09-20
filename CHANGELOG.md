@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A failed issue create showed a python traceback instead of the reason. The
+  `subprocess.run(..., capture_output=True, check=True)` wrappers in
+  `common/create-issue.yaml` and the retry in `common/find-issue.yaml` discarded the CLI's
+  stderr, which is the only place gh/glab report an unknown label, a missing scope or a
+  rate limit. They now catch `CalledProcessError`, re-emit `e.stderr` and exit with the
+  CLI's code.
+
 - A hook could label, comment on and link issue `""`. `common/ensure-issue.yaml` resolved
   the story spec from two candidates while `common/story-title.yaml`, INCLUDEd two steps
   below, resolved it from five: in sprint mode with an empty `{spec_file}` the body came
