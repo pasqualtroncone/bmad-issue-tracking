@@ -6,7 +6,8 @@ Does NOT recurse into branches (same limitation as variable flow).
 TestGitPlatformSelection adds the other half: which of the two selection channels a step
 is allowed to use. `PLATFORM:` is the ISSUE TRACKER's channel; a step that talks to the
 GIT REMOTE (MR/PR, CI) is selected by `CHECK: git_platform eq ...` and carries no
-annotation. It recurses (raw-line scan), so it does see the nested poll RUNs.
+annotation. It scans the raw YAML lines, which keeps the check independent of the parser
+and covers the nested poll RUNs of wait-for-green-ci.
 """
 
 import re
@@ -63,9 +64,10 @@ class TestPlatformCoverage:
 # only annotate tracker steps. A step that talks to the GIT REMOTE (MR/PR, CI) carries no
 # annotation and is selected by `CHECK: git_platform eq "gitlab"`.
 #
-# The checks below scan the raw YAML lines instead of conftest's step tree on purpose: the
-# parser drops steps nested LOOP→CHECK→RUN (S9), and the poll RUNs of wait-for-green-ci —
-# the ones whose stray `PLATFORM:` is what this rule exists to forbid — live exactly there.
+# The checks below scan the raw YAML lines rather than conftest's step tree on purpose:
+# the raw-line scan keeps the check independent of the parser, and the poll RUNs of
+# wait-for-green-ci — the ones whose stray `PLATFORM:` is what this rule exists to
+# forbid — are nested LOOP→CHECK→RUN.
 
 CLI_RUN_RE = re.compile(r"^(\s*)- RUN: (?:set -o pipefail; )?(gh|glab) ")
 CHECK_LINE_RE = re.compile(r"^(\s*)- CHECK: (.+)$")
