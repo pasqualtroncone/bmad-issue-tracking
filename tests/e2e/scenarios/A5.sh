@@ -16,8 +16,13 @@ log "waiting for the story branch CI to finish so the gate is deterministic"; wa
 rm -f "$WT/ci-status.json"
 TOML=bmad-build-auto; [ "$MODE" = interactive ] && TOML=bmad-build
 D="$("$E2E_ROOT/run-hook.sh" --case $C --worktree "$WT" --toml $TOML --var "spec_file=$SPEC_REL" --tag "$MODE")"
-n="$(story_issues | grep -F 'Story 1.1' | head -1 | cut -f1 | tr -d '#')"
-state="$(story_issues | grep -F 'Story 1.1' | head -1 | cut -f3,4)"
+# EXACT title, not a prefix: 'Story 1.1' also matches 'Story 1.10: Login Form Extended',
+# the prefix-collision fixture d19/g06 seeds, and the listing is newest-first — so the
+# verdict was read off that issue (OPEN, status:backlog) while the hook had closed the
+# right one. The title is the identity create-issue dedupes by, so match it whole.
+row="$(story_issues | awk -F'\t' '$2 == "Story 1.1: Login Form"' | head -1)"
+n="$(printf '%s' "$row" | cut -f1 | tr -d '#')"
+state="$(printf '%s' "$row" | cut -f3,4)"
 comments="$([ -n "$n" ] && gh issue view "$n" -R "$REPO_GH" --json comments --jq '.comments | length' || echo 0)"
 ci="$(cat "$WT/ci-status.json" 2>/dev/null || echo absent)"
 notes="issue=#$n state=$state comments=$comments ci-status.json=$ci merged=$(gh pr list -R "$REPO_GH" --state merged --head "feat/$PRD_KEY/1-1-login-form" --json number --jq 'length') improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]') cost=\$$(rj "$D" 'round(r["result"]["total_cost_usd"] or 0,2)'); final: $(tail -c 250 "$D/final.txt" | tr '\n' ' ')"
