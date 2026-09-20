@@ -497,6 +497,8 @@ These variables are resolved at workflow execution time:
 
 If a referenced variable is not defined at the point of reference, the workflow stops with an error naming the missing variable.
 
+This is strict, and it applies to `CHECK` conditions exactly as it applies to `{placeholder}` substitution: there is no "an unset variable reads as empty/false" shortcut, and `empty x` in section 3 describes the value of a variable that IS defined. **A CHECK — and any other step — may only read a variable that is predefined (section 4.4), SET on every path that reaches the step, or an output of a sub-workflow the step is INCLUDEd after.** An optional flag is therefore not an unset variable but one whose default is `SET` at the entry point: `common/check-config.yaml` seeds `lookup_after_create`, the `post-dev-complete` wrappers seed `review_producer` and `allow_merge`, `common/ensure-labels.yaml` and `common/create-issue.yaml` seed `label_color`. Interpreters have read the lenient and the strict reading on the same file, so the workflows keep to the strict one.
+
 ---
 
 ## 5. Error Handling

@@ -8,8 +8,9 @@
 #       percent-encodes it: a space or a colon ("PRD: mobile-oidc", "Epic 1:") is safe.
 #   - prd_key: the PRD key (from scope, for label scoping)
 #   - lookup_after_create: "true" when a create already happened in THIS run (raised by
-#       common/create-issue.yaml). Optional — an unset flag reads FALSE. Only the
-#       key-shaped GitHub lookup reads it; see the retry note below.
+#       common/create-issue.yaml), "" otherwise — seeded by common/check-config.yaml,
+#       because lang §4.5 stops a run on a CHECK that reads an undefined variable. Only
+#       the key-shaped GitHub lookup reads it; see the retry note below.
 # Output variables:
 #   - issue_id: the issue IID (GitLab) or number (GitHub); empty string if not found
 #   - lookup_after_create: always "false" on return — the flag marks ONE lookup
@@ -80,9 +81,10 @@ print(str(match[0]['iid']) if match else '')
 # entry for an issue nobody had created yet: a 30-entry first sync slept ~4.5 minutes and
 # spent the REST budget to learn what it already knew. The re-check is only ever right
 # when a create has already happened in THIS run, so it is gated on the flag
-# common/create-issue.yaml raises right after a successful create. An unset flag reads
-# FALSE (the optional-flag idiom `review_producer` uses in post-dev-complete.yaml), so a
-# caller that never creates keeps the single-shot lookup and returns on the miss at once.
+# common/create-issue.yaml raises right after a successful create. The flag is not an
+# UNSET variable: lang §4.5 halts a CHECK that reads one, so common/check-config.yaml
+# seeds it "" at the top of every entry point and a caller that never creates keeps the
+# single-shot lookup and returns on the miss at once.
 # A `gh` failure raises (check=True) and the step exits non-zero, as #32 requires — with
 # the CLI's own stderr, which capture_output=True would otherwise swallow.
 # GitLab's REST `search=` is not index-backed and needs none of this.

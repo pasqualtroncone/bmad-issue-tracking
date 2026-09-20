@@ -286,9 +286,10 @@ print(body)
         # (bmad-build: one row per finding; bmad-code-review via its on_complete hook),
         # so for them a missing section is legitimate and only warns.
         # review_producer is set by common/post-build-dispatch-auto.yaml — a workflow
-        # step, not hook prose — and is absent on every other path. allow_merge cannot
-        # be used for this: it marks the interactive merge prompt and is unset on BOTH
-        # the unattended and the bmad-code-review paths.
+        # step, not hook prose — and seeded "" by the other three entry wrappers, because
+        # lang §4.5 stops a run on a CHECK that reads an undefined variable. allow_merge
+        # cannot be used for this: it marks the interactive merge prompt and is "" on
+        # BOTH the unattended and the bmad-code-review paths.
         #
         # The warn branch must clear review_section: the block below posts whatever the
         # variable holds, so leaving the sentinel there would post the literal string

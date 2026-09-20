@@ -47,6 +47,9 @@
 # was immediately followed by a halt with merge_sha empty, on every GitHub merge the
 # review-finish prompt performed. `glab api` has always taken its host that way.
 
+# `error` is a documented OUTPUT and the success path never assigns it, so a caller
+# reading {error} after a good merge hit lang §4.5. Empty is the honest value: no error.
+- SET: { variable: error, value: "" }
 - SET: { variable: gl_merge_out, value: "" }
 - SET: { variable: gh_merge_out, value: "" }
 - CHECK: git_platform eq platform

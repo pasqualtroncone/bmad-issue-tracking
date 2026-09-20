@@ -2,8 +2,15 @@
 #
 # Purpose: Wrapper — sets phase=dev-finish then INCLUDEs the unified workflow.
 # Input variables: (none — phase is set by this wrapper)
-# Output variables: (none)
+# Output variables:
+#   - review_producer, allow_merge: "" — the optional flags post-dev-complete CHECKs
 # Side effects: dispatches to common/post-dev-complete with phase=dev-finish
 
+# Optional-flag defaults (lang §4.5): common/post-dev-complete.yaml CHECKs both, and a
+# CHECK may only read a variable that is predefined, SET on every path, or an INCLUDE
+# output. Neither flag belongs to this flow, and "" is what "not this producer / no merge
+# prompt" has always meant.
+- SET: { variable: review_producer, value: "" }
+- SET: { variable: allow_merge, value: "" }
 - SET: { variable: phase, value: "dev-finish" }
 - INCLUDE: common/post-dev-complete

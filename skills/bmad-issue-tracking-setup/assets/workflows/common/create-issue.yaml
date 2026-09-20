@@ -115,6 +115,11 @@ for label in labels:
     print(label)
 " "{labels}"
   STORE: label_list
+# common/create-label.yaml branches on `empty label_color`, so the variable must be
+# defined before the LOOP (lang §4.5). "" is the value this caller means: these labels
+# take whatever colour the tracker picks, and a colour left in scope by an earlier
+# common/ensure-dynamic-labels would otherwise paint them an epic's.
+- SET: { variable: label_color, value: "" }
 - LOOP:
     items: label_list
     as: label_name

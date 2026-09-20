@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Four CHECKs read a variable nothing had defined. `common/find-issue.yaml`
+  (`lookup_after_create`), `common/post-dev-complete.yaml` (`review_producer`),
+  `common/create-label.yaml` (`label_color`) and the `allow_merge` merge prompt relied on
+  an "optional-flag idiom" — an unset variable reading false — that
+  `bmad-workflow-lang.md` §4.5 contradicts, and a strict interpreter halts there;
+  `common/merge-mr.yaml` declared an `error` output its success path never assigned. §4.5
+  now states the rule explicitly (a CHECK may only read a variable that is predefined, SET
+  on every path, or an INCLUDE output), the defaults are SET at the entry points, and
+  `tests/test_optional_variables.py` walks the INCLUDE graph to keep them there.
+
 - An epic's issue description carried every later epic. The body extraction in
   `common/sync-issues.yaml` searched for `^## Epic <n>:` only, so it found a single header,
   the end offset fell back to the end of the file and epic 1's issue repeated epics 2..N in
