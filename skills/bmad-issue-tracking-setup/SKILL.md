@@ -51,20 +51,20 @@ cp -f <path>/custom/*.toml _bmad/custom/
 <action>Remove any `bmad-*.toml` files in `_bmad/custom/` that no longer exist in the source (files may have been renamed or removed in a new version).</action>
 
 <action>The following TOML files should now exist in `_bmad/custom/`:</action>
-- `bmad-build.toml` (requires BMM 6.11.0+; manual one-shot flow — push + wait CI + update issue + post comment on completion)
-- `bmad-build-auto.toml` (requires BMM 6.11.0+; bmad-loop flow — same unified dispatch as bmad-build)
-- `bmad-code-review.toml` (requires BMM 6.11.0+; delegates to common/post-dev-complete-review-finish.yaml)
-- `bmad-correct-course.toml` (requires BMM 6.11.0+)
-- `bmad-create-architecture.toml` (requires BMM 6.11.0+)
-- `bmad-create-epics-and-stories.toml` (requires BMM 6.11.0+)
-- `bmad-create-prd.toml` (requires BMM 6.11.0+, superseded by bmad-prd.toml)
-- `bmad-create-story.toml` (requires BMM 6.11.0+; shim — deprecated upstream, bmad-build is the official path. Delegates to common/post-dev-complete-create-story.yaml)
-- `bmad-dev-story.toml` (requires BMM 6.11.0+; shim — deprecated upstream, bmad-build is the official path. Delegates to common/post-dev-complete-dev-finish.yaml)
-- `bmad-edit-prd.toml` (requires BMM 6.11.0+, superseded by bmad-prd.toml)
-- `bmad-prd.toml` (requires BMM 6.11.0+; unified PRD override)
-- `bmad-retrospective.toml` (requires BMM 6.11.0+)
-- `bmad-sprint-planning.toml` (requires BMM 6.11.0+; owns the sprint-status artifact)
-- `bmad-sprint-status.toml` (requires BMM 6.11.0+; consolidated into bmad-sprint-planning, retained as shim alias)
+- `bmad-build.toml` (manual one-shot flow — push + wait CI + update issue + post comment on completion)
+- `bmad-build-auto.toml` (bmad-loop flow — same unified dispatch as bmad-build)
+- `bmad-code-review.toml` (delegates to common/post-dev-complete-review-finish.yaml)
+- `bmad-correct-course.toml`
+- `bmad-create-architecture.toml`
+- `bmad-create-epics-and-stories.toml`
+- `bmad-create-prd.toml` (superseded by bmad-prd.toml)
+- `bmad-create-story.toml` (shim — deprecated upstream, bmad-build is the official path. Delegates to common/post-dev-complete-create-story.yaml)
+- `bmad-dev-story.toml` (shim — deprecated upstream, bmad-build is the official path. Delegates to common/post-dev-complete-dev-finish.yaml)
+- `bmad-edit-prd.toml` (superseded by bmad-prd.toml)
+- `bmad-prd.toml` (unified PRD override)
+- `bmad-retrospective.toml`
+- `bmad-sprint-planning.toml` (owns the sprint-status artifact)
+- `bmad-sprint-status.toml` (consolidated into bmad-sprint-planning, retained as shim alias)
 - `bmad-ux.toml` (replaces bmad-create-ux-design, retired in BMM 6.8.0)
 
 <action>Note: All TOML files are in pointer format — they reference workflow YAML files deployed in step 3.</action>
@@ -244,7 +244,7 @@ cp -rf <path>/workflows/* _bmad/_config/custom/workflows/
     issue_tracking:
       enabled: true
       platform: gitlab  # or github — configure in next step
-      # worktree_base, host, project configured in steps 4-5
+      # worktree_base configured in step 6, host/project in step 7
     ```
   </false>
 </check>
