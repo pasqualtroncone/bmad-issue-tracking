@@ -6,7 +6,8 @@
 #   - new_status: the target status (e.g. "review", "done", "in-progress")
 #   - close: "true" to close the issue, "false" to reopen it, "none" to skip state change
 # Output variables: (none)
-# Side effects: updates issue labels and state on the issue tracker
+# Side effects: creates the target status label if it does not exist yet; updates issue
+#   labels and state on the issue tracker
 
 # GitLab: fetch current labels, filter out old status::*, append new, send full set
 - RUN: glab api "projects/{project_enc}/issues/{issue_id}" --hostname {host} --paginate
@@ -33,7 +34,17 @@ print(','.join(labels))
     - RUN: gh issue edit {issue_id} --remove-label "{old_github_status}" -R "{host}/{project}"
       PLATFORM: github
       EXPECT_EXIT: 0
-- RUN: gh issue edit {issue_id} --add-label "status:{new_status}" -R "{host}/{project}"
+# The label has to EXIST before it can be added. `gh issue edit --add-label` fails on an
+# unknown label, and the static status labels are created by common/ensure-labels, which
+# only issue-sync/prepare runs — so a dev-finish hook on a fresh repo reached the edit
+# with no `status:*` label anywhere and the hook died there (#59). create-label is
+# idempotent on both trackers, so the fix costs one call that almost always no-ops. It is
+# a top-level step on purpose: GitLab creates labels on the fly through the PUT above, but
+# the board columns and the label colours still want the label to exist by itself.
+- SET: { variable: label_name, value: "status{sep}{new_status}" }
+- SET: { variable: label_color, value: "" }
+- INCLUDE: common/create-label
+- RUN: gh issue edit {issue_id} --add-label "status{sep}{new_status}" -R "{host}/{project}"
   PLATFORM: github
   EXPECT_EXIT: 0
 # State change: close, reopen, or skip

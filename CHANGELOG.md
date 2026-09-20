@@ -49,6 +49,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A sync could die at its second step. `bmad-workflow-lang.md` section 2.10 said `STOP`
+  "halts workflow execution immediately", while the workflow files used `- STOP` as
+  "return from this sub-workflow"; two headless interpreters read the same step two
+  different ways and one ended the whole sync at `common/find-prd-key.yaml`, where the
+  step means "prd_key is already known, carry on". The spec now defines STOP as a return
+  to the `INCLUDE` caller with every variable in scope, names `OUTPUT ... stop: true` as
+  the only way to end a run from inside a sub-workflow (sections 2.1, 2.5, 5 say the same
+  thing), and the guards that only needed the return are gone: `common/find-prd-key.yaml`
+  and `common/find-prd.yaml` keep just their failure branch, `common/ensure-board.yaml`
+  and `common/mark-mr-ready.yaml` gate their body on the positive condition, and the two
+  dead post-poll guards in `common/wait-for-green-ci.yaml` are removed. The five STOPs
+  left are real returns and say so.
+- A dev-finish on a fresh repository failed at the issue update. On GitHub
+  `gh issue edit --add-label` errors on a label the repository has never seen, and the
+  static `status:*` labels are created by `common/ensure-labels.yaml`, which only
+  `issue-sync/prepare.yaml` runs — so the first hook to touch an issue before any sync
+  had run hit an unknown label. `common/update-issue-status.yaml` now INCLUDEs
+  `common/create-label` for `status{sep}{new_status}` before the edit (idempotent, both
+  trackers), and the edit itself uses `{sep}` instead of a hardcoded `status:`.
 - One story could end up with two issues. `ensure-issue.yaml` and `sync-issues.yaml` each
   carried their own story-title parser and the copies had drifted: sync-issues let a title
   that already began with `Story ` through untouched, ensure-issue stripped a `Story N.M:`

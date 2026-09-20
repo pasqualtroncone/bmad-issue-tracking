@@ -52,6 +52,8 @@ Inserts all steps from the referenced sub-workflow at this position. Execution c
 
 **Variable scope:** Variables defined in the parent scope are accessible within the included sub-workflow. Variables defined within the sub-workflow are accessible in the parent scope after the INCLUDE returns (shared scope).
 
+**Return:** A `STOP` (section 2.10) inside the included file ends THAT FILE ONLY and returns here, to the step after this INCLUDE, with every variable the sub-workflow defined still in scope. It does not end the run. A sub-workflow that must end the whole run says so with `OUTPUT ... stop: true` (section 2.5), which unwinds this INCLUDE and every enclosing one.
+
 **Non-YAML includes:** If the referenced file is not a YAML workflow (e.g., a `.md` file), the agent reads the file and follows its instructions as-is. No step parsing is applied. This is the bridge to existing prose-based tasks.
 
 **Example (from sprint-planning complete.yaml):**
@@ -232,7 +234,7 @@ Displays a message to the user.
 **Fields:**
 - `message` (required): text to display to the user. This is a display string -- the agent shows it verbatim and takes no further action based on its content.
 - `store` (optional): if present, the agent waits for user input and stores the response as a string in this variable.
-- `stop` (optional): if `true`, the workflow halts after displaying the message.
+- `stop` (optional): if `true`, the ENTIRE run halts after displaying the message -- not just the file the step sits in, but every enclosing `INCLUDE` caller with it (section 2.1). This is the only way to end a run from inside a sub-workflow: `STOP` (section 2.10) merely returns to the caller. Use it for "the run cannot continue" (a missing config key, a spent budget), never for "this sub-workflow has nothing left to do".
 
 **Example (from find-stories.yaml):**
 
@@ -383,7 +385,7 @@ Sets `target_status` to `"ready-for-dev"` before including find-stories, which r
 
 ### 2.10 STOP
 
-Halts workflow execution immediately.
+Ends the CURRENT workflow file and returns to the caller.
 
 **Syntax:**
 
@@ -391,7 +393,13 @@ Halts workflow execution immediately.
 - STOP
 ```
 
-No message is displayed. To display a message before stopping, use OUTPUT with `stop: true`.
+**Semantics:** STOP is a *return*, not a halt. When the file was reached through an `INCLUDE` (section 2.1), execution resumes in the parent file at the step after that INCLUDE, with every variable in scope -- the ones the parent set and the ones the sub-workflow added (shared scope, section 4.2). Nesting returns one level at a time: a STOP in a file INCLUDEd three deep returns to the file that INCLUDEd it, not to the top. When the file is the entry workflow (nothing INCLUDEd it), there is no caller and the run ends there.
+
+**STOP never ends the whole run from inside a sub-workflow.** That case is `OUTPUT` with `stop: true` (section 2.5), which unwinds every enclosing INCLUDE. Read every guard before writing one: "this sub-workflow has nothing to do here, carry on" is a STOP; "the run cannot continue" is an `OUTPUT ... stop: true` carrying the reason.
+
+No message is displayed. To display a message before returning, use OUTPUT WITHOUT `stop` followed by STOP -- OUTPUT with `stop: true` would end the run instead.
+
+**Trace format:** `STOP -- returning to caller`
 
 ### 2.11 CD
 
@@ -495,6 +503,8 @@ If a referenced variable is not defined at the point of reference, the workflow 
 
 The following situations cause the workflow to stop immediately. No retry. No fallback. The agent does NOT improvise recovery -- it stops and reports the error.
 
+"Stop workflow" in the table below means the ENTIRE run ends, unwinding every enclosing `INCLUDE` -- the same termination `OUTPUT ... stop: true` (section 2.5) requests deliberately. It is never the file-scoped return `STOP` (section 2.10) performs: an error in a sub-workflow does not resume the caller.
+
 | Situation | Behavior |
 |-----------|----------|
 | `RUN` exits with unexpected code | Stop workflow, output error with command, expected code, and actual code |
@@ -538,7 +548,8 @@ Rules:
 - **CD**: show the target path.
 - **FILTER**: show `source → key = value`.
 - **OUTPUT with store**: show `message → stored in variable`.
-- **STOP with stop: true**: show `STOP — reason`.
+- **STOP**: show `STOP — returning to caller`.
+- **OUTPUT with stop: true**: show `STOP — reason` (the run ends here).
 - **WRITE**: show the file path and whether append/overwrite.
 
 The trace MUST be compact — one line per step or sub-step. No prose explanations between steps.

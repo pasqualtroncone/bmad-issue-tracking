@@ -36,9 +36,9 @@ print(sys.argv[1].replace('{prd_key}', '*'))
 - READ: {planning_artifacts}/prd.md
   EXTRACT:
     prd_key: frontmatter.prd_key
+# Same shape as common/find-prd-key: the happy path falls off the end of the file, so
+# only the FALSE branch (ask the user, persist the answer) carries steps.
 - CHECK: exists prd_key
-  TRUE:
-    - STOP
   FALSE:
     - OUTPUT:
         message: "prd_key not found in PRD frontmatter. What is the PRD key? (e.g. mobile-oidc)"
