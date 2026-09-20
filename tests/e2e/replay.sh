@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18  # GitHub lab (d15/d21/d29/r13/r17/r18 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -1434,6 +1434,48 @@ print(' '.join(s for s in sys.argv[1:] if old(s) == 'no_ci'))
   fi
 }
 
+case_r19() {  # #75 — a CI timeout ended the run before ci-status.json was written
+  # `OUTPUT ... stop: true` halts the ENTIRE run (lang section 2.5), so on a timeout the
+  # caller's `INCLUDE: common/write-ci-status` never ran: ci-status.json stayed absent,
+  # ci-status.sh reported "the hook did not write it" (exit 1, FIXABLE) and bmad-loop
+  # opened a repair session on a story whose code is fine, instead of the documented
+  # deferral. Local: no lab API is touched.
+  local c=r19; load_lab; local d; d="$(case_dir $c)"
+  # (a) static: the timeout OUTPUT informs, it does not end the run
+  local lto stops
+  lto="$(grep -n 'CHECK: ci_status eq "timeout"' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d: -f1)"
+  [ -n "$lto" ] || { verdict $c BLOCKED "wait-for-green-ci.yaml has no 'ci_status eq timeout' branch"; return; }
+  awk -v n="$lto" 'NR>=n && NR<=n+5' "$WF/common/wait-for-green-ci.yaml" > "$d/timeout-branch.txt"
+  stops="$(grep -c 'stop: true' "$d/timeout-branch.txt")"
+  # (b) the branch that halt made dead: write-ci-status's timeout WRITE, rendered and
+  #     handed to ci-status.sh — the bmad-loop [verify] command that reads the file
+  local lw content rc=0
+  lw="$(grep -n 'CHECK: ci_status eq "timeout"' "$WF/common/write-ci-status.yaml" | head -1 | cut -d: -f1)"
+  [ -n "$lw" ] || { verdict $c BLOCKED "write-ci-status.yaml has no timeout branch"; return; }
+  content="$(awk -v n="$lw" 'NR>n && /content:/{sub(/^ *content: /, ""); print; exit}' "$WF/common/write-ci-status.yaml" | sed "s/^'//; s/'\$//")"
+  mkdir -p "$d/wt"; printf '%s\n' "$content" > "$d/wt/ci-status.json"
+  ( cd "$d/wt" && bash "$MOD/skills/bmad-issue-tracking-setup/scripts/bmad-loop/ci-gate/ci-status.sh" ) > "$d/verify.out" 2> "$d/verify.err" || rc=$?
+  local status; status="$(uv run --no-project python -c "
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))['status'])
+except Exception as e:
+    print('unparseable: %s' % e)
+" "$d/wt/ci-status.json")"
+  # (c) and with the run no longer halted there, the merge prompt needs its own guard
+  local guard; guard="$(grep -c 'CHECK: ci_merge_ok eq "true"' "$WF/common/post-dev-complete.yaml")"
+  { echo "wait-for-green-ci.yaml:$lto — the timeout branch carries 'stop: true' x$stops (want 0):"
+    cat "$d/timeout-branch.txt"
+    echo "write-ci-status.yaml:$lw content → $content   (status '$status')"
+    echo "ci-status.sh on that file: rc=$rc (want 1, red = fixable) out=$(tr '\n' ' ' < "$d/verify.out")"
+    echo "post-dev-complete.yaml gates the merge prompt on the CI verdict: x$guard (want >=1)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$stops" = 0 ] && [ "$status" = red ] && printf '%s' "$content" | grep -q timeout && [ "$rc" = 1 ] && [ "$guard" -ge 1 ]; then
+    verdict $c REFUTED "the timeout path informs and returns: wait-for-green-ci.yaml:$lto carries no 'stop: true', so the caller reaches its write-ci-status INCLUDE and write-ci-status.yaml:$lw writes $content — ci-status.sh reads it as rc=$rc (red, fixable) instead of reporting the file missing. The merge cannot follow a non-green verdict either: post-dev-complete.yaml gates the prompt on ci_merge_ok (x$guard)"
+  else
+    verdict $c CONFIRMED "the timeout still ends the run or the red file never lands: 'stop: true' x$stops in the timeout branch (want 0), rendered content '$content' (status '$status'), ci-status.sh rc=$rc (want 1), merge guard x$guard (want >=1)"
+  fi
+}
+
 case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually see
   # Static (no lab, no API): the defect IS the order of the dev-finish INCLUDEs. With the
   # CI gate ahead of ensure-mr there is no PR on a story's first dev-finish, check-mr-ci
@@ -1528,10 +1570,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|r18|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|r18|r19|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 r18 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

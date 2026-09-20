@@ -49,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A CI timeout left no `ci-status.json` at all. The `timeout` path of
+  `common/wait-for-green-ci.yaml` ended with `OUTPUT ... stop: true`, which halts the
+  ENTIRE run (lang §2.5), so the caller's `INCLUDE: common/write-ci-status` never executed
+  and write-ci-status's own `timeout` branch — the red file carrying "CI timeout after 30
+  minutes" — was dead code. `ci-status.sh` then reported the file missing and bmad-loop
+  opened a repair session on a story whose code was fine. The OUTPUT now informs and
+  returns; callers read `ci_status`. `common/post-dev-complete.yaml` gains the guard that
+  halt used to provide: the review-finish merge prompt is offered only when the CI verdict
+  is `passed`, `no_ci` or `no_mr` — never on `failed`, `timeout`, or a review that did not
+  end `done`.
+
 - The CI gate reported green for every pipeline state it did not name.
   `common/check-mr-ci.yaml` and both poll rounds of `common/wait-for-green-ci.yaml` mapped
   anything unrecognised to `no_ci`, so GitLab's `created` / `preparing` / `scheduled` (the

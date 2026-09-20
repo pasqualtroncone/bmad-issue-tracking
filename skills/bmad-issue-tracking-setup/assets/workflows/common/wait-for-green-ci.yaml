@@ -243,12 +243,16 @@ print(int(sys.argv[1]) + 1)
 # two CHECKs below and fall off the end of the file, back to the caller. The two
 # `-> STOP` guards that used to stand here were dead early returns, and a bare STOP is
 # exactly the step an interpreter can read as "halt the whole run" (lang section 2.10).
-# CI timed out after 30 minutes
+# CI timed out after 30 minutes. The OUTPUT informs; it must NOT carry `stop: true`.
+# `stop: true` ends the ENTIRE run (lang section 2.5), so the caller's
+# `INCLUDE: common/write-ci-status` never ran and its `timeout` branch — the red
+# ci-status.json bmad-loop's [verify] reads — was dead code: the file stayed absent and
+# [verify] reported "the hook did not write it", sending a repair session at a story whose
+# code is fine. Callers read `ci_status` and decide; nothing here merges.
 - CHECK: ci_status eq "timeout"
   TRUE:
     - OUTPUT:
         message: "CI did not reach a terminal state after 30 minutes. Check the pipeline manually and re-run this workflow when resolved."
-        stop: true
 # CI failed — fetch pipeline_id then INCLUDE the get-failed-jobs atomic for diagnostics.
 # The jobs output is TSV on gitlab (name\texit_code\ttrace_tail per line) and raw
 # `gh run view --log-failed` text on github — we display it as-is without parsing.
