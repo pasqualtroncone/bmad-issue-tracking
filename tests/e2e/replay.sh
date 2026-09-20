@@ -2,7 +2,7 @@
 # Level 0 (static greps, no lab) and level 1 (literal replay of RUN steps, no LLM).
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
-#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7  # GitHub lab (d15/d21/d29 are local)
+#   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17  # GitHub lab (d15/d21/d29/r13/r17 are local)
 #   replay.sh d29                  # static: the dev-finish INCLUDE order (no lab)
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
@@ -1166,6 +1166,58 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   fi
 }
 
+case_r11() {  # #64 — a CLI failure inside a poll round must not read as "no pipeline yet"
+  # Three `no_run` rounds end the gate green (`no_ci`), and write-ci-status then writes
+  # ci-status.json green for a pipeline nobody read. A token expiry, a rate limit or a
+  # network error produced exactly that answer: the exit code was discarded, the empty
+  # listing failed to parse under 2>/dev/null and pipeline_status came out '' → no_run.
+  # The round is replayed against a repo/host that does not exist, which is the same
+  # failure shape with a deterministic trigger; polls_per_round is shortened to 1 so the
+  # case costs one sleep per platform (the defect is the classification, not the budget).
+  local c=r11; load_lab; local d; d="$(case_dir $c)"
+  local gl gh; gl="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 1)"; gh="$(line_of common/wait-for-green-ci.yaml 'RUN: \|' 2)"
+  [ -n "$gl" ] && [ -n "$gh" ] || { verdict $c BLOCKED "cannot locate the poll rounds in wait-for-green-ci.yaml (gitlab=$gl github=$gh)"; return; }
+  local bogus="github.com/$GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x}"
+  $TT render-step common/wait-for-green-ci.yaml "$gh" mr_repo="$bogus" source_branch=no-such-branch \
+    | sed -E 's/polls_per_round=[0-9]+/polls_per_round=1/' > "$d/github-round.cmd"
+  log "  github round against $bogus (one poll, ≈25 s)…"
+  ( cd "$CONSUMER" && bash "$d/github-round.cmd" ) > "$d/github-round.out" 2> "$d/github-round.err"; echo $? > "$d/github-round.rc"
+  local ghs; ghs="$(tr -d '[:space:]' < "$d/github-round.out")"
+  # the pre-fix rule over the same failing CLI, for the record: rc discarded, the parse
+  # error swallowed, pipeline_status='' — and the mapper calls that no_run
+  local raw prerc=0 ps_pre pre
+  raw="$(gh run list --limit 1 --branch no-such-branch -R "$bogus" --json databaseId,status,conclusion 2>/dev/null)" || prerc=$?
+  ps_pre="$(printf '%s' "$raw" | uv run --no-project python -c "
+import json, sys
+rs = json.load(sys.stdin)
+print((rs[0]['conclusion'] or rs[0]['status'] or 'unknown') if rs else 'none')
+" 2>/dev/null)"
+  pre="$(uv run --no-project python -c "
+import sys
+ps = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+print('no_run' if ps in ('none', '') else 'other')
+" "$ps_pre")"
+  # the GitLab round is the same shape against a host that does not resolve
+  local gls=skipped
+  if command -v glab >/dev/null 2>&1; then
+    $TT render-step common/wait-for-green-ci.yaml "$gl" git_project_enc=no%2Fsuch-project mr_iid=1 git_host=gitlab.invalid \
+      | sed -E 's/polls_per_round=[0-9]+/polls_per_round=1/' > "$d/gitlab-round.cmd"
+    log "  gitlab round against gitlab.invalid (one poll, ≈25 s)…"
+    ( cd "$CONSUMER" && bash "$d/gitlab-round.cmd" ) > "$d/gitlab-round.out" 2> "$d/gitlab-round.err"; echo $? > "$d/gitlab-round.rc"
+    gls="$(tr -d '[:space:]' < "$d/gitlab-round.out")"
+  fi
+  { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want running)"
+    echo "  the CLI it calls: rc=$prerc, pipeline_status under the pre-fix parse='$ps_pre' → pre-fix classification='$pre'"
+    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want running; 'skipped' = no glab on PATH)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$prerc" = 0 ]; then
+    verdict $c BLOCKED "the bogus repo answered rc=0 ($bogus), so there is no CLI failure to classify"
+  elif [ "$ghs" = running ] && { [ "$gls" = running ] || [ "$gls" = skipped ]; }; then
+    verdict $c REFUTED "a failing CLI inside a poll round comes out 'running', not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', and the gitlab round at :$gl printed '$gls'. The round captures the exit code and only a SUCCESSFUL empty listing is no_run — the pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green"
+  else
+    verdict $c CONFIRMED "a failing CLI is still classified as 'no pipeline': wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want running), gitlab round at :$gl printed '$gls'; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
+  fi
+}
+
 case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually see
   # Static (no lab, no API): the defect IS the order of the dev-finish INCLUDEs. With the
   # CI gate ahead of ensure-mr there is no PR on a story's first dev-finish, check-mr-ci
@@ -1260,10 +1312,10 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|r1|r3|r7|r11|r13|r17|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d19 d2 d18 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 r13 r17 d19 d2 d18 r11 d4 d24 r1 r3 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CI gate could go green over a pipeline it never read. Inside a
+  `common/wait-for-green-ci.yaml` poll round the CLI's exit code was discarded, so a token
+  expiry, a rate limit or a network error left an empty listing that parsed to
+  `pipeline_status=""` and was classified `no_run` — three of those map to `no_ci`, the gate
+  STOPs green and `common/write-ci-status.yaml` writes `ci-status.json` green for a run
+  nobody looked at. The round now captures the exit code on both platforms: a failed CLI is
+  `running`, and only a SUCCESSFUL empty listing counts as `no_run`.
+
 - A sync could die at its second step. `bmad-workflow-lang.md` section 2.10 said `STOP`
   "halts workflow execution immediately", while the workflow files used `- STOP` as
   "return from this sub-workflow"; two headless interpreters read the same step two

@@ -83,6 +83,7 @@ Cases and what they prove:
 | `d03` | 1 | D03 | GitLab MR on `ci/outcome=sleep:400`: one rendered poll round is timed while the pipeline runs (must print `running` well under 240 s) and again once it is green (`passed` in one poll); also asserts the rendered round's `sleep × polls` bound |
 | `g10` | 1 | D10 | cross-platform repo mix-up (rendering): `get-mr-pipeline` hits the git remote, `merge-mr`'s cross-platform branch routes on `git_platform` and resolves every placeholder on its own |
 | `d31` | 1 | D31, #59 | a `status:` label this repo never had: the rendered `create-label` step creates it and the rendered `update-issue-status` edit adds it; the same edit alone (the pre-fix path) fails on the unknown label |
+| `r11` | 1 | #64, #65 | one `wait-for-green-ci` poll round per platform against a repo/host that does not exist: a failing CLI must print `running`, never `no_run`, and the round that sees a pipeline must reset `no_run_rounds` |
 | `d26` | 1 | D26 | the retrospective description rendered for epic 1 carries the `**Sprint Key:**` marker, and GitLab `find-issue` selects that issue for `epic-1-retrospective`; a pre-fix body is invisible to the same search |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
 | `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2 |
