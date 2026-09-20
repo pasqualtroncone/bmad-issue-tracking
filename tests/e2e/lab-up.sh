@@ -84,7 +84,17 @@ if [ "$REDEPLOY" = 1 ]; then
       git add -A _bmad/custom _bmad/_config/custom .claude/skills
       git commit -q -m "chore: redeploy bmad-issue-tracking from $(git -C "$MOD" rev-parse --short HEAD)" || log "  (nothing changed)"
       git push -q origin main
-      git fetch -q origin && git branch -f "feat/$PRD_KEY/prd" origin/main 2>/dev/null || true
+      git fetch -q origin
+      # The PRD branch is usually CHECKED OUT in _bmad/worktrees/prd, and `git branch -f`
+      # refuses to move a branch a worktree holds ("cannot force update the branch ...
+      # checked out at ..."). The `|| true` that used to swallow that error left the PRD
+      # branch — the one every level-2 scenario runs in — on the PREVIOUS assets while
+      # main carried the new ones, so a redeploy printed main=<new> prd=<old> and the
+      # scenario exercised the code the redeploy was meant to replace. Reset inside the
+      # worktree when there is one.
+      prd_wt="$(git worktree list --porcelain | awk -v b="refs/heads/feat/$PRD_KEY/prd" '/^worktree /{w=$2} $1=="branch" && $2==b {print w}')"
+      if [ -n "$prd_wt" ]; then git -C "$prd_wt" reset -q --hard origin/main
+      else git branch -f "feat/$PRD_KEY/prd" origin/main 2>/dev/null || true; fi
       git push -q -f origin "feat/$PRD_KEY/prd:feat/$PRD_KEY/prd"
       echo "  main=$(git rev-parse --short origin/main) prd=$(git rev-parse --short origin/feat/$PRD_KEY/prd)" )
   done
