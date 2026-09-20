@@ -352,10 +352,15 @@ Two things NOT to do here, both tried and reverted:
 
 Halt only on a missing spec FILE (`SPEC_NOT_FOUND`): that case is unambiguous and is the
 one that actually killed story 2-1, whose phase read the spec from an invented path
-(`{implementation_artifacts}/{story_key}.md`) with no error handling. The spec is now read
-from `{spec_file}` — the path the runtime resolves, per the predefined-variables table
-in `bmad-workflow-lang.md` §4.4 and BMAD's `tools/skill-validator.md:37` — with the
-legacy path kept as a second candidate so existing consumers do not regress.
+(`{implementation_artifacts}/{story_key}.md`) with no error handling. That path and
+`{spec_file}` — the one the runtime resolves, per the predefined-variables table in
+`bmad-workflow-lang.md` §4.4 and BMAD's `tools/skill-validator.md:37` — were then the
+phase's only two candidates, the same pair #72 removed from `ensure-issue`: neither exists
+in sprint mode with an empty `{spec_file}`, so `SPEC_NOT_FOUND` halted the run before the
+CI gate, the ci-status write and the merge while the spec sat at `spec-1-1-login-form.md`.
+review-finish now `INCLUDE`s `common/story-title.yaml`, the one file that owns the
+candidate list, and reads the `{spec_path}` it returns — the same resolution
+`ensure-issue` and `sync-issues` use.
 
 ## Caller negotiation (both current channels)
 

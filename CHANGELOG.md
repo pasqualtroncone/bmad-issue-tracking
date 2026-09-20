@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The review-finish phase halted on a spec that was on disk. `common/post-dev-complete.yaml`
+  resolved the spec for its review-section read from `{spec_file}` and the legacy
+  `{implementation_artifacts}/{story_key}.md` — the two candidates #72 removed from
+  `common/ensure-issue.yaml` for the same reason. In sprint mode with an empty `{spec_file}`
+  neither exists (the slug comes from the story title), so `SPEC_NOT_FOUND` ended the run
+  before the CI gate, the ci-status write and the merge while the spec sat at
+  `spec-<storyId>-<slug>.md`. The phase now INCLUDEs `common/story-title.yaml` and reads the
+  `spec_path` it resolves; the halt is kept for a spec that really is missing.
+
 - An unreadable poll round cleared the "no pipeline yet" counter. `no_run_rounds` was reset
   by every round that did not end `no_run`, including a round whose polls were all CLI
   failures — which #64 maps to `running`. CI defined but never triggering for the branch,

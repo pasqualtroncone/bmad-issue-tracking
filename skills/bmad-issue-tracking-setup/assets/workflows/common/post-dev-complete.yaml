@@ -211,12 +211,14 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
         - INCLUDE: common/update-issue-status
     # Post review findings as comment on issue.
     #
-    # The spec is read from {spec_file} — the path the runtime already resolved, in
-    # whichever mode applies (sprint: spec-<storyId>-<slug>.md; stories:
-    # stories/<id>-<slug>.md). Do NOT re-derive it from {story_key}: the slug comes
-    # from the story TITLE, so {implementation_artifacts}/{story_key}.md never exists in
-    # sprint mode and reading it kills the phase, the CI gate and the merge with it. The
-    # legacy exact-key path is still tried second so existing consumers do not regress.
+    # The spec is resolved by common/story-title.yaml, the one file that owns the rule —
+    # {spec_path} hint, {spec_file}, the sprint-mode spec-<storyId>-<slug>.md, the
+    # stories-mode stories/<id>-<slug>.md, and the legacy
+    # {implementation_artifacts}/{story_key}.md last. This block used to try only the last
+    # two, the pair #72 removed from ensure-issue for the same reason: the slug comes from
+    # the story TITLE, so in sprint mode with an empty {spec_file} neither candidate
+    # exists, SPEC_NOT_FOUND halts the run, and the CI gate, the ci-status write and the
+    # merge die with it while the spec sits at spec-1-1-login-form.md.
     #
     # Two producers write two different sections into the same file:
     #   bmad-build-auto  -> '## Review Triage Log' with '### <date> — Review pass' rows
@@ -229,11 +231,15 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # goes on, because their reviews legitimately write nothing when they find nothing.
     - CHECK: empty issue_id
       FALSE:
+        # spec_path is seeded empty: this phase has no path of its own to offer, and the
+        # atomic must not adopt one an earlier INCLUDE left in scope.
+        - SET: { variable: spec_path, value: "" }
+        - INCLUDE: common/story-title
         - RUN: uv run --no-project python -c "
 import sys, re, pathlib
-candidates = [c for c in sys.argv[1:] if c]
-path = next((pathlib.Path(c) for c in candidates if pathlib.Path(c).is_file()), None)
-if path is None:
+given = sys.argv[1].strip() if len(sys.argv) > 1 else ''
+path = pathlib.Path(given) if given else None
+if path is None or not path.is_file():
     print('SPEC_NOT_FOUND')
     sys.exit(0)
 content = path.read_text()
@@ -251,12 +257,12 @@ if not re.sub(r'^#+ .*$', '', body, flags=re.MULTILINE).strip():
     print('SPEC_EMPTY_REVIEW_SECTION')
     sys.exit(0)
 print(body)
-" "{spec_file}" "{implementation_artifacts}/{story_key}.md"
+" "{spec_path}"
           STORE: review_section
         - CHECK: review_section eq "SPEC_NOT_FOUND"
           TRUE:
             - OUTPUT:
-                message: "No spec file found — tried '{spec_file}' then '{implementation_artifacts}/{story_key}.md'. {spec_file} is the path the runtime resolved, so its absence means no spec was produced for this story. Nothing was posted and the merge must not proceed. Check what bmad-build-auto actually wrote on disk (sprint mode names it spec-<storyId>-<slug>.md)."
+                message: "No spec file found for '{story_key}' — common/story-title.yaml resolved none of its candidates ({spec_file}, {implementation_artifacts}/spec-*.md, {implementation_artifacts}/stories/*.md, {implementation_artifacts}/{story_key}.md), so no spec was produced for this story. Nothing was posted and the merge must not proceed. Check what bmad-build-auto actually wrote on disk (sprint mode names it spec-<storyId>-<slug>.md)."
                 stop: true
         # Halt ONLY when the producer is known to always write a section. That is
         # bmad-build-auto alone: its step-04 appends a review-log entry on EVERY pass.

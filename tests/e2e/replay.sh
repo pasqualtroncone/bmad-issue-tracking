@@ -1259,7 +1259,7 @@ else:
   fi
 }
 
-case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, story-title from five
+case_r13() {  # #66/#76 — two callers resolved the spec from two candidates, the atomic from five
   # In sprint mode with an empty {spec_file} ensure-issue's own two-candidate resolution
   # found nothing, `cat ""` gave an empty story_body, and the "Story spec not found" OUTPUT
   # carried no `stop: true` — so the hook carried on with issue_id="" and labelled,
@@ -1281,14 +1281,34 @@ case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, stor
   linc="$(grep -n 'INCLUDE: common/story-title' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
   lbody="$(grep -n 'STORE: story_body' "$WF/common/ensure-issue.yaml" | head -1 | cut -d: -f1)"
   stopped="$(grep -A2 'Story spec not found' "$WF/common/ensure-issue.yaml" | grep -c 'stop: true')"
+  # R20 (#76): post-dev-complete's review-finish read carried the SAME two candidates #72
+  # removed from ensure-issue, so in sprint mode with an empty {spec_file} it printed
+  # SPEC_NOT_FOUND and the next OUTPUT halted the run — before the CI gate, the ci-status
+  # write and the merge — while the spec was at spec-1-1-login-form.md. It now reads the
+  # {spec_path} the atomic resolved; the halt stays for a genuinely missing spec.
+  local lrf sec secmiss linc_rf args_rf legacy_rf
+  lrf="$(run_line_of common/post-dev-complete.yaml '^if path is None or not path\.is_file\(\):')"
+  if [ -n "$lrf" ]; then
+    replay $c review-section common/post-dev-complete.yaml "$lrf" spec_path="$got"
+    replay $c review-section-missing common/post-dev-complete.yaml "$lrf" spec_path=""
+    sec="$(head -1 "$d/review-section.out")"; secmiss="$(head -1 "$d/review-section-missing.out")"
+  fi
+  linc_rf="$(grep -n 'INCLUDE: common/story-title' "$WF/common/post-dev-complete.yaml" | head -1 | cut -d: -f1)"
+  args_rf="$(grep -c '^" "{spec_path}"$' "$WF/common/post-dev-complete.yaml")"
+  legacy_rf="$(grep -c '^" "{spec_file}" "{implementation_artifacts}/{story_key}.md"$' "$WF/common/post-dev-complete.yaml")"
   { echo "story-title.yaml:$lr with spec_file='' and implementation_artifacts=$work/ia → '$got'"
     echo "  want: $want"
     echo "  the pre-fix two-candidate rule over the same inputs → '${pre:-(nothing)}'"
-    echo "ensure-issue.yaml: own 'STORE: spec_path' steps=$own (want 0), INCLUDE story-title at :${linc:-absent} before the body read at :${lbody:-absent}, not-found OUTPUT carries stop: true ×$stopped"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
-  if [ "$got" = "$want" ] && [ -z "$pre" ] && [ "$own" = 0 ] && [ -n "$linc" ] && [ -n "$lbody" ] && [ "$linc" -lt "$lbody" ] && [ "$stopped" -ge 1 ]; then
-    verdict $c REFUTED "one resolution for both callers: story-title.yaml:$lr answers '$got' for spec_file='' — the sprint-mode name the pre-fix ensure-issue never looked at (its two candidates found '${pre:-nothing}', so story_body was empty). ensure-issue.yaml resolves nothing of its own ($own steps), INCLUDEs the atomic at :$linc before reading the body at :$lbody, and its not-found OUTPUT now halts (stop: true ×$stopped) instead of returning issue_id=''"
+    echo "ensure-issue.yaml: own 'STORE: spec_path' steps=$own (want 0), INCLUDE story-title at :${linc:-absent} before the body read at :${lbody:-absent}, not-found OUTPUT carries stop: true ×$stopped"
+    echo "post-dev-complete.yaml review-finish read at :${lrf:-absent} with the resolved path → '${sec:-(not rendered)}' (want a section, not SPEC_NOT_FOUND)"
+    echo "  the same step with nothing resolved → '${secmiss:-(not rendered)}' (want SPEC_NOT_FOUND)"
+    echo "  INCLUDE story-title at :${linc_rf:-absent} before it, argument lines: {spec_path} ×$args_rf (want ≥1), the two-candidate pair ×$legacy_rf (want 0)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$got" = "$want" ] && [ -z "$pre" ] && [ "$own" = 0 ] && [ -n "$linc" ] && [ -n "$lbody" ] && [ "$linc" -lt "$lbody" ] && [ "$stopped" -ge 1 ] \
+     && [ -n "$lrf" ] && [ -n "$sec" ] && [ "$sec" != SPEC_NOT_FOUND ] && [ "$secmiss" = SPEC_NOT_FOUND ] \
+     && [ -n "$linc_rf" ] && [ "$linc_rf" -lt "$lrf" ] && [ "$args_rf" -ge 1 ] && [ "$legacy_rf" = 0 ]; then
+    verdict $c REFUTED "one resolution for all three callers: story-title.yaml:$lr answers '$got' for spec_file='' — the sprint-mode name the pre-fix rule never looked at (its two candidates found '${pre:-nothing}'). ensure-issue.yaml resolves nothing of its own ($own steps), INCLUDEs the atomic at :$linc before reading the body at :$lbody, and halts on a miss (stop: true ×$stopped). post-dev-complete.yaml's review-finish read at :$lrf INCLUDEs the atomic at :$linc_rf and takes {spec_path} alone (×$args_rf, two-candidate pair ×$legacy_rf): with spec_file='' it returns '$sec' instead of the SPEC_NOT_FOUND that halted the phase, and a genuinely missing spec still returns '$secmiss'"
   else
-    verdict $c CONFIRMED "the resolutions still differ or the miss still continues: story-title.yaml:$lr → '$got' (want '$want'), pre-fix rule → '${pre:-nothing}', ensure-issue own resolution steps=$own (want 0), INCLUDE at :${linc:-absent} vs body read at :${lbody:-absent}, stop: true on the not-found OUTPUT ×$stopped (want ≥1)"
+    verdict $c CONFIRMED "the resolutions still differ or the miss still continues: story-title.yaml:$lr → '$got' (want '$want'), pre-fix rule → '${pre:-nothing}', ensure-issue own resolution steps=$own (want 0), INCLUDE at :${linc:-absent} vs body read at :${lbody:-absent}, stop: true on the not-found OUTPUT ×$stopped (want ≥1); review-finish read at :${lrf:-absent} → '${sec:-?}' (want a section) and '${secmiss:-?}' for a missing spec, INCLUDE at :${linc_rf:-absent}, {spec_path} args ×$args_rf, legacy pair ×$legacy_rf (want 0)"
   fi
 }
 
