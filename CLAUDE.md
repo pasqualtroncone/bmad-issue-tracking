@@ -133,6 +133,10 @@ and `neutral` are green, `manual`/`action_required`/`canceled`/`timed_out` are r
 pipeline parked on an operator never goes green on its own), and `no_ci`/`no_run` are the
 CALLER's answer for an empty but SUCCESSFUL listing, passed in as the second argument —
 `running` when the branch defines CI, `no_ci` when it does not, `no_run` inside the rounds.
+A round whose polls ALL failed answers neither: it stores `unreadable` in `round_status`,
+which the LOOP turns into `ci_status: running` (keep waiting) while leaving
+`no_run_rounds` untouched — it saw no pipeline, so it cannot prove the three consecutive
+empty rounds that end the gate `no_ci`.
 
 **Git remote vs issue tracker:** The git remote (origin) and issue tracker can be on different platforms (e.g., code on GitLab, issues on GitHub). `issue_tracking.platform` is the issue tracker; `issue_tracking.git_platform` (set during setup) is the git remote. Issue operations (create/update/close issues, labels, comments) use `platform`. MR/PR operations (list, create, merge, mark ready) use `git_platform`. When they differ, `host`/`project` apply to the issue tracker and `git_host`/`git_project` apply to the git remote. Issue references in MR descriptions use `Closes #X` for same-platform, full URL for cross-platform.
 

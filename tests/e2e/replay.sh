@@ -1292,7 +1292,7 @@ case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, stor
   fi
 }
 
-case_r11() {  # #64 — a CLI failure inside a poll round must not read as "no pipeline yet"
+case_r11() {  # #64/#77 — a CLI failure inside a poll round is not "no pipeline yet"
   # Three `no_run` rounds end the gate green (`no_ci`), and write-ci-status then writes
   # ci-status.json green for a pipeline nobody read. A token expiry, a rate limit or a
   # network error produced exactly that answer: the exit code was discarded, the empty
@@ -1332,25 +1332,33 @@ print('no_run' if ps in ('none', '') else 'other')
     ( cd "$CONSUMER" && bash "$d/gitlab-round.cmd" ) > "$d/gitlab-round.out" 2> "$d/gitlab-round.err"; echo $? > "$d/gitlab-round.rc"
     gls="$(tr -d '[:space:]' < "$d/gitlab-round.out")"
   fi
-  # R12 (#65): the counter is only meaningful if a round that SEES a pipeline clears it.
-  # Structural, because a transient empty listing cannot be produced on demand: the
-  # `no_run` CHECK must carry a FALSE branch that resets no_run_rounds to 0.
-  local lnr reset=0
+  # R12 (#65) + R21 (#77): the counter is only meaningful if a round that SEES a pipeline
+  # clears it — and only such a round. Structural, because a transient empty listing
+  # cannot be produced on demand: the `no_run` CHECK must carry a FALSE branch that resets
+  # no_run_rounds, that branch must be gated on the round having been readable, and the
+  # `unreadable` marker must reach ci_status as `running` so the gate keeps waiting.
+  local lnr reset=0 gated=0 maps=0
   lnr="$(grep -n 'CHECK: ci_status eq "no_run"' "$WF/common/wait-for-green-ci.yaml" | head -1 | cut -d: -f1)"
   if [ -n "$lnr" ]; then
     awk -v n="$lnr" 'NR>n && /^      - /{exit} NR>n && /^        FALSE:/{f=1} f && /variable: no_run_rounds, value: "0"/{print; found=1} END{exit !found}' \
       "$WF/common/wait-for-green-ci.yaml" > "$d/no-run-reset.txt" && reset=1
+    awk -v n="$lnr" 'NR>n && /^      - /{exit} NR>n && /^        FALSE:/{f=1} f && /- CHECK: round_status ne "unreadable"/{print; found=1} END{exit !found}' \
+      "$WF/common/wait-for-green-ci.yaml" > "$d/no-run-reset-gate.txt" && gated=1
   fi
-  { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want running)"
+  grep -A3 -- '- CHECK: round_status eq "unreadable"' "$WF/common/wait-for-green-ci.yaml" > "$d/marker-mapping.txt" 2>/dev/null
+  grep -q 'variable: ci_status, value: "running"' "$d/marker-mapping.txt" && maps=1
+  { echo "github round (wait-for-green-ci.yaml:$gh) against $bogus → '$ghs' (want the unreadable marker)"
     echo "  the CLI it calls: rc=$prerc, pipeline_status under the pre-fix parse='$ps_pre' → pre-fix classification='$pre'"
-    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want running; 'skipped' = no glab on PATH)"
-    echo "the no_run CHECK at :${lnr:-?} resets no_run_rounds on a round that saw a pipeline: $reset $(cat "$d/no-run-reset.txt" 2>/dev/null)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+    echo "gitlab round (wait-for-green-ci.yaml:$gl) against gitlab.invalid → '$gls' (want unreadable; 'skipped' = no glab on PATH)"
+    echo "the marker reaches ci_status as 'running': $maps $(tr '\n' ' ' < "$d/marker-mapping.txt")"
+    echo "the no_run CHECK at :${lnr:-?} resets no_run_rounds: $reset $(cat "$d/no-run-reset.txt" 2>/dev/null)"
+    echo "  and the reset is gated on a readable round: $gated $(cat "$d/no-run-reset-gate.txt" 2>/dev/null)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$prerc" = 0 ]; then
     verdict $c BLOCKED "the bogus repo answered rc=0 ($bogus), so there is no CLI failure to classify"
-  elif [ "$ghs" = running ] && { [ "$gls" = running ] || [ "$gls" = skipped ]; } && [ "$reset" = 1 ]; then
-    verdict $c REFUTED "a failing CLI inside a poll round comes out 'running', not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', and the gitlab round at :$gl printed '$gls'. The round captures the exit code and only a SUCCESSFUL empty listing is no_run — the pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green. The counter is consecutive again: the no_run CHECK at :${lnr:-?} resets no_run_rounds on any round that saw a pipeline"
+  elif [ "$ghs" = unreadable ] && { [ "$gls" = unreadable ] || [ "$gls" = skipped ]; } && [ "$reset" = 1 ] && [ "$gated" = 1 ] && [ "$maps" = 1 ]; then
+    verdict $c REFUTED "a round whose polls all failed answers its own marker, not 'no_run': wait-for-green-ci.yaml:$gh against $bogus (gh rc=$prerc) printed '$ghs', the gitlab round at :$gl printed '$gls'. The pre-fix rule read the same failure as '$pre' (pipeline_status='$ps_pre'), and three of those turn the gate green. The marker maps to ci_status='running' so the gate keeps waiting ($maps), and the no_run counter at :${lnr:-?} is reset ONLY by a round that saw a pipeline ($reset, gated $gated) — an unreadable round leaves it where it was"
   else
-    verdict $c CONFIRMED "a failing CLI is still classified as 'no pipeline' (or the counter never resets): wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want running), gitlab round at :$gl printed '$gls', no_run_rounds reset present=$reset; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
+    verdict $c CONFIRMED "a failing CLI is still read as a pipeline answer, or the counter still moves on it: wait-for-green-ci.yaml:$gh against $bogus printed '$ghs' (want unreadable), gitlab round at :$gl printed '$gls', marker→running=$maps, no_run_rounds reset present=$reset gated=$gated; gh rc=$prerc, pre-fix pipeline_status='$ps_pre' → '$pre'. Three such rounds map to no_ci and write-ci-status writes ci-status.json green"
   fi
 }
 

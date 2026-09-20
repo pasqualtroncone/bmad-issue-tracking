@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An unreadable poll round cleared the "no pipeline yet" counter. `no_run_rounds` was reset
+  by every round that did not end `no_run`, including a round whose polls were all CLI
+  failures — which #64 maps to `running`. CI defined but never triggering for the branch,
+  plus an intermittent rate limit, alternated no_run / unreadable rounds, the count never
+  reached three, and `common/wait-for-green-ci.yaml` burnt its whole 30-minute budget
+  instead of concluding `no_ci`. A round now answers `round_status`, with `unreadable` as
+  its own marker: the gate reads it as `running` and keeps waiting, and only a round that
+  actually saw a pipeline resets the counter.
+
 - A CI timeout left no `ci-status.json` at all. The `timeout` path of
   `common/wait-for-green-ci.yaml` ended with `OUTPUT ... stop: true`, which halts the
   ENTIRE run (lang §2.5), so the caller's `INCLUDE: common/write-ci-status` never executed
