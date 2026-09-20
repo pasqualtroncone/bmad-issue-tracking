@@ -70,17 +70,22 @@ bmad-loop run --story 1-1 --max-stories 1      # from a normal terminal, not fro
 
 - `.bmad-loop/runs/<run_id>/journal*` and the feedback/ directory (verify rc, diagnostics)
 - `git -C .bmad-loop/runs/<run_id>/worktrees/* branch -vv` → the branch is
-  `bmad-loop/<run_id>/1-1-login-form` with **no upstream** (D08 shape)
+  `bmad-loop/<run_id>/1-1-login-form` with **no upstream** — the shape the module's
+  `push -u origin HEAD` has to handle
 - `ls .bmad-loop/runs/<run_id>/worktrees/*/ci-status.json` → present? (`[verify]` needs it)
 - `gh run list -R <repo> --limit 5 --json headBranch,conclusion` — was anything pushed at all?
-- `gh issue list -R <repo> --state all`, `gh pr list -R <repo> --state all` → D22: no PR can exist
-  for `feat/labprd/1-1-login-form`; does one exist for the bmad-loop branch?
-- the verify command's rc (expected 1 → repair session → story deferred after max_dev_attempts)
+- `gh issue list -R <repo> --state all`, `gh pr list -R <repo> --state all` → D22: the trace PR
+  must be on the bmad-loop branch, never on `feat/labprd/1-1-login-form`
+- the verify command's rc (0 on a green pipeline; 1 → repair session → story deferred after
+  max_dev_attempts)
 - `bmad-loop plugin-hook close-trace-mr` output, if the hook fired
 
-Prediction if D08 is real: the hook halts at `git push`, `ci-status.json` is never written,
-`[verify]` returns 1 twice, the story is deferred, and the tracker never hears about it — the
-module contributes nothing to the bmad-loop flow until D08/D22 are fixed.
+Prediction now that D08 and D22 are fixed: the phase pushes `-u origin HEAD`, so the branch
+with no upstream reaches the remote; `ensure-mr` opens the trace PR on that same branch
+(`source_branch={current_branch}`); the CI gate reads that PR's pipeline and writes
+`ci-status.json`; `[verify]` returns 0 on green, and the story issue carries its status label.
+A halt at the push, an absent `ci-status.json`, or a PR on `feat/labprd/1-1-login-form` is a
+regression of D08/D22.
 
 Teardown of this level: `bmad-loop stop; bmad-loop cleanup` (or leave it; `lab-down.sh` removes
 the whole consumer).

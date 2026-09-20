@@ -40,8 +40,9 @@ tests/e2e/
 The lab lives in `/tmp/bmad-it-lab/<YYYYMMDD>-<4hex>/consumer`; `/tmp/bmad-it-lab/current` names
 the active one. The consumer commits **everything** (`_bmad/`, `.claude/`, fixtures): worktrees
 carry tracked files only and the hooks read `_bmad/_config/custom/` relative to the worktree.
-`push.autoSetupRemote=false` and `push.default=simple` are pinned so no local git config can mask
-D08.
+`push.autoSetupRemote=false` and `push.default=simple` are pinned so no local git config can make
+a bare `git push` look like it sets the upstream: the D08 replay has to see the module's own
+`push -u origin HEAD` do it.
 
 ## Usage
 
@@ -62,19 +63,19 @@ Cases and what they prove:
 
 | Case | Level | Defect | Mechanism |
 |---|---|---|---|
-| `static` | 0 | S1–S9, D03, D22 | greps + `trace-tools.py lint-sys` |
-| `d17` | 1 | D17 | `sync-issues.yaml:274` replayed with `0` → `NameError` |
-| `d18` | 1 | D18 (masks D03) | STATUS snippet without `2>/dev/null`; full poll loop ×2 → `timeout`; +`import sys` → terminal on first poll |
+| `static` | 0 | S1–S9, D03, D22 | greps + `trace-tools.py lint-sys`; D22 reads the `source_branch={current_branch}` SETs and the `push -u origin HEAD` steps of `post-dev-complete.yaml` |
+| `d17` | 1 | D17 | the `sync_created` increment of `sync-issues.yaml` replayed with `0`: it must print `1`, not raise `NameError` |
+| `d18` | 1 | D18 (masked D03) | STATUS snippet with stderr visible; one poll round must reach a terminal state instead of running to `timeout` |
 | `d2` | 1 | D02 | push `ci-green`(pass) then `ci-red`(fail); on `ci-green`, `get-mr-pipeline` says `failure` |
 | `d4` | 1 | D04 | 105 issues `prd:bulkprd`; `find-issue`'s `search/issues --paginate` must walk both concatenated documents (`json.load` → `Extra data`); ≤100 works |
-| `d7` | 1 | D07 | `git commit -m` on a clean tree → exit 1 |
-| `d8` | 1 | D08 (+D22) | `bmad-loop/r1/…` branch without upstream → `git push` exit 128; module's `story_branch` absent on origin |
+| `d7` | 1 | D07 | the PRD hook's commit replayed on a clean tree: `--allow-empty` must keep it at exit 0 |
+| `d8` | 1 | D08 (+D22) | `bmad-loop/r1/…` branch without upstream: the phase's `push -u origin HEAD` must set it, and the MR must be opened on that branch, not on the pattern-derived `story_branch` |
 | `d16` | 1 | D16 | `gh pr merge` rc=0, stdout empty → `merged=false` |
 | `d15` | 1 | D15, #52 | the key comes out of the loop item under both renderings and the status out of `sprint-status.yaml` by that key (`backlog` for a bare item too); no `: backlog` in the title or in `/tmp/issue-desc-*.md`; no step left rendering `{entry}` as a key |
 | `d19` | 1 | D19/D20/D23/R5/R8 | `find-issue` on `1-1-login-form`: the query still returns `Story 1.10`, the verdict reads which id the step SELECTS; index latency; space in URL; the PRD lookup must not adopt a PR; and the two gated paths timed against the same absent key (`lookup_attempts=1` vs `4`) |
 | `d21` | 1 | D21, R10 | the shared `common/story-title.yaml` against the 6.12.0 spec (frontmatter title, no H1) and the legacy H1 variant, on both callers; R10 adds a frontmatter `title: 'Story 1.1: Login Form'` — both paths must answer `Login Form` / `Story 1.1: Login Form`. The pre-fix heading rules are replayed alongside |
 | `d24` | 1 | D24/D25 | `create-issue` lookup: absent title → empty + rc=0 (not a FILTER halt), present title → its number, and the same over 105 issues (2 `--paginate` pages) |
-| `d9` | 1 | D09 (LATENT) | inline `--body "{description_body}"` with quotes/backticks/`$(…)` |
+| `d9` | 1 | D09 (was LATENT) | a body with quotes/backticks/`$(…)`: the render must not name `{description_body}` at all and the PR must come back carrying the literal `$(…)` |
 | `r1` | 1 | #47, #67 | `gh issue create` on the lab repo: its stdout is a URL, and the id-extraction step must yield that issue's number. R14 renders the same create against a repository that does not exist: it must exit non-zero carrying gh's own stderr, not a traceback |
 | `r3` | 1 | #49 | push `ci-green`, then read the run list and render `check-mr-ci`'s mapping at once: an empty list must not come out `no_ci` while a CI-less branch still does |
 | `r7` | 1 | #53 | `create-issue` rendered with a title holding `"`, a backtick and `$(echo INJECTED)`: the command must not carry the title at all and the issue must come back with it byte for byte |

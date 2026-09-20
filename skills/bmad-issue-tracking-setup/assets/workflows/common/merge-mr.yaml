@@ -1,38 +1,33 @@
 # common/merge-mr.yaml
 #
 # Purpose: Merge an MR/PR by IID. Cross-platform, 4 variants (gitlab/github × same/cross-platform target).
-# Input variables: mr_iid (numeric), squash (default "false"), and from check-config:
-#   platform, git_platform, host, project, project_enc. Nothing else has to be seeded:
-#   on a cross-platform setup this file READS git_host/git_project itself.
+# Input variables: mr_iid (numeric); squash (default "false") — GitLab only, both GitHub
+#   branches pass `--squash` unconditionally; and from check-config: platform,
+#   git_platform, host, project, project_enc. The cross-platform branch additionally READs
+#   git_host/git_project from the config file, so no caller has to seed them.
 # Output variables:
 #   - merged ("true" if merge CLI succeeded)
 #   - merge_sha (string, from API after merge; empty if merge failed)
 #   - error (string, non-empty if merge failed)
-# Side effects: MERGES the MR/PR on the tracker (irreversible from here), then reads
-#   the resulting merge SHA from the API. Callers must treat a non-zero exit or a
-#   non-empty error as "not merged", never as "merge attempted".
+# Side effects: MERGES the MR/PR on the GIT REMOTE (irreversible from here) and, on
+#   GitHub, deletes its remote source branch (`--delete-branch`); then reads the
+#   resulting merge SHA from the API. Callers must treat a non-zero exit or a non-empty
+#   error as "not merged", never as "merge attempted".
 #
 # Platform selection (module rule, see bmad-workflow-lang.md §2.4 and CLAUDE.md
 # "Platform differences"): an MR/PR lives on the GIT REMOTE, so every step below is
-# chosen by `CHECK: git_platform eq "..."` and carries NO `PLATFORM:` annotation.
-# `PLATFORM:` compares against `platform`, the ISSUE TRACKER; on a cross-platform setup
-# that is the other platform, so annotating these steps would skip the only step that
-# can merge and leave `merged` unset.
+# chosen by `CHECK: git_platform eq "..."` and carries NO `PLATFORM:` annotation, which
+# compares against `platform`, the ISSUE TRACKER — the other platform on a cross-platform
+# setup, where it would skip the only step that can merge.
 #
-# Cross-platform coordinates: check-config exports host/project/project_enc for the
-# ISSUE TRACKER only. The FALSE branch below reads git_host/git_project from the config
-# file itself (as check-mr-ci does) and URL-encodes git_project for the GitLab API, so no
-# caller has to seed them — three callers used to derive {git_owner}/{git_repo} on this
-# file's behalf and the fourth did not, which halted the workflow on lang §4.5.
-# `gh -R` and the `repos/…` API path take `owner/repo` whole, so git_project needs no
-# splitting: "{git_host}/{git_project}" is the string the split-and-rejoin produced.
+# Cross-platform coordinates: check-config exports host/project/project_enc for the ISSUE
+# TRACKER only, so the FALSE branch below reads git_host/git_project from the config file
+# itself (as check-mr-ci does) and URL-encodes git_project for the GitLab API. `gh -R` and
+# the `repos/…` API path take `owner/repo` whole: git_project is never split.
 #
-# Both `gl_merge_out` and `gh_merge_out` are seeded with "" before the branches: each
-# branch sets exactly ONE of them, and the derive step at the bottom names both. lang §4.5
-# stops a workflow on a reference to an undefined variable, so under the documented
-# semantics every merge halted there — after the irreversible CLI had run, with `merged`
-# and `error` never set, so review-finish never reached `git worktree remove .`. An empty
-# string is the honest value: "the branch that did not run printed nothing".
+# Both `gl_merge_out` and `gh_merge_out` are seeded "" before the branches: each branch
+# sets exactly ONE of them while the derive step at the bottom names both, and lang §4.5
+# stops a workflow on a reference to an undefined variable.
 #
 # `merged` is the merge CLI's EXIT CODE, carried on stdout. `glab mr merge` prints a
 # confirmation of its own; `gh pr merge` succeeds with rc=0 and ZERO bytes of stdout
@@ -43,12 +38,10 @@
 #
 # The SHA lookup addresses the host through `--hostname`, never inside the path: `gh api
 # repos/github.com/<owner>/<repo>/pulls/<n>` answers 404 "Not Found" (the path segment is
-# read as the owner), and this step expects exit 0 like any other — so a SUCCESSFUL merge
-# was immediately followed by a halt with merge_sha empty, on every GitHub merge the
-# review-finish prompt performed. `glab api` has always taken its host that way.
+# read as the owner) and this step expects exit 0 like any other.
 
-# `error` is a documented OUTPUT and the success path never assigns it, so a caller
-# reading {error} after a good merge hit lang §4.5. Empty is the honest value: no error.
+# `error` is a documented OUTPUT that the success path never assigns, so it is seeded
+# here: lang §4.5 halts a caller that reads an undefined variable. Empty means no error.
 - SET: { variable: error, value: "" }
 - SET: { variable: gl_merge_out, value: "" }
 - SET: { variable: gh_merge_out, value: "" }

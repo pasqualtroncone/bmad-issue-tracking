@@ -1,7 +1,7 @@
 # retrospective/complete.yaml
 #
 # Purpose: Creates a retrospective issue (with status "done") and immediately closes it.
-# Input variables: (none)
+# Input variables: prd_key (from scope — it labels the retrospective issue)
 # Output variables: (none)
 # Side effects: creates and closes an issue on the issue tracker
 

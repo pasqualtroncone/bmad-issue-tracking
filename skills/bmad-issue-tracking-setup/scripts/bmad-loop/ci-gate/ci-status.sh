@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # bmad-loop CI status checker, used as a `[verify]` command.
 #
-# Reads ci-status.json written by the story-track-dev workflow (LLM session)
-# triggered by the bmad-build-auto on_complete hook. The hook should run
-# before this verify command via the bmad-loop plugin layer.
+# Reads ci-status.json, written by common/write-ci-status.yaml from the
+# dev-finish / review-finish phases of common/post-dev-complete.yaml. That chain
+# is reached from the bmad-build-auto on_complete hook, whose entry point is
+# common/post-build-dispatch-auto.yaml — no bmad-loop plugin is involved.
 # Returns exit 0 if CI is green, exit 1 if red (with diagnostic in output).
 # Returns exit 1 if ci-status.json is missing — the on_complete hook did
 # NOT write it. This is treated as a fixable failure (retry) rather than an
@@ -11,8 +12,8 @@
 # escalating.
 #
 # This script is deterministic and fast — it just reads a file. The intelligent
-# work (polling CI, parsing logs, distinguishing flaky vs real) is done by
-# the on_complete hook which INCLUDEs common/post-build-dispatch.yaml.
+# work (polling CI, parsing logs, distinguishing flaky vs real) is done by the
+# on_complete hook.
 #
 # Exit contract (bmad-loop verify.py):
 #   - rc=0  -> CI green, proceed

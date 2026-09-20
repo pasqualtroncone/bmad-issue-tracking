@@ -2,8 +2,9 @@
 #
 # Purpose: Syncs sprint-status entries to the issue tracker — creates missing issues,
 #           updates statuses, and marks the draft MR/PR ready when all epics are done.
-#           Requires check-config and find-prd to have been run first (variables in scope).
-# Input variables: (none — expects host, project, sep, prd_key, git_platform, branch_patterns from scope)
+#           Self-contained: it runs common/check-config and common/find-prd-key itself,
+#           because the context may have been compacted between activation and complete.
+# Input variables: (none)
 # Output variables:
 #   - sync_created: number of issues created
 #   - sync_updated: number of issues updated

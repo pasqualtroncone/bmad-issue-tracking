@@ -101,9 +101,9 @@ Branch setup happens in activation (before BMM workflow runs). The BMM workflow 
 Projects using [`bmad-loop`](https://github.com/bmad-code-org/bmad-loop) bypass the manual branch/MR flow: bmad-loop drives `bmad-build-auto` per story in isolated worktrees, is the single writer of `sprint-status.yaml`, and merges each story back locally (never pushes). The module's role shrinks to mirroring:
 
 - `common/find-prd-key.yaml` — silent `prd_key` resolution (no PRD worktree, no prompt); used by `issue-sync/prepare.yaml` + `sync.yaml` so `/bmad-issue-tracking-sync` runs unattended after a bmad-loop run.
-- `common/mark-mr-ready.yaml` — no-op when no MR exists (bmad-loop has none); the MR-based CI gates (`check-mr-ci`, `wait-for-green-ci`) are not used in this flow.
+- `common/mark-mr-ready.yaml` — no-op when no MR exists (bmad-loop has none). The CI gate DOES run in this flow: the dev-finish phase ensures the trace MR first (`common/ensure-mr.yaml`) and then gates on it (`common/check-mr-ci.yaml`, `common/wait-for-green-ci.yaml`), so the gate has something to read on the first pass.
 - `scripts/bmad-loop/ci-gate/ci-status.sh` (in the setup skill's `scripts/` folder) — bmad-loop `[verify]` command deployed to `.bmad-loop/ci-status.sh` (setup step 4): reads `ci-status.json` (written by the `dev-finish` / `review-finish` phases of `common/post-dev-complete.yaml` via `common/write-ci-status.yaml`) and returns exit 0 if CI is green, exit 1 if red (fixable), exit 1 if the file is missing. The intelligent work (polling CI, parsing logs) is done by the `on_complete` workflow.
-- `custom/bmad-build-auto.toml` — routes the `bmad-build-auto` `on_complete` hook to `common/post-build-dispatch.yaml` (non-interactive dispatcher). The bmad-build-auto skill executes this hook at the end of EVERY session — including when bmad-loop invokes it — so issue tracking + CI write happen without any bmad-loop plugins. `bmad-build.toml` uses the interactive dispatcher (`post-build-dispatch-interactive.yaml`) with the optional MR merge prompt.
+- `custom/bmad-build-auto.toml` — routes the `bmad-build-auto` `on_complete` hook to `common/post-build-dispatch-auto.yaml`, which honours the `.bmad-ci-handled` marker, sets `review_producer` and then INCLUDEs `common/post-build-dispatch.yaml`. The bmad-build-auto skill executes this hook at the end of EVERY session — including when bmad-loop invokes it — so issue tracking + CI write happen without any bmad-loop plugins. `bmad-build.toml` uses the interactive dispatcher (`post-build-dispatch-interactive.yaml`) with the optional MR merge prompt.
 - `awaiting-operator` — bmad-loop status for a story parked on external action; mapped to `status{sep}awaiting-operator` and the issue stays open.
 
 ## Platform differences
@@ -134,15 +134,16 @@ Every MR/PR and CI step takes them from there: `mr_repo` for `gh -R` / `glab -R`
 pipeline or an MR through `{project_enc}`/`{host}`: those name the tracker, which is the
 right answer only while the two platforms coincide. `gh -R` and the `repos/…` API path
 take `owner/repo` whole, so `git_project` is never split into owner and repo.
-`merge-mr` additionally READs `git_host`/`git_project` itself, so it stays usable by a
-caller that did not run `check-config`.
+`merge-mr`'s cross-platform branch additionally READs `git_host`/`git_project` itself, so
+no caller has to seed them; its same-platform branch still takes `host`/`project`/
+`project_enc` from `check-config`.
 
 ## Files to update when adding a new BMM workflow override
 
 1. Create `skills/bmad-issue-tracking-setup/assets/custom/bmad-{workflow}.toml` (pointer format — activation_steps_append and/or on_complete)
 2. Create the corresponding workflow YAML files in `skills/bmad-issue-tracking-setup/assets/workflows/{workflow}/`
-3. Add the TOML file to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3)
-4. Add the YAML files to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3b)
+3. Add the TOML file to the list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 2)
+4. Add the YAML files to the verify list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3)
 5. Add a row to the override table in `README.md`
 6. If the workflow has a standalone skill, create or update its `references/help.md`, add its row to `skills/module-help.csv` (classic help catalog) and bump `version` in `<skill>/module-manifest.toml`
 
@@ -273,8 +274,8 @@ survived where the interpreter had raised the timeout, which is the same failure
 
 ## Adding or removing a workflow file
 
-`skills/bmad-issue-tracking-setup/SKILL.md` carries an explicit per-file verify list
-(~lines 88-142) of every file the setup step must have copied. Adding
+`skills/bmad-issue-tracking-setup/SKILL.md` step 3 carries an explicit per-file verify
+list of every file the setup step must have copied. Adding
 `common/post-build-dispatch-auto.yaml` required adding it there; forgetting leaves the
 installer green while the file is missing in the consumer.
 

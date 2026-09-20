@@ -1,6 +1,6 @@
 # Module: bmad-issue-tracking
 
-Override layer. Ships TOML pointers + YAML workflows that hook into `bmm` workflow `on_complete` / `activation_steps_append`. Does not run standalone: must be installed in a consumer project that already has `bmm` (≥6.11.0).
+Override layer. Ships TOML pointers + YAML workflows that hook into `bmm` workflow `on_complete` / `activation_steps_append`. Does not run standalone: must be installed in a consumer project that already has `bmm` (≥6.12.0).
 
 ## Skills in this module
 
@@ -9,7 +9,7 @@ Override layer. Ships TOML pointers + YAML workflows that hook into `bmm` workfl
 
 ## Trigger surface
 
-This module exposes no new menus or commands. The sync skill is the only user-invoked entry point; everything else runs from `bmm` workflow hooks installed by the setup skill.
+`skills/module-help.csv` registers two commands in the consumer's help catalog: `SU` (`/bmad-issue-tracking-setup`) and `IS` (`/bmad-issue-tracking-sync`). Those are the only user-invoked entry points; everything else runs from `bmm` workflow hooks installed by the setup skill.
 
 ## Prerequisites (consumer project)
 

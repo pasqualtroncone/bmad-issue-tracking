@@ -204,10 +204,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `common/wait-for-green-ci.yaml` spent its whole 30-minute budget inside one command
   (`sleep 30` × 60 attempts), and that command is killed at 600 s at the latest, so `ci_status`
   was never stored, `common/write-ci-status.yaml` never ran and bmad-loop's `[verify]` failed
-  for the wrong reason. The same 30 minutes are now a `LOOP` of nine rounds, each a single
-  command of at most 8 polls × 25 s (~200 s) that stores `ci_status`; iterations after a
-  terminal state do nothing, and a run that is still `running` after the ninth round yields
-  `timeout` exactly as before.
+  for the wrong reason. The same 30 minutes are now a `LOOP` of 18 rounds, each a single
+  command of at most 4 polls × 25 s (~100 s) that stores `ci_status`; ~100 s keeps the round
+  inside the 120 s DEFAULT of that same tool, which is the cap the round-based shape exists
+  to respect. Iterations after a terminal state do nothing, and a run that is still `running`
+  after the eighteenth round yields `timeout` exactly as before.
 - Issue sync stopped after the first issue it created: the `sync_created` counter in
   `common/sync-issues.yaml` ran `int(sys.argv[1]) + 1` in a `python -c` body with no
   `import sys`, so the step raised `NameError` and halted the workflow.
@@ -287,8 +288,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   itself, so no caller seeds anything. The same mismatch ran through every MR/PR and CI step:
   the enclosing `CHECK: git_platform eq …` picked the right branch and the step's `PLATFORM:`
   annotation — which compares against the tracker — then skipped the RUN inside it, so nothing
-  was stored and the caller read the empty value as "no MR" or, after nine silent poll rounds,
-  as a 30-minute CI timeout. `common/find-mr.yaml`, `common/get-mr-pipeline.yaml`,
+  was stored and the caller read the empty value as "no MR" or, after a whole budget of silent
+  poll rounds, as a 30-minute CI timeout. `common/find-mr.yaml`, `common/get-mr-pipeline.yaml`,
   `common/merge-mr.yaml`, `common/wait-for-green-ci.yaml` and `common/get-failed-jobs.yaml` now
   carry no `PLATFORM:` annotation and are selected by `git_platform` alone; the rule is written
   down in `bmad-workflow-lang.md` §2.4 and enforced by `tests/test_platform_coverage.py`.
@@ -366,12 +367,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   definition on the branch (`.gitlab-ci.yml` / `.github/workflows/*.yml`): a CI-less repo
   is still green immediately, a branch that defines CI waits. Inside the polling rounds an
   empty list is `no_run`, and only three consecutive rounds of it conclude `no_ci`.
-- A polling round of `common/wait-for-green-ci.yaml` blocked ~200 s (8 polls × 25 s) while
-  the tool cap the round-based shape exists to respect is 120 s by default. Where the
-  interpreter had not raised it, the round was killed before printing, `ci_status` was
-  never stored and `ci-status.json` was never written — the exact symptom the split into
-  rounds had removed. A round is now 4 polls (~100 s) and the LOOP runs 18 of them, so the
-  30-minute budget is unchanged.
 - The GitHub title-shaped lookup in `common/find-issue.yaml` could return a pull request.
   `search/issues` answers with issues AND pull requests, and unlike the key-shaped branch
   (and `common/create-issue.yaml`) this one did not drop the items carrying

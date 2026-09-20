@@ -1,9 +1,9 @@
 # Issue Tracking override for bmad-build (manual flow)
 # Routes the on_complete hook to the interactive dispatcher, which reads the spec
 # status and dispatches to the right phase of post-dev-complete (push + wait CI +
-# update issue + post comment). allow_merge=true enables the optional MR merge
-# prompt in review-finish (interactive flow). bmad-build-auto uses the non-interactive
-# dispatcher (post-build-dispatch.yaml).
+# update issue + post comment). The dispatcher sets allow_merge=true, which enables
+# the optional MR merge prompt in review-finish. bmad-build-auto uses the
+# unattended entry point (post-build-dispatch-auto.yaml).
 
 [workflow]
 

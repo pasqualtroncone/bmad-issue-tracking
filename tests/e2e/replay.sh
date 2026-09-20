@@ -55,7 +55,7 @@ case_static() {
   # S3 env vars in sync SKILL.md
   local envs; envs="$(grep -c 'BMAD_[A-Z_]*ACTION' "$MOD/skills/bmad-issue-tracking-sync/SKILL.md")"; local inwf; inwf="$(grep -rl 'BMAD_MR_ACTION\|BMAD_ISSUE_ACTION' "$WF" | wc -l)"
   say "sync SKILL.md references BMAD_*_ACTION env vars on $envs lines; workflow files reading them: $inwf"
-  if [ "$envs" -gt 0 ] && [ "$inwf" = 0 ]; then mark S3 CONFIRMED "sync SKILL.md steps 3-4 route on env vars no workflow reads (the language has no env channel; CLAUDE.md forbids it)"; else mark S3 REFUTED "env routing is wired"; fi
+  if [ "$envs" -gt 0 ] && [ "$inwf" = 0 ]; then mark S3 CONFIRMED "sync SKILL.md steps 3-4 route on env vars no workflow reads (the language has no env channel; CLAUDE.md forbids it)"; else mark S3 REFUTED "the env routing is gone: the sync SKILL.md is steps 1-3 and names no BMAD_* variable"; fi
   # S4 help.md config path
   item="$(grep -n '_bmad/_config/custom/issue-tracking.yaml' "$MOD"/skills/*/references/help.md "$MOD"/skills/*/SKILL.md 2>/dev/null)"
   say '```'; say "${item:-(no hit)}"; say '```'
@@ -71,21 +71,29 @@ case_static() {
   # S7 dead test + sys imports
   item="$(grep -n '"uv run python"' "$MOD/tests/test_command_patterns.py")"; local usesold; usesold="$(grep -rc 'uv run python ' "$WF" | awk -F: '{s+=$2} END{print s}')"
   say '```'; say "$item"; say "RUN steps spelled 'uv run python ' (no --no-project) in workflows: $usesold"; say '```'
-  say '```'; $TT lint-sys | tee -a "$rep" >&2; say '```'
-  if [ -n "$item" ] && [ "$usesold" = 0 ]; then mark S7 CONFIRMED "test_python_sys_argv_has_import filters on 'uv run python' but every RUN is 'uv run --no-project python' → the test never inspects a body; lint-sys finds 3 bodies using sys without import (sync-issues:274, wait-for-green-ci:42, :80 → D17/D18)"; else mark S7 REFUTED "test filter matches the commands"; fi
+  # the offenders and their count come from lint-sys itself, so the message can never name
+  # a file:line that has moved since it was written
+  local lint lintn lintwhere
+  lint="$($TT lint-sys)"
+  lintn="$(printf '%s\n' "$lint" | sed -n 's/^\([0-9][0-9]*\) python -c bodies .*/\1/p')"
+  lintwhere="$(printf '%s\n' "$lint" | sed -n 's/^\([^ ]*\): uses sys without import.*/\1/p' | tr '\n' ' ')"
+  say '```'; printf '%s\n' "$lint" | tee -a "$rep" >&2; say '```'
+  if [ -n "$item" ] && [ "$usesold" = 0 ]; then mark S7 CONFIRMED "test_python_sys_argv_has_import filters on 'uv run python' but every RUN is 'uv run --no-project python' → the test never inspects a body; lint-sys finds ${lintn:-?} bodies using sys without import (${lintwhere:-none})"; else mark S7 REFUTED "test filter matches the commands"; fi
   # S8 spec_file undefined in the language
   local sf; sf="$(grep -c 'spec_file' "$ASSETS/bmad-workflow-lang.md")"; local sfuse; sfuse="$(grep -rl '{spec_file}' "$WF" | wc -l)"
-  say "lang mentions of spec_file: $sf; workflow files using {spec_file}: $sfuse; CLAUDE.md cites lang lines 443-455: $(sed -n 443,455p "$ASSETS/bmad-workflow-lang.md" | grep -c spec_file) mention(s) there"
+  say "lang mentions of spec_file: $sf; workflow files using {spec_file}: $sfuse; CLAUDE.md cites the language by section (§4.4), not by line number: $(grep -c '443-455' "$MOD/CLAUDE.md") line-range citation(s) left"
   if [ "$sf" = 0 ] && [ "$sfuse" -gt 0 ]; then mark S8 CONFIRMED "{spec_file} is read by $sfuse workflow files but the language spec never defines it (§4.4 table); CLAUDE.md's cited lines do not exist"; else mark S8 REFUTED "spec_file is specified"; fi
-  # S9 (new) conftest parser depth
+  # S9 (new) conftest parser depth. The increment's line is located, never spelled out:
+  # it moved once already (a renumbering of sync-issues.yaml) and the message went stale.
+  local s9l; s9l="$(run_line_of common/sync-issues.yaml '^" \{sync_created\}$')"
   local seen; seen="$($PY - <<'PY'
 import sys; sys.path.insert(0,'tests'); import conftest
 wf=conftest.load_workflow('common/sync-issues.yaml')
 print(sum(1 for s in conftest.flatten_steps(wf['steps']) if s['type']=='RUN' and 'sync_created' in s['raw_value']))
 PY
 )"
-  say "conftest.flatten_steps sees the sync_created increment RUN (sync-issues.yaml:274)? count=$seen"
-  if [ "$seen" = 0 ]; then mark S9 CONFIRMED "tests/conftest.py drops steps nested LOOP→CHECK→RUN: sync-issues.yaml:274 (D17) is invisible to every test, even a fixed S7"; else mark S9 REFUTED "parser reaches it"; fi
+  say "conftest.flatten_steps sees the sync_created increment RUN (sync-issues.yaml:$s9l)? count=$seen"
+  if [ "$seen" = 0 ]; then mark S9 CONFIRMED "tests/conftest.py drops steps nested LOOP→CHECK→RUN: sync-issues.yaml:$s9l (D17) is invisible to every test, even a fixed S7"; else mark S9 REFUTED "parser reaches it"; fi
   # D03 arithmetic — what matters is the worst case of ONE poll RUN, since that is what the
   # Bash tool has to survive. The old locator multiplied sleep × max_attempts because the whole
   # 30-min wait WAS one RUN; now the wait is a LOOP in the workflow language, so the same product
@@ -104,26 +112,39 @@ PY
   local one rounds total; read -r one rounds total <<< "$d03"
   say "wait-for-green-ci: the longest single poll RUN blocks sleep × polls = $one s (× $rounds LOOP rounds = $total s of wall clock); Claude Code Bash hard cap = 600 s (BASH_MAX_TIMEOUT_MS)"
   if [ "$one" -gt 600 ]; then mark D03-static CONFIRMED "a single RUN can block $one s but the tool times out at 600 s → ci-status.json never written on long pipelines (empirical: scenario A2)"; else mark D03-static REFUTED "one RUN blocks at most $one s, under the 600 s cap; the $total s wait is $rounds LOOP rounds in the workflow language and ci_status is stored after each"; fi
-  # D22 arithmetic
+  # D22 — bmad-loop still names its branches bmad-loop/<run>/<story_key>, so the verdict is
+  # about the MODULE's half: whether the hook pushes and opens the MR on the branch it is
+  # ON. The gate is the code, not whether bmad-loop happens to be installed here — that
+  # only decided whether the evidence block could be printed, and printed CONFIRMED on a
+  # fixed module.
   local bl; bl="$(find "$(uv tool dir 2>/dev/null)/bmad-loop" -name workspace.py -path '*bmad_loop*' 2>/dev/null | head -1)"
   if [ -n "$bl" ]; then
     say '```'; grep -n -A14 'def unit_branch_name' "$bl" | grep -E 'return f"bmad-loop' | tee -a "$rep" >&2; say '```'
-    say "module story_branch pattern (fixtures/issue-tracking.yaml.tmpl, SKILL.md step 9 default): feat/{prd_key}/{story_key}"
-    mark D22-static CONFIRMED "bmad-loop 0.11.1 names the branch bmad-loop/<run>/<story_key>; the module derives story_branch=feat/{prd_key}/{story_key} → ensure-mr --head names a branch that never exists on the remote (empirical: A7)"
-  else mark D22-static BLOCKED "bmad-loop not installed as a uv tool"; fi
+  else say "bmad-loop is not installed as a uv tool; 0.11.1 names the branch bmad-loop/<run>/<story_key>"; fi
+  local d22src d22push
+  d22src="$(grep -c 'variable: source_branch, value: "{current_branch}"' "$WF/common/post-dev-complete.yaml")"
+  d22push="$(grep -c 'push -u origin HEAD' "$WF/common/post-dev-complete.yaml")"
+  say "post-dev-complete.yaml: 'source_branch = {current_branch}' SETs = $d22src (want 2 — create-story and dev-finish, the two phases that call ensure-mr); 'push -u origin HEAD' = $d22push (want 2 — dev-finish and review-finish, the two phases bmad-loop reaches)"
+  say "module story_branch pattern (fixtures/issue-tracking.yaml.tmpl, SKILL.md step 9 default): feat/{prd_key}/{story_key}"
+  if [ "$d22src" -ge 2 ] && [ "$d22push" -ge 2 ]; then
+    mark D22-static REFUTED "the pattern-derived story_branch no longer reaches the remote: post-dev-complete.yaml pushes 'HEAD' ($d22push steps) and hands ensure-mr source_branch={current_branch} ($d22src SETs), so the MR is opened on the branch the hook is on — bmad-loop/<run>/<story_key> included (empirical: A7)"
+  else
+    mark D22-static CONFIRMED "bmad-loop 0.11.1 names the branch bmad-loop/<run>/<story_key>; the module derives story_branch=feat/{prd_key}/{story_key} → ensure-mr --head names a branch that never exists on the remote (source_branch={current_branch} SETs=$d22src, push HEAD=$d22push; empirical: A7)"
+  fi
   say "verdicts: $d/verdicts.tsv"
 }
 
 # ============================================================================
 case_d17() {
   local c=d17; load_lab
-  replay $c increment common/sync-issues.yaml "$(run_line_of common/sync-issues.yaml '^" \{sync_created\}$')" sync_created=0
+  local l; l="$(run_line_of common/sync-issues.yaml '^" \{sync_created\}$')"
+  replay $c increment common/sync-issues.yaml "$l" sync_created=0
   local d; d="$(case_dir $c)"
-  # the 12th python step is the increment; assert we replayed the right one
+  # the increment is located by its body, never by line number; assert we replayed it
   grep -q 'n = int(sys.argv\[1\]) + 1' "$d/increment.cmd" || { verdict $c BLOCKED "rendered the wrong step: $(head -2 "$d/increment.cmd" | tail -1)"; return; }
   if [ "$(cat "$d/increment.rc")" != 0 ] && grep -q "NameError: name 'sys' is not defined" "$d/increment.err"; then
-    verdict $c CONFIRMED "sync-issues.yaml:274 'n = int(sys.argv[1]) + 1' without import sys → NameError, exit $(cat "$d/increment.rc"); the sync halts after the FIRST created issue"
-  else verdict $c REFUTED "rc=$(cat "$d/increment.rc") $(head -c 200 "$d/increment.err")"; fi
+    verdict $c CONFIRMED "sync-issues.yaml:$l 'n = int(sys.argv[1]) + 1' without import sys → NameError, exit $(cat "$d/increment.rc"); the sync halts after the FIRST created issue"
+  else verdict $c REFUTED "sync-issues.yaml:$l carries its own 'import sys', so the counter increment exits $(cat "$d/increment.rc") and the sync walks every entry. $(head -c 200 "$d/increment.err")"; fi
 }
 
 case_d18() {
@@ -1093,9 +1114,9 @@ for line in open(sys.argv[1], encoding='utf-8'):
     echo "story-title.yaml:$le  legacy H1       → '$b'"
     echo "story-title.yaml:$ls + sync-issues.yaml:$lc  6.12.0 template → '$(head -1 "$d/sync-title.out")' → '$s'   (first-'#'-line rule gave '$old_s')"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   if [ "$a" = "Login Form" ] && [ "$b" = "Login Form" ] && [ "$s" = "Story 1.1: Login Form" ]; then
-    verdict $c REFUTED "the title comes from the spec frontmatter: ensure-issue.yaml:$le → '$a' on the 6.12.0 template (whose first heading is '## Intent' inside <intent-contract>, so the old first-'# '-line rule produced '$old_e' → the issue title 'Story 1.1: ') and '$b' on the legacy H1 variant; sync-issues.yaml:$ls → '$s' (old rule: '$old_s')"
+    verdict $c REFUTED "the title comes from the spec frontmatter: story-title.yaml:$le (ensure-issue path) → '$a' on the 6.12.0 template (whose first heading is '## Intent' inside <intent-contract>, so the old first-'# '-line rule produced '$old_e' → the issue title 'Story 1.1: ') and '$b' on the legacy H1 variant; story-title.yaml:$ls + sync-issues.yaml:$lc (sync path) → '$s' (old rule: '$old_s')"
   else
-    verdict $c CONFIRMED "the title is still taken from a heading: ensure-issue.yaml:$le → '$a' (want 'Login Form'), legacy → '$b' (want 'Login Form'), sync-issues.yaml:$ls → '$s' (want 'Story 1.1: Login Form'). The 6.12.0 spec template has no H1 — the title lives in the frontmatter"
+    verdict $c CONFIRMED "the title is still taken from a heading: story-title.yaml:$le (ensure-issue path) → '$a' (want 'Login Form'), legacy → '$b' (want 'Login Form'), story-title.yaml:$ls + sync-issues.yaml:$lc (sync path) → '$s' (want 'Story 1.1: Login Form'). The 6.12.0 spec template has no H1 — the title lives in the frontmatter"
   fi
   # --- R10 (#56): a frontmatter title that ALREADY carries the prefix ---
   # The two parsers disagreed here and nowhere else: sync-issues passed a title beginning

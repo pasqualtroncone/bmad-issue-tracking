@@ -1,7 +1,9 @@
 # common/find-issue.yaml
 #
-# Purpose: Finds an issue by search text and returns its tracker ID.
-#           Uses targeted search on both platforms (fixes GitHub fetch-all asymmetry).
+# Purpose: Finds an issue by search text and returns its tracker ID. GitLab searches the
+#           issues endpoint; GitHub splits the two search shapes across two endpoints —
+#           a key-shaped lookup lists the PRD-labelled issues and matches the Sprint Key
+#           marker locally, a title shape uses `search/issues`. See the note below.
 # Input variables:
 #   - search_text: text to search for in the issue (e.g. "{story_key}", "PRD: {prd_key}", "Epic {epic_num}:").
 #       Passed as a `-f` request field, never interpolated into the URL, so the CLI
@@ -68,25 +70,18 @@ print(str(match[0]['iid']) if match else '')
 # return the PR's number and `gh issue edit <pr>` would then edit the pull request.
 #
 # The retry is the other half, and it is why this body calls `gh` itself. NEITHER GitHub
-# endpoint is read-your-writes: measured on the lab, an issue takes 3.7-7.7 s to appear
-# in `repos/<o>/<r>/issues` (with or without the `labels=` filter) and about as long in
-# `search/issues`. A flow that creates an issue and looks it up again in the same run —
-# post-dev-complete asks for the story issue after ensure-issue may have just created it
-# — read an empty issue_id, skipped the status update and went back to create-issue,
-# whose own lookup reads the same lagging list. So a miss is re-checked up to three
-# times, 3 s apart: ~9 s at worst.
+# endpoint is read-your-writes (3.7-7.7 s on the lab), so a flow that creates an issue and
+# looks it up again in the same run would read an empty issue_id and skip the status
+# update. A miss is therefore re-checked up to three times, 3 s apart: ~9 s at worst.
 #
-# BUT A MISS IS THE NORMAL ANSWER for the callers that are about to create the issue —
-# the first sync of a PRD, create-story, correct-course — and they paid those 9 s per
-# entry for an issue nobody had created yet: a 30-entry first sync slept ~4.5 minutes and
-# spent the REST budget to learn what it already knew. The re-check is only ever right
-# when a create has already happened in THIS run, so it is gated on the flag
-# common/create-issue.yaml raises right after a successful create. The flag is not an
-# UNSET variable: lang §4.5 halts a CHECK that reads one, so common/check-config.yaml
-# seeds it "" at the top of every entry point and a caller that never creates keeps the
-# single-shot lookup and returns on the miss at once.
-# A `gh` failure raises (check=True) and the step exits non-zero, as #32 requires — with
-# the CLI's own stderr, which capture_output=True would otherwise swallow.
+# BUT A MISS IS THE NORMAL ANSWER for the callers that are about to create the issue (a
+# first sync, create-story, correct-course), so the re-check is gated on the flag
+# common/create-issue.yaml raises right after a successful create. The flag is never an
+# UNSET variable — lang §4.5 halts a CHECK that reads one — so common/check-config.yaml
+# seeds it "" at every entry point, and a caller that never creates returns on the miss
+# at once.
+# A `gh` failure raises (check=True) and the step exits non-zero, with the CLI's own
+# stderr, which capture_output=True would otherwise swallow.
 # GitLab's REST `search=` is not index-backed and needs none of this.
 - CHECK: lookup_after_create eq "true"
   TRUE:

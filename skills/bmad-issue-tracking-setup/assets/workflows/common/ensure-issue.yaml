@@ -1,8 +1,10 @@
 # common/ensure-issue.yaml
 #
-# Purpose: Ensures the story's issue exists on the tracker — finds it by title
-#          (scoped by prd label), creates it if missing with the story spec body,
-#          sprint key, epic and prd context. Reused by post-dev-complete phases.
+# Purpose: Ensures the story's issue exists on the tracker — finds it through
+#          common/find-issue by the `**Sprint Key:**` body marker (scoped by the prd
+#          label), creates it if missing with the story spec body, sprint key, epic and
+#          prd context. Reused by post-dev-complete phases. Title matching belongs to
+#          common/create-issue, which uses it to dedupe before creating.
 # Input variables:
 #   - story_key: the story key (e.g. 1-3-login-form) — must be set
 #   - epic_num: the epic number (first dash segment of story_key)

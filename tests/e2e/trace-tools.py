@@ -5,7 +5,7 @@
                                              workflows/<rel>, placeholders rendered; `|`
                                              blocks are dedented (the parser drops them)
   lint-sys                                   every `python -c` body that uses `sys.` without
-                                             importing sys (the check the dead test skips)
+                                             importing sys (rc=1 when any is found)
   reachable <rel>                            RUN steps reachable from <rel> through INCLUDE
   analyze <trace.jsonl> --entry <rel> --out <dir>
                                              commands.txt, files.txt, result.json, final.txt,
@@ -33,9 +33,9 @@ FIELD_RE = re.compile(r"^\s+(STORE|PLATFORM|EXPECT_EXIT|CAPTURE|EXTRACT|TRUE|FAL
 def scan_steps(rel):
     """[(line, type, command)] for every RUN/INCLUDE in workflows/<rel>, at ANY nesting depth.
 
-    tests/conftest.py's parser drops steps nested LOOP→CHECK→RUN (e.g. sync-issues.yaml:274,
-    the D17 step), so the lab scans the file linearly: a step starts at `- TYPE:`; a RUN
-    body continues on the following lines until the next step or sub-field (`STORE:` …).
+    The lab scans the file linearly rather than reusing conftest's step tree, so a
+    rendered command never depends on the parser: a step starts at `- TYPE:`; a RUN body
+    continues on the following lines until the next step or sub-field (`STORE:` …).
     `RUN: |` blocks are dedented. Line numbers are 1-based file lines.
     """
     lines = (WF / rel).read_text(encoding="utf-8").split("\n")
@@ -58,7 +58,8 @@ def scan_steps(rel):
         while i < len(lines):
             l = lines[i]
             # inside an open `-c "..."` quote everything belongs to the body — including a
-            # column-0 `#` python comment (merge-mr.yaml:81) and lines that look like steps
+            # column-0 `#` python comment (merge-mr.yaml's SHA lookups carry one) and
+            # lines that look like steps
             in_quote = (acc.count('"') - acc.count('\\"')) % 2 == 1
             if not in_quote and value != "|":
                 if STEP_RE.match(l) or FIELD_RE.match(l):

@@ -3,7 +3,7 @@
 # Purpose: Unified post-completion workflow handling the full issue tracking lifecycle
 #          for a story: push code, wait CI, update issue status, post comments, create MR.
 # Dispatched by phase:
-#   - "create-story": spec just created, no code yet — create issue + commit + push + create MR draft
+#   - "create-story": spec just created, no code yet — create issue + commit + push + create trace MR
 #   - "dev-finish":    dev session done — push + issue + MR + wait CI + write ci-status.json + update issue + post dev comment
 #   - "review-finish": review session done — push + wait CI + post review findings + update issue final + optional merge
 # Input variables:
@@ -81,14 +81,10 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     
     - RUN: git commit --allow-empty -m "create story {story_key}" 2>/dev/null || true
     - RUN: git push -u origin {story_branch}
-    # Translate caller scope into the new INPUT contract (the atomic no longer reads
-    # story_key / story_title / story_num / epic_num / issue_id — caller must supply).
-    # source_branch is the branch we are ON, not the one story_pattern would spell:
-    # bmad-loop names its branches bmad-loop/<run>/<story_key>, so a pattern-derived
-    # story_branch names a ref that never reached the remote and the MR create fails.
-    # mr_repo is the git remote's "host/project", resolved once by check-config: these
-    # two phases used to SET it to "{host}/{project}", the ISSUE TRACKER's project, which
-    # names the wrong repo as soon as code and issues live on different platforms.
+    # common/ensure-mr reads its inputs from the caller's scope, so they are set here.
+    # source_branch is the branch we are ON, never the pattern-derived story_branch:
+    # bmad-loop names its branches bmad-loop/<run>/<story_key>, a ref no pattern spells.
+    # mr_repo (the git remote's "host/project") comes from check-config.
     - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
@@ -123,14 +119,10 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     - RUN: git push -u origin HEAD
     # Ensure issue exists (find or create)
     - INCLUDE: common/ensure-issue
-    # Translate caller scope into the new INPUT contract (the atomic no longer reads
-    # story_key / story_title / story_num / epic_num / issue_id — caller must supply).
-    # source_branch is the branch we are ON, not the one story_pattern would spell:
-    # bmad-loop names its branches bmad-loop/<run>/<story_key>, so a pattern-derived
-    # story_branch names a ref that never reached the remote and the MR create fails.
-    # mr_repo is the git remote's "host/project", resolved once by check-config: these
-    # two phases used to SET it to "{host}/{project}", the ISSUE TRACKER's project, which
-    # names the wrong repo as soon as code and issues live on different platforms.
+    # common/ensure-mr reads its inputs from the caller's scope, so they are set here.
+    # source_branch is the branch we are ON, never the pattern-derived story_branch:
+    # bmad-loop names its branches bmad-loop/<run>/<story_key>, a ref no pattern spells.
+    # mr_repo (the git remote's "host/project") comes from check-config.
     - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
     - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
@@ -218,26 +210,19 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # The spec is read from {spec_file} — the path the runtime already resolved, in
     # whichever mode applies (sprint: spec-<storyId>-<slug>.md; stories:
     # stories/<id>-<slug>.md). Do NOT re-derive it from {story_key}: the slug comes
-    # from the story TITLE, so {implementation_artifacts}/{story_key}.md never exists
-    # in sprint mode. That invented path raised FileNotFoundError here and killed the
-    # phase (story 2-1, 2026-09-13) — taking the CI gate and the merge with it.
-    # The legacy exact-key path is still tried second so existing consumers do not
-    # regress.
+    # from the story TITLE, so {implementation_artifacts}/{story_key}.md never exists in
+    # sprint mode and reading it kills the phase, the CI gate and the merge with it. The
+    # legacy exact-key path is still tried second so existing consumers do not regress.
     #
     # Two producers write two different sections into the same file:
     #   bmad-build-auto  -> '## Review Triage Log' with '### <date> — Review pass' rows
     #   bmad-code-review -> '### Review Findings'
-    # Both are accepted; the triage log wins when both are present, because this
-    # workflow's caller is bmad-build-auto.
+    # Both are accepted; the triage log wins when both are present, because it is the
+    # only section a producer guarantees on every pass.
     #
-    # A MISSING file still halts — that is unambiguous, and it is what killed story
-    # 2-1 (the file was read from an invented path). A missing or empty SECTION only
-    # warns: bmad-code-review's clean-review shortcut writes no section at all on zero
-    # findings (steps/step-04-present.md §1), and because both spec templates carry
-    # '## Tasks & Acceptance' and '## Review Triage Log', nothing in the file
-    # distinguishes "clean review" from "review never ran" — so halting would block
-    # clean stories from merging. The original defect was the SILENCE, not the absence
-    # of a halt; a visible warning fixes that without the blocking.
+    # A MISSING file always halts — that case is unambiguous. A missing or empty SECTION
+    # halts only when review_producer eq "bmad-build-auto"; every other flow warns and
+    # goes on, because their reviews legitimately write nothing when they find nothing.
     - CHECK: empty issue_id
       FALSE:
         - RUN: uv run --no-project python -c "
@@ -269,17 +254,6 @@ print(body)
             - OUTPUT:
                 message: "No spec file found — tried '{spec_file}' then '{implementation_artifacts}/{story_key}.md'. {spec_file} is the path the runtime resolved, so its absence means no spec was produced for this story. Nothing was posted and the merge must not proceed. Check what bmad-build-auto actually wrote on disk (sprint mode names it spec-<storyId>-<slug>.md)."
                 stop: true
-        # Halt on an unrun review ONLY in the unattended flow. The two real producers
-        # differ, and allow_merge separates them exactly:
-        #   bmad-build-auto (allow_merge unset) appends a '### <date> - Review pass'
-        #     entry on EVERY review pass (step-04-review.md step 4, unconditional), so an
-        #     absent or empty section means the review never ran - worth stopping for.
-        #   bmad-build (allow_merge="true", set by post-build-dispatch-interactive.yaml)
-        #     writes one row PER FINDING (step-04-review.md:42), so a clean review writes
-        #     nothing at all and the template heading stays empty - halting there would
-        #     block a story that is fine.
-        # bmad-code-review never reaches this file (its workflow has no post-build
-        # dispatcher), so its clean-review shortcut is not a factor here.
         # Halt ONLY when the producer is known to always write a section. That is
         # bmad-build-auto alone: its step-04 appends a review-log entry on EVERY pass.
         # The other two producers that reach this file write nothing on a clean review
@@ -339,8 +313,8 @@ print(body)
         - CHECK: do_merge eq "yes"
           TRUE:
             # Resolve mr_iid via the existing source_branch (atomic sets mr_iid in scope).
-            # mr_repo + source_branch are set by common/check-mr-ci inside wait-for-green-ci
-            # (called above when review_status eq "done").
+            # source_branch is set by common/check-mr-ci inside wait-for-green-ci (called
+            # above when review_status eq "done"); mr_repo comes from check-config.
             - INCLUDE: common/find-mr
             # No cross-platform seeding here: common/merge-mr reads git_host/git_project
             # from the config itself. This block used to derive {git_owner}/{git_repo} for

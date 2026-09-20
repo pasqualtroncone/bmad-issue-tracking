@@ -22,7 +22,8 @@
 #   - mr_create_out: raw stdout of the create CLI when an MR/PR was created (it carries
 #               the web URL); unset when one already existed. Call common/find-mr
 #               afterwards to resolve mr_iid.
-# Side effects: creates the MR/PR on the tracker if not found
+# Side effects: creates the MR/PR on the GIT REMOTE if not found (the MR does not live
+#   on the issue tracker)
 #
 # Quoting: the description NEVER travels through the command line. It used to be read
 # into {description_body} and interpolated inside double quotes, so a body holding a

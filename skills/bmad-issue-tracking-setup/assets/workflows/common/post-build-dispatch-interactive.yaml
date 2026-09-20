@@ -3,7 +3,7 @@
 # Purpose: Dispatcher for interactive flows (manual /bmad-build) — same routing as
 #          post-build-dispatch.yaml, but sets allow_merge=true so review-finish
 #          offers the optional MR merge prompt. Never used by bmad-build-auto
-#          (unattended) — use post-build-dispatch.yaml there.
+#          (unattended) — its entry point is post-build-dispatch-auto.yaml.
 # Input variables: (none — dispatcher reads spec itself)
 # Output variables:
 #   - allow_merge: "true" (enables the interactive merge prompt in review-finish)

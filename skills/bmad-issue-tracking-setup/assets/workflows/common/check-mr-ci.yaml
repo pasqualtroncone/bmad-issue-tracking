@@ -15,7 +15,11 @@
 #       what tells "no run YET" from "this repo has no CI". GitLab reads the project's
 #       `ci_config_path` first (it may name another file, or a file in another repo) and
 #       falls back to .gitlab-ci.yml; GitHub reads .github/workflows/*.yml
-# Side effects: none
+#   - source_branch: set to current_branch for the INCLUDEd atomics; wait-for-green-ci
+#       and post-dev-complete both read it afterwards
+#   - mr_iid, pipeline_id, pipeline_status: left in scope by common/find-mr and
+#       common/get-mr-pipeline; the poll rounds reuse mr_iid instead of re-resolving it
+# Side effects: none on the tracker; the outputs above stay in the caller's scope
 
 # mr_repo comes from check-config, which resolves the git remote's coordinates once
 # (they are the tracker's whenever git_platform eq platform). This file used to resolve

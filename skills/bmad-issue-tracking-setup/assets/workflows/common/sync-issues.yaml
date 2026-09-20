@@ -5,7 +5,9 @@
 #           common/find-issue (by the **Sprint Key** marker the module writes into
 #           every issue it creates), then created or moved to the mapped status.
 #           Tracks created/updated/skipped counts.
-# Input variables: (none — uses platform, host, project, sep, prd_key, branch_patterns from scope)
+# Input variables: (none — uses platform, host, project, sep, prd_key from scope, plus
+#           implementation_artifacts for sprint-status.yaml and planning_artifacts for
+#           epics.md)
 # Output variables:
 #   - sync_created: number of issues created
 #   - sync_updated: number of issues updated

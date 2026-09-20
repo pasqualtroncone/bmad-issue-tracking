@@ -14,84 +14,87 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 EVID = HERE / "evidence"
 
-# defect id → (title-with-symptom, files:lines, cases that carry evidence, fix proposal)
+# defect id → (title-with-symptom, where it was fixed, cases that carry evidence, fix proposal)
+# The second column names the PR and the tracker issue, never a file:line. Every line
+# number this table used to carry had moved by the time the fixes landed, and a report
+# that cites a line the reader cannot find is worse than one that cites none.
 DEFECTS = {
     "D02": ("GitHub CI status is read from the whole repository, not the story branch",
-            "common/get-mr-pipeline.yaml:33,42 · common/wait-for-green-ci.yaml:87,143",
+            "fixed in PR #34 (issue #4); proven by `d2`",
             ["d2", "gl-d2", "P5-D02"],
             "GitHub-only: the GitLab branch queries the MR's own pipelines and is correct (gl-d2). Add `--branch {source_branch}` to every `gh run list` (get-mr-pipeline, the poll body, the failure path), or resolve the run through `gh pr checks {mr_iid}` / the PR's head SHA."),
     "D03": ("wait-for-green-ci polls for up to 30 minutes inside one RUN step; the Bash tool caps at 600 s",
-            "common/wait-for-green-ci.yaml:43-74, 81-112",
+            "fixed in PR #37, tightened by PR #57 (issue #14, #50); proven by `static` (D03-static)",
             ["static", "A2-proxy", "A2-default", "A2-patched"],
             "Poll from the workflow (a LOOP with a bounded RUN of ≤ 5 min each) or delegate the wait to `gh run watch` / `glab ci status --live` with an explicit `timeout`; write ci-status.json `timeout` explicitly when the cap is hit. Note Claude Code 2.1.270 also blocks long foreground sleeps."),
     "D04": ("GitHub bulk fetch breaks past 100 issues: paginated JSON is fed to a single json.load",
-            "common/sync-issues.yaml:28 · common/find-issue.yaml:15",
+            "fixed in PR #32 (issue #8); proven by `d4`",
             ["d4", "gl-d4"],
             "Same on GitLab (`glab api --paginate` also joins pages without a newline: 2 objects, 0 newlines for 105 issues). Use `gh api --paginate --slurp` and iterate the array of pages (both files); the newline split in find-issue does not work because gh joins pages without a separator."),
     "D07": ("PRD/retrospective hooks halt on re-run: `git commit -m` without --allow-empty exits 1 on a clean tree",
-            "bmad-prd/complete.yaml:66 · create-prd/complete.yaml:56 · retrospective/complete.yaml:48",
+            "fixed in PR #31 (issue #9); proven by `d7`",
             ["d7", "A4-D07", "A4-D07b"],
             "`git commit --allow-empty -m …` (as post-dev-complete already does) or guard with `git diff --cached --quiet ||`. The update branch of bmad-prd/complete should also commit/push the PRD change."),
     "D08": ("dev-finish/review-finish `git push` has no upstream on bmad-loop branches and exits 128",
-            "common/post-dev-complete.yaml:118,183",
+            "fixed in PR #31 (issue #5); proven by `d8`",
             ["d8", "A7-D08", "A7-D08-D22"],
             "`git push -u origin HEAD` (or `git push -u origin {current_branch}`) in both phases; the create-story phase is the only one that sets the upstream today."),
     "D22": ("The module derives story_branch=feat/{prd_key}/{story_key} but bmad-loop names the branch bmad-loop/<run>/<story_key>",
-            "common/post-dev-complete.yaml:65-72 · common/ensure-mr.yaml:48",
+            "fixed in PR #31 (issue #6); proven by `static` (D22-static) and `d8`",
             ["static", "d8", "A7-D08-D22"],
             "Use `{current_branch}` as the MR source branch (and for the push) instead of the pattern-derived name; keep the pattern only for creating branches."),
     "D16": ("merge-mr reports merged=false after a successful `gh pr merge` (stdout is empty)",
-            "common/merge-mr.yaml:56-58, 78-87",
+            "fixed in PR #34 (issue #10); proven by `d16`",
             ["d16", "A8-D16", "gl-d16"],
             "GitHub-only: `glab mr merge` prints to stdout (129 B) so the GitLab branch yields merged=true. Derive `merged` from the exit code (drop `EXPECT_EXIT: any`, or capture `$?`) or from the API (`gh api …/pulls/N --jq .merged`); `merge_sha` non-empty is already the reliable signal."),
     "D17": ("Issue sync stops after the first created issue: NameError on `sys` in the counter increment",
-            "common/sync-issues.yaml:274-277",
+            "fixed in PR #31 (issue #7); proven by `d17`",
             ["d17", "A3-D17-1", "A3-D17-2", "P3"],
             "Add `import sys` (the two sibling increments at :188 and :223 have it). Fix the dead test (S7) so it catches this class."),
     "D18": ("CI polling never sees a terminal state: the status mapping NameErrors under 2>/dev/null, so every running pipeline ends in `timeout`",
-            "common/wait-for-green-ci.yaml:56-66, 94-104",
+            "fixed in PR #31 (issue #3); proven by `d18`",
             ["d18", "gl-d18", "A2-proxy", "A2-default"],
             "Add `import sys` to the STATUS mapping in both loops and drop the `2>/dev/null` that hides the traceback. This defect masks D03 (the loop always runs the full 30 min)."),
     "D19": ("find-issue on GitHub is a fuzzy search with no title check: story 1-1 also matches Story 1.10",
-            "common/find-issue.yaml:15-32",
+            "fixed in PR #35 (issue #11); proven by `d19`",
             ["d19", "A1-D21"],
             "Filter the result on the exact `**Sprint Key:** \\`{story_key}\\`` body marker or on the exact title prefix `Story {epic}.{story}:` (as create-issue.yaml already does with `where: title matches`); search-index latency (~5 s) also argues for the REST list endpoint + local filter."),
     "D23": ("find-issue on GitHub never finds the PRD issue: the space in `PRD: {prd_key}` breaks the request and the pipe hides the failure",
-            "common/find-issue.yaml:12,15 · issue-sync/prepare.yaml:17 · bmad-prd/complete.yaml:32",
+            "fixed in PR #32 (issue #1); proven by `d19-D23`",
             ["d19-D23", "d19", "A4-D23", "gl-d23"],
             "URL-encode `search_text` on both platforms (`urllib.parse.quote_plus`, or `gh api -X GET -f q=…` / `glab api -f search=…`); on GitHub also check gh's exit before parsing (the pipe hides it). GitLab fails loudly (HTTP 400, rc 1 → halt), GitHub silently ([])."),
     "D24": ("On GitHub, creating any story or epic issue halts once the PRD issue exists: create-issue's FILTER existence check has no match and the language treats that as an error",
-            "common/create-issue.yaml:31-35 · bmad-workflow-lang.md §2.3 Failure / §5",
+            "fixed in PR #34 (issue #2, with #33); proven by `d24`",
             ["A1-D24", "A3-D17-1"],
             "Replace the FILTER with a RUN that prints the matching number or an empty string (python over the listing), so a miss yields an empty issue_id; or give FILTER an `allow_empty`/`default` field in the language."),
     "D15": ("sync-issues renders {entry} as 'key: status' and the status leaks into issue titles and temp-file names",
-            "common/sync-issues.yaml:41-55, 108-139, 236",
+            "fixed in PR #35 (issue #13, with #52); proven by `d15`",
             ["A3-D15"],
             "Iterate over `entries` with `as: entry` giving key and value explicitly (the language's {key,value} map contract) and pass `{entry.key}` to the title/filename steps; or split once at the top of the loop and never reuse `{entry}` raw."),
     "D21": ("Issue titles come out as `Story 1.1: ` (or `Story 1.1: Intent`): the 6.12.0 spec template has no `# ` heading",
-            "common/ensure-issue.yaml:53-63 · common/sync-issues.yaml:108-139",
+            "fixed in PR #35 (issue #12, with #56); proven by `d21`",
             ["A1-D21", "A3-D21"],
             "Read the title from the spec frontmatter (`title:`) first, then fall back to the H1; sync-issues should skip `## ` headings inside `<intent-contract>`."),
     "D06": ("find-issue on GitLab is a fuzzy full-text search and the FILTER takes the newest hit: story 1-1 resolves to story 11.1",
-            "common/find-issue.yaml:12,20-24 · common/create-issue.yaml:15,26-29",
+            "fixed in PR #35 (issue #26); proven by `g06`",
             ["g06"],
             "After the search, select the item whose description contains the exact Sprint Key marker in the body (or whose title starts with the exact `Story N.M:` / `Epic N:` prefix); GitLab returns results newest-first, so 'first hit' is the wrong heuristic by construction."),
     "D10": ("Cross-platform (issues on GitHub, code on GitLab): the MR atomics query the issue-tracker repo and reference variables nobody sets",
-            "common/get-mr-pipeline.yaml:33,42 · common/merge-mr.yaml:69,73",
+            "fixed in PR #38 (issue #15); proven by `g10`",
             ["g10"],
             "Use `{mr_repo}` (already resolved by check-mr-ci) in get-mr-pipeline; derive git_owner/git_repo inside merge-mr from git_project instead of expecting the caller to."),
-    "S1": ("merge-mr uses the operator `neq`, which the workflow language does not define", "common/merge-mr.yaml:36,66", ["static"], "Use `ne`."),
-    "S2": ("create-issue: TRUE/FALSE branches are mis-indented under `CHECK: empty issue_id`", "common/create-issue.yaml:36-42", ["static"], "Indent the branches under the CHECK; both branches STOP today so behaviour survives by luck."),
-    "S3": ("Sync SKILL.md routes on BMAD_*_ACTION environment variables that no workflow reads", "skills/bmad-issue-tracking-sync/SKILL.md:20-34", ["static"], "Remove steps 3-4 or replace the env channel with the file/variable convention CLAUDE.md prescribes."),
-    "S4": ("Setup help.md names the wrong config path (_bmad/_config/custom/ vs _bmad/custom/)", "skills/bmad-issue-tracking-setup/references/help.md:14", ["static"], "Point at `_bmad/custom/issue-tracking.yaml`, the path check-config.yaml reads."),
-    "S5": ("ensure-dynamic-labels computes epic_color and nothing uses it", "common/ensure-dynamic-labels.yaml:184-190", ["static"], "Pass `--color` to create-label (gh/glab both accept it) or drop the step."),
-    "S6": ("`EXPECT_EXIT: any` is used 11× but the language only defines numeric exit codes", "assets/bmad-workflow-lang.md §2.4", ["static"], "Document `any` in the RUN field table (the agent already interprets it)."),
-    "S7": ("The import-sys test never runs: it filters on `uv run python` while every step says `uv run --no-project python`", "tests/test_command_patterns.py:166", ["static"], "Match `python -c` instead; with the fix the test reports the three D17/D18 bodies (see S9 for the parser depth problem)."),
-    "S8": ("{spec_file} is read by three workflows but never defined in the workflow language", "assets/bmad-workflow-lang.md §4.4 · common/post-build-dispatch.yaml:11 · common/ensure-issue.yaml · common/post-dev-complete.yaml", ["static"], "Add `{spec_file}` to the predefined-variables table (source: the calling BMM skill's resolved spec path) and fix the CLAUDE.md line reference."),
-    "S9": ("tests/conftest.py drops steps nested LOOP → CHECK → RUN, so the suite never sees sync-issues.yaml:274", "tests/conftest.py:_parse_branches", ["static"], "Re-parse branch bodies recursively with file-relative line numbers (tests/e2e/trace-tools.py scan_steps is a linear scanner that reaches them)."),
+    "S1": ("merge-mr uses the operator `neq`, which the workflow language does not define", "fixed in PR #31 (issue #16); proven by `static`", ["static"], "Use `ne`."),
+    "S2": ("create-issue: TRUE/FALSE branches are mis-indented under `CHECK: empty issue_id`", "fixed in PR #46 (issue #17); proven by `static`", ["static"], "Indent the branches under the CHECK; both branches STOP today so behaviour survives by luck."),
+    "S3": ("Sync SKILL.md routes on BMAD_*_ACTION environment variables that no workflow reads", "fixed in PR #46 (issue #18); proven by `static`", ["static"], "Remove steps 3-4 or replace the env channel with the file/variable convention CLAUDE.md prescribes."),
+    "S4": ("Setup help.md names the wrong config path (_bmad/_config/custom/ vs _bmad/custom/)", "fixed in PR #46 (issue #19); proven by `static`", ["static"], "Point at `_bmad/custom/issue-tracking.yaml`, the path check-config.yaml reads."),
+    "S5": ("ensure-dynamic-labels computes epic_color and nothing uses it", "fixed in PR #46 (issue #20); proven by `static`", ["static"], "Pass `--color` to create-label (gh/glab both accept it) or drop the step."),
+    "S6": ("`EXPECT_EXIT: any` is used 11× but the language only defines numeric exit codes", "fixed in PR #46 (issue #21); proven by `static`", ["static"], "Document `any` in the RUN field table (the agent already interprets it)."),
+    "S7": ("The import-sys test never runs: it filters on `uv run python` while every step says `uv run --no-project python`", "fixed in PR #46 (issue #22); proven by `static`", ["static"], "Match `python -c` instead; with the fix the test reports the three D17/D18 bodies (see S9 for the parser depth problem)."),
+    "S8": ("{spec_file} is read by three workflows but never defined in the workflow language", "fixed in PR #46 (issue #23); proven by `static`", ["static"], "Add `{spec_file}` to the predefined-variables table (source: the calling BMM skill's resolved spec path) and fix the CLAUDE.md line reference."),
+    "S9": ("tests/conftest.py drops steps nested LOOP → CHECK → RUN, so the suite never sees the sync_created increment", "fixed in PR #46 (issue #24); proven by `static`", ["static"], "Re-parse branch bodies recursively with file-relative line numbers (tests/e2e/trace-tools.py scan_steps is a linear scanner that reaches them)."),
 }
 
-LATENT = {"D09": ("ensure-mr interpolates --title/--body inline; quotes or $(…) in a body break gh or execute", "common/ensure-mr.yaml:45-49", ["d9", "A6-D09"], "Use `--body-file {mr_description_file}` (gh) / `--description-file` or `-F description=@file` (glab).")}
+LATENT = {"D09": ("ensure-mr interpolates --title/--body inline; quotes or $(…) in a body break gh or execute", "fixed in PR #45 (issue #39); proven by `d9`", ["d9", "A6-D09"], "Use `--body-file {mr_description_file}` (gh) / `--description-file` or `-F description=@file` (glab).")}
 
 
 def read(p):
@@ -147,9 +150,9 @@ def case_block(lab, case):
 
 
 def issue_body(lab, did, meta, latent=False):
-    title, where, cases, fix = meta
-    b = [f"## Symptom\n\n{title}.\n", f"**Where:** `{where}`\n",
-         f"**Verdict:** {'LATENT — callers pass benign input today' if latent else 'CONFIRMED'} in the e2e lab `{lab}` (branch `e2e-lab`, `tests/e2e/`). Commands below are the RUN steps rendered verbatim from the workflow files and executed against a disposable GitHub repo with BMM 6.12.0 (classic installer).\n",
+    title, fixed, cases, fix = meta
+    b = [f"## Symptom\n\n{title}.\n", f"**Status:** {fixed}\n",
+         f"**Verdict when first observed:** {'LATENT — callers passed benign input' if latent else 'CONFIRMED'} in the e2e lab `{lab}` (branch `e2e-lab`, `tests/e2e/`). Commands below are the RUN steps rendered verbatim from the workflow files and executed against a disposable GitHub repo with BMM 6.12.0 (classic installer); re-running a case today replays the FIXED step, so its verdict reads REFUTED.\n",
          "## Evidence\n"]
     for c in cases:
         b.append(case_block(lab, c))
