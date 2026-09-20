@@ -1,9 +1,11 @@
 # Issue Tracking override for bmad-build-auto (bmad-loop flow — unattended)
-# Routes the on_complete hook to the non-interactive dispatcher, which reads the
-# spec status and dispatches to the right phase of post-dev-complete (push + wait
-# CI + write ci-status.json + update issue + post comment + create MR). Never
-# prompts for a merge (allow_merge stays unset/false). bmad-build (manual) uses
-# the interactive dispatcher (post-build-dispatch-interactive.yaml).
+# Routes the on_complete hook to post-build-dispatch-auto.yaml, the unattended
+# entry point: it honours the .bmad-ci-handled marker, marks the review producer
+# and delegates to the common dispatcher, which reads the spec status and runs the
+# right phase of post-dev-complete (push + ensure issue/MR + wait CI + write
+# ci-status.json + update issue + post comment). Never prompts for a merge
+# (allow_merge is seeded ""). bmad-build (manual) uses the interactive dispatcher
+# (post-build-dispatch-interactive.yaml).
 #
 # IMPORTANT: the worktree may contain dirty files that the orchestrator owns
 # (sprint-status.yaml, deferred-work.md). Do NOT stage them (no `git add .`).
