@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An epic's issue description carried every later epic. The body extraction in
+  `common/sync-issues.yaml` searched for `^## Epic <n>:` only, so it found a single header,
+  the end offset fell back to the end of the file and epic 1's issue repeated epics 2..N in
+  full. The section now ends at the next epic header, whichever epic it belongs to — the
+  rule `correct-course/complete.yaml` already used.
+
 - Two hooks running at once could create each other's issues. `common/create-issue.yaml`
   staged the issue title — the identity it dedupes by — at the FIXED `/tmp/issue-title.txt`,
   so a second run overwriting it between the first run's WRITE and its read made the first

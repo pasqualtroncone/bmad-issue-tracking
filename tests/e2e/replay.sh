@@ -1195,6 +1195,46 @@ case_d15() {  # #13 — the loop item renders as "key: status" and the key leake
   fi
 }
 
+case_r17() {  # #71 — an epic's issue body swallowed every later epic's section
+  # The extraction matched only `^## Epic <n>:`, so sections[1] never existed, the end
+  # offset fell back to len(content) and epic 1's issue body carried epic 2 (and every
+  # later epic) in full. Local: the fixture is the lab's own epics.md, no API is touched.
+  local c=r17; load_lab; local d; d="$(case_dir $c)"
+  local fixture="$E2E_ROOT/fixtures/consumer/planning-artifacts/epics.md"
+  local l; l="$(run_line_of common/sync-issues.yaml 'STORE: epic_body')"
+  [ -n "$l" ] || { verdict $c BLOCKED "cannot locate the epic-body step in sync-issues.yaml"; return; }
+  # The step interpolates {epic_content} UNQUOTED, and the fixture carries double quotes
+  # ("remember me"), so the case renders a marker and hands the content through a shell
+  # variable. The extraction rule under test is rendered exactly as written.
+  $TT render-step common/sync-issues.yaml "$l" epic_content=@EPICS@ epic_num=1 > "$d/rendered.cmd"
+  sed 's/@EPICS@/"$EPIC_CONTENT"/' "$d/rendered.cmd" > "$d/run.cmd"
+  EPIC_CONTENT="$(cat "$fixture")" bash "$d/run.cmd" > "$d/epic1.out" 2> "$d/epic1.err"; echo $? > "$d/epic1.rc"
+  # the pre-fix rule over the same fixture, for the record
+  uv run --no-project python -c "
+import re, sys
+content = open(sys.argv[1], encoding='utf-8').read()
+n = sys.argv[2]
+sections = list(re.finditer(r'^## Epic ' + n + r':', content, re.MULTILINE))
+if sections:
+    start = sections[0].start()
+    end = sections[1].start() if len(sections) > 1 else len(content)
+    print(content[start:end].strip())
+else:
+    print('')
+" "$fixture" 1 > "$d/prefix-epic1.out" 2>&1
+  local leak=0 preleak=0 first
+  grep -q '## Epic 2:' "$d/epic1.out" && leak=1
+  grep -q '## Epic 2:' "$d/prefix-epic1.out" && preleak=1
+  first="$(head -1 "$d/epic1.out")"
+  { echo "sync-issues.yaml:$l on $(basename "$fixture"), epic 1 → $(wc -l < "$d/epic1.out") lines, first line '$first', carries '## Epic 2:'? $leak"
+    echo "the pre-fix one-header rule on the same file → $(wc -l < "$d/prefix-epic1.out") lines, carries '## Epic 2:'? $preleak"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$(cat "$d/epic1.rc")" = 0 ] && [ "$first" = "## Epic 1: Authentication" ] && [ "$leak" = 0 ] && [ "$preleak" = 1 ]; then
+    verdict $c REFUTED "sync-issues.yaml:$l ends epic 1's body at the NEXT epic header: $(wc -l < "$d/epic1.out") lines starting '$first', with no '## Epic 2:' in them. The pre-fix rule matched only its own header, found no second one and ran to the end of the file — $(wc -l < "$d/prefix-epic1.out") lines carrying epic 2 in full, which is what epic 1's issue description used to say"
+  else
+    verdict $c CONFIRMED "sync-issues.yaml:$l still swallows the later epics: rc=$(cat "$d/epic1.rc"), first line '$first', '## Epic 2:' present=$leak (pre-fix rule: $preleak), err '$(head -c 160 "$d/epic1.err" | tr '\n' ' ')'"
+  fi
+}
+
 case_r13() {  # #66 — ensure-issue resolved the spec from two candidates, story-title from five
   # In sprint mode with an empty {spec_file} ensure-issue's own two-candidate resolution
   # found nothing, `cat ""` gave an empty story_body, and the "Story spec not found" OUTPUT
