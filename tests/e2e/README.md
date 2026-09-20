@@ -52,7 +52,7 @@ make e2e-up  [PLATFORM=github]  # ≈4 min (npm install of bmad-method)
 tests/e2e/lab-up.sh --add-gitlab --gl-host gitlab.example.com   # add a GitLab consumer to the current lab
 tests/e2e/replay.sh gitlab      # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03
 make e2e-check                  # resolve_customization.py returns the module's on_complete per skill
-make e2e-replay                 # level 1, ≈35 min (two Actions runs, 105 issues seeded, index waits)
+make e2e-replay                 # level 1, ≈45 min (four Actions runs, 105 issues seeded, index waits)
 tests/e2e/replay.sh d18         # or one case at a time
 tests/e2e/scenarios/A1.sh       # level 2, one hook run ≈3–8 min; see `make e2e-agent` for the order
 tests/e2e/scenarios/P1.sh       # real BMM skill, ≈5–15 min each
@@ -124,7 +124,7 @@ what a hook really needs.
 | Level | Wall time | LLM cost |
 |---|---|---|
 | 0 static | seconds | none |
-| 1 replay (all) | ≈35 min | none (≈30 min of private Actions minutes) |
+| 1 replay (all) | ≈45 min | none (≈35 min of private Actions minutes) |
 | 2 hooks (A1–A9, A2 ×3) | ≈1.5 h | ≈17 `claude -p` runs |
 | BMM phase (P1–P5) | ≈1 h | 5–6 skill runs |
 | 3 bmad-loop | 30–60 min | 1–2 sessions |

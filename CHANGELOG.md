@@ -49,6 +49,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The CI gate could pass on a tree CI never built. `common/get-mr-pipeline.yaml` and the poll
+  rounds of `common/wait-for-green-ci.yaml` asked for "the newest run ON THE BRANCH", and for
+  the first seconds after a push that is the PREVIOUS commit's run — the dev-finish and
+  review-finish phases push and gate in the same breath, so a green older run ended the gate
+  over code nobody had built (observed live: the run of `e22efb6` read while `1ef97a3` had
+  just been pushed). Both phases now STORE `git rev-parse HEAD` into `head_sha` right after
+  the push and every lookup filters on it — `gh run list --commit` on GitHub, the pipeline's
+  `sha` on GitLab — so "no run for this commit yet" is the empty listing the existing rules
+  already read as "still coming". `common/check-config.yaml` seeds `head_sha` empty, which
+  keeps a caller that pushed nothing (a standalone `common/check-mr-ci.yaml`) reading the
+  branch's newest run as before.
+
 - `tests/e2e/lab-up.sh --redeploy` could publish the PREVIOUS assets. When no worktree held
   the PRD branch, a failing `branch -f` was swallowed by `|| true` and the unconditional
   force-push then put the stale branch back on the remote — the `main=<new> prd=<old>` state
