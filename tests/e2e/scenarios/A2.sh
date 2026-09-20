@@ -21,7 +21,7 @@ fi
 write_spec "$WT" in-review none >/dev/null; set_story_status "$WT" 1-1-login-form review
 case "$PASS" in
   proxy)   set_outcome "$WT" sleep:60;  export E2E_CLAUDE_ENV="BASH_MAX_TIMEOUT_MS=90000 BASH_DEFAULT_TIMEOUT_MS=90000"; export E2E_CLAUDE_TIMEOUT=900;;
-  default) set_outcome "$WT" sleep:60;  export E2E_CLAUDE_TIMEOUT=1800;;
+  default) set_outcome "$WT" "sleep:${E2E_A2_SLEEP:-300}"; export E2E_CLAUDE_TIMEOUT=1800;;  # long enough to still be running when the gate is reached (ensure-issue/ensure-mr run first)
   patched) set_outcome "$WT" sleep:660; export E2E_CLAUDE_TIMEOUT=1800
            f="$WT/_bmad/_config/custom/workflows/common/wait-for-green-ci.yaml"; cp "$f" "$f.orig"
            sed -i '/STATUS=\$(uv run --no-project python -c "/a import sys' "$f"; ( cd "$WT" && git add "$f" && git commit -q -m "A2 patched: import sys in wait-for-green-ci" );;
