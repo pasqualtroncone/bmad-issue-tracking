@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # A6 — common/ensure-mr with a rich description body (quotes, backticks, $(…)) through the
-# interpreter (the agent renders `--body "{description_body}"` inline). D09 at LLM level.
+# interpreter. Regression check for D09: the body travels as a FILE (`--body-file
+# {mr_description_file}`) and {description_body} no longer exists, so nothing of the body
+# reaches the shell — the PR must come back carrying the literal $(…), not its output.
 set -uo pipefail; . "$(dirname "$0")/_lib.sh"; C=A6
 WT="$(story_worktree 1-2-logout)"; ( cd "$WT" && git commit -q --allow-empty -m "A6 probe" && git push -q )
 cp "$E2E_ROOT/fixtures/quoting-body.md" /tmp/e2e-a6-body.md

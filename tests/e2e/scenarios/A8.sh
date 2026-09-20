@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# A8 — common/merge-mr through the interpreter on a fresh PR: how is `neq` evaluated (S1),
-# and what value does `merged` get after a successful `gh pr merge` (D16)?
+# A8 — common/merge-mr through the interpreter on a fresh PR. Regression check for D16:
+# `merged` must read true after a successful `gh pr merge`, which exits 0 with empty
+# stdout. The `neq` grep below is the S1 record: the operator is gone from the file, so
+# any mention in the trace is the agent's, not the workflow's.
 set -uo pipefail; . "$(dirname "$0")/_lib.sh"; C=A8
 br="a8-merge-$(date +%s)"; ( cd "$CONSUMER" && git checkout -q main && git pull -q --ff-only origin main 2>/dev/null; git checkout -q -b "$br" main && echo "$br" > "$br.txt" && git add "$br.txt" && git commit -q -m "A8 probe" && git push -q -u origin "$br" && git checkout -q main )
 n="$(gh pr create -R "$REPO_GH" --title "A8 merge probe" --body "probe" --base main --head "$br" | grep -o '[0-9]*$')"
