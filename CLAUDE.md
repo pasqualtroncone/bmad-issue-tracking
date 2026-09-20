@@ -138,6 +138,20 @@ which the LOOP turns into `ci_status: running` (keep waiting) while leaving
 `no_run_rounds` untouched — it saw no pipeline, so it cannot prove the three consecutive
 empty rounds that end the gate `no_ci`.
 
+**Every CI lookup is pinned to the commit that was pushed.** `common/post-dev-complete.yaml`
+STOREs `git rev-parse HEAD` into `head_sha` right after each `git push`, and all four
+lookups filter on it: GitHub with `gh run list --branch … --commit "{head_sha}"`, GitLab by
+filtering the MR's pipeline list on each entry's `sha`. Without the pin the lookups answer
+"the newest run ON THE BRANCH", which for the first seconds after a push is the PREVIOUS
+commit's — the A5 trace read the run of `e22efb6` while `1ef97a3` had just been pushed — so
+a green older run passed the gate over a tree CI never built. `head_sha` is seeded `""` by
+`common/check-config.yaml` (the optional-variable rule; `tests/test_optional_variables.py`
+guards it), and empty means "this caller pushed nothing": `--commit ""` is no filter and the
+GitLab bodies skip theirs, so a standalone `check-mr-ci` still reads the branch's newest run.
+An empty answer for THIS sha is `none` → the existing mapping's `running`, never the run
+before it. Do not switch the GitLab side to `projects/…/pipelines?sha=`: that endpoint is
+project-scoped and would lose the per-MR scoping `gl-d2` asserts.
+
 **Git remote vs issue tracker:** The git remote (origin) and issue tracker can be on different platforms (e.g., code on GitLab, issues on GitHub). `issue_tracking.platform` is the issue tracker; `issue_tracking.git_platform` (set during setup) is the git remote. Issue operations (create/update/close issues, labels, comments) use `platform`. MR/PR operations (list, create, merge, mark ready) use `git_platform`. When they differ, `host`/`project` apply to the issue tracker and `git_host`/`git_project` apply to the git remote. Issue references in MR descriptions use `Closes #X` for same-platform, full URL for cross-platform.
 
 `check-config` resolves BOTH coordinate sets once and exports them: `host`/`project`/
@@ -160,6 +174,10 @@ no caller has to seed them; its same-platform branch still takes `host`/`project
   silent `[]` on gh and an HTTP 400 on glab → pass query text as `-f` fields.
 - GitHub's search index lags a create by ~5 s; `gh issue create` prints a URL, not JSON; `gh pr merge` prints
   nothing on stdout; `gh issue edit --add-label` fails on an unknown label (GitLab creates it).
+- `gh run list --commit <sha>` filters server-side and an EMPTY `--commit ""` is no filter at all
+  (verified against the API); the flag needs gh 2.21+, and an older gh exits non-zero there rather
+  than answering the wrong run. `glab` has no equivalent on the MR-pipelines endpoint, so that side
+  filters the listing on each entry's `sha`.
 - BMM 6.12.0's classic installer does not install the v6 shims: six TOML overrides target absent skills.
 - Claude Code blocks a foreground `sleep N && …` and caps the Bash tool at 120 s default / 600 s max.
 
@@ -241,7 +259,7 @@ follow the same format with lower stakes; the `Refs #n` footer is non-negotiable
 - Level 1 renders steps from THIS checkout; level 2 reads the consumer's deployed copies → run
   `tests/e2e/lab-up.sh --redeploy` after every workflow change before any A*/P* scenario.
 - Never edit `replay.sh` or a scenario while it runs (bash reads the file incrementally).
-- Cases that push CI branches (`d2`, `gl-d2`, `d16`, `gl-d16`, `d03`) cannot run concurrently on one lab.
+- Cases that push CI branches (`d2`, `gl-d2`, `d16`, `gl-d16`, `d03`, `r24`) cannot run concurrently on one lab.
 - Evidence lives in `tests/e2e/evidence/<lab>/` (gitignored); `tests/e2e/lab-down.sh` tears the lab down.
 
 ## Python environment

@@ -14,6 +14,11 @@
 #   - source_branch: source branch (set by check-mr-ci, defaults to current_branch). On GitHub
 #       it is also the `gh run list --branch` filter: without it the poll reads the newest run
 #       of the whole repo, i.e. some other branch's pipeline.
+#   - head_sha: the commit the caller pushed (seeded "" by check-config, STOREd by
+#       common/post-dev-complete after its push). Every poll and the failure-path lookup
+#       filter on it, so a round that finds nothing has found nothing FOR THIS COMMIT —
+#       `no_run`, which the counter below treats as "the run is still being registered".
+#       Empty = the caller pushed nothing, and the rounds read the branch's newest run.
 # Output variables:
 #   - ci_status: "passed", "no_ci", "no_mr", "running", "failed", "timeout"
 #   - round_status: what ONE poll round answered — the ci_status enum plus `unreadable`,
@@ -97,17 +102,23 @@
                   while [ $poll -lt $polls_per_round ]; do
                     sleep 25
                     poll=$((poll + 1))
-                    # get-mr-pipeline equivalent: fetch latest pipeline for the existing mr_iid
+                    # get-mr-pipeline equivalent: the existing mr_iid's pipeline FOR THE
+                    # PUSHED COMMIT. Filtering on the pushed sha is what keeps a round from
+                    # reading the previous head's pipeline while GitLab is still creating
+                    # this one; an empty head_sha keeps the old answer (the MR's newest).
                     raw=$(glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate 2>/dev/null)
                     cli_rc=$?
                     pipeline_status=$(echo "$raw" | uv run --no-project python -c "
 import json, sys
+sha = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 try:
     ps = json.load(sys.stdin)
 except Exception:
     ps = None
+if ps is not None and sha:
+    ps = [p for p in ps if p.get('sha') == sha]
 print('unreadable' if ps is None else (ps[0]['status'] if ps else 'none'))
-")
+" "{head_sha}")
                     # A CLI that FAILED did not answer 'no pipeline'. Token expiry, a rate
                     # limit or a network error leaves the listing empty, and an empty
                     # listing is the one answer that ends this gate green: only a
@@ -172,9 +183,13 @@ else:
                       while [ $poll -lt $polls_per_round ]; do
                         sleep 25
                         poll=$((poll + 1))
-                        # get-mr-pipeline equivalent: latest workflow run of the MR's source branch
-                        # (--branch is mandatory: without it this reads the repo's newest run, any branch)
-                        raw=$(gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId,status,conclusion 2>/dev/null)
+                        # get-mr-pipeline equivalent: the workflow run of the MR's source branch
+                        # AND of the pushed commit. --branch is mandatory (without it this reads
+                        # the repo's newest run, any branch) and so is --commit: for the first
+                        # seconds after a push the newest run ON the branch is the PREVIOUS
+                        # commit's, and a green one of those would end this gate over a tree CI
+                        # never built. An empty --commit is no filter (the no-push fallback).
+                        raw=$(gh run list --limit 1 --branch "{source_branch}" --commit "{head_sha}" -R "{mr_repo}" --json databaseId,status,conclusion 2>/dev/null)
                         cli_rc=$?
                         pipeline_status=$(echo "$raw" | uv run --no-project python -c "
 import json, sys
@@ -290,16 +305,21 @@ print(int(sys.argv[1]) + 1)
 # `gh run view --log-failed` text on github — we display it as-is without parsing.
 - CHECK: ci_status eq "failed"
   TRUE:
+    # The id of the pipeline that FAILED — the same sha filter as the polls, so the traces
+    # below come from the run the verdict was read off and not from an older one.
     - CHECK: git_platform eq "gitlab"
       TRUE:
         - RUN: glab api "projects/{git_project_enc}/merge_requests/{mr_iid}/pipelines" --hostname {git_host} --paginate | uv run --no-project python -c "
 import json, sys
+sha = sys.argv[1].strip() if len(sys.argv) > 1 else ''
 ps = json.load(sys.stdin)
+if sha:
+    ps = [p for p in ps if p.get('sha') == sha]
 print(str(ps[0]['id']) if ps else '')
-"
+" "{head_sha}"
           STORE: pipeline_id
       FALSE:
-        - RUN: gh run list --limit 1 --branch "{source_branch}" -R "{mr_repo}" --json databaseId | uv run --no-project python -c "
+        - RUN: gh run list --limit 1 --branch "{source_branch}" --commit "{head_sha}" -R "{mr_repo}" --json databaseId | uv run --no-project python -c "
 import json, sys
 rs = json.load(sys.stdin)
 print(str(rs[0]['databaseId']) if rs else '')

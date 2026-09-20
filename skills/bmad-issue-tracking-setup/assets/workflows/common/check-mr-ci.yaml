@@ -9,6 +9,10 @@
 #       remote's coordinates once — they are the tracker's whenever the platforms agree)
 #   - git_host, git_project_enc: the GIT REMOTE's hostname and URL-encoded project path
 #       (from check-config) — the GitLab CI definition is read off the project API
+#   - head_sha: the commit the caller pushed, passed straight through to
+#       common/get-mr-pipeline, which filters the run/pipeline list on it. Seeded "" by
+#       check-config; empty means "this caller pushed nothing", and the lookup then reads
+#       the branch's newest run as it always did.
 # Output variables:
 #   - ci_status: "passed", "failed", "running", "no_ci", "no_mr"
 #   - ci_defined: "true" when the branch carries a CI definition, "false" otherwise —
@@ -33,10 +37,13 @@
 - INCLUDE: common/get-mr-pipeline
 # Map atomic outputs to the unified ci_status enum: empty mr_iid -> no_mr; otherwise the
 # raw pipeline_status decides, with "no pipeline at all" resolved by ci_defined.
-# "The run list is empty" is NOT "this repo has no CI". `gh run list --branch <src>`
-# answers [] for the first seconds after a push, before Actions registers the run, and a
-# GitLab MR has no pipeline until the hook fires; get-mr-pipeline reports `none` and an
-# empty pipeline_id for both. Mapping that to `no_ci` made wait-for-green-ci STOP green —
+# "The run list is empty" is NOT "this repo has no CI". `gh run list --branch <src>
+# --commit <head>` answers [] for the first seconds after a push, before Actions registers
+# the run for that commit, and a GitLab MR has no pipeline for the new head until the hook
+# fires; get-mr-pipeline reports `none` and an empty pipeline_id for both. That empty answer
+# is the POINT of pinning to head_sha: the alternative — the branch's newest run — is the
+# PREVIOUS commit's, and a green one of those passes the gate over a tree CI never built.
+# Mapping the empty answer to `no_ci` made wait-for-green-ci STOP green —
 # and review-finish pushes and gates in the same breath, so ci-status.json was written
 # green while the run that would fail had not started yet.
 # The discriminator is the CI DEFINITION on the branch, read from the worktree the hook

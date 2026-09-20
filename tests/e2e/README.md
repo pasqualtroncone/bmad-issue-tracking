@@ -52,7 +52,7 @@ make e2e-up  [PLATFORM=github]  # ≈4 min (npm install of bmad-method)
 tests/e2e/lab-up.sh --add-gitlab --gl-host gitlab.example.com   # add a GitLab consumer to the current lab
 tests/e2e/replay.sh gitlab      # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03
 make e2e-check                  # resolve_customization.py returns the module's on_complete per skill
-make e2e-replay                 # level 1, ≈35 min (two Actions runs, 105 issues seeded, index waits)
+make e2e-replay                 # level 1, ≈45 min (four Actions runs, 105 issues seeded, index waits)
 tests/e2e/replay.sh d18         # or one case at a time
 tests/e2e/scenarios/A1.sh       # level 2, one hook run ≈3–8 min; see `make e2e-agent` for the order
 tests/e2e/scenarios/P1.sh       # real BMM skill, ≈5–15 min each
@@ -87,6 +87,7 @@ Cases and what they prove:
 | `r17` | 1 | #71 | the epic-body step rendered against `fixtures/consumer/planning-artifacts/epics.md` for epic 1: the body must start at `## Epic 1:` and stop before `## Epic 2:` |
 | `r13` | 1 | #66 | `common/story-title.yaml`'s resolution step with `spec_file=""` against the sprint-mode fixture: it must answer `spec-1-1-login-form.md`, which `ensure-issue`'s own two candidates never saw; `ensure-issue` must resolve nothing itself and halt on a miss |
 | `r11` | 1 | #64, #65 | one `wait-for-green-ci` poll round per platform against a repo/host that does not exist: a failing CLI must print `running`, never `no_run`, and the round that sees a pipeline must reset `no_run_rounds` |
+| `r24` | 1 | #81 | a branch whose newest run belongs to the PREVIOUS commit, then one more push: the lookup rendered with `head_sha=<new head>` within seconds must not answer that older run (empty → `running`, or the new one), and after the run finishes it must answer the new one → `passed`. Same shape on the GitLab consumer against the MR's pipeline list |
 | `d26` | 1 | D26 | the retrospective description rendered for epic 1 carries the `**Sprint Key:**` marker, and GitLab `find-issue` selects that issue for `epic-1-retrospective`; a pre-fix body is invisible to the same search |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
 | `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2 |
@@ -123,7 +124,7 @@ what a hook really needs.
 | Level | Wall time | LLM cost |
 |---|---|---|
 | 0 static | seconds | none |
-| 1 replay (all) | ≈35 min | none (≈30 min of private Actions minutes) |
+| 1 replay (all) | ≈45 min | none (≈35 min of private Actions minutes) |
 | 2 hooks (A1–A9, A2 ×3) | ≈1.5 h | ≈17 `claude -p` runs |
 | BMM phase (P1–P5) | ≈1 h | 5–6 skill runs |
 | 3 bmad-loop | 30–60 min | 1–2 sessions |
