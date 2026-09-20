@@ -30,5 +30,5 @@ done
 log "removing $LAB"
 rm -rf "$LAB"
 [ "$(lab_id)" = "$LAB_ID" ] && rm -f "$LAB_ROOT/current"
-rm -f /tmp/issue-desc*.md /tmp/ensure-mr*.md /tmp/prd-desc.md /tmp/review-findings.md /tmp/dev-story-comment.md
+rm -f /tmp/issue-desc*.md /tmp/*.md.title /tmp/ensure-mr*.md /tmp/prd-desc*.md /tmp/retro-desc*.md /tmp/desc-*.md /tmp/review-findings*.md /tmp/dev-story-comment*.md
 log "done. evidence kept at $EVIDENCE"

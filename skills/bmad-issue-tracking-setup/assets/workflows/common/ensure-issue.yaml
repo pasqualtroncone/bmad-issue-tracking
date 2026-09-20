@@ -14,7 +14,7 @@
 # Output variables:
 #   - issue_id: the issue IID (GitLab) or number (GitHub)
 #   - spec_path: the spec file common/story-title.yaml resolved; empty if none
-# Side effects: creates the issue on the tracker if not found; writes /tmp/issue-desc.md
+# Side effects: creates the issue on the tracker if not found; writes /tmp/issue-desc-{story_key}.md
 #
 # ONE rule for BOTH the spec's location and its title, shared with common/sync-issues.yaml:
 # common/story-title.yaml. This file used to resolve the spec itself, from {spec_file} and
@@ -44,15 +44,15 @@
       TRUE:
         - SET: { variable: story_title, value: "Untitled" }
     - WRITE:
-        file: /tmp/issue-desc.md
+        file: /tmp/issue-desc-{story_key}.md
         content: "**Sprint Key:** `{story_key}`\n**Epic:** {epic_num}\n**PRD:** {prd_key}\n\n---\n\n{story_body}"
         mode: overwrite
     - SET: { variable: title, value: "Story {epic_num}.{story_num}: {story_title}" }
     - SET: { variable: labels, value: "type{sep}story\nstatus{sep}ready-for-dev\nprd{sep}{prd_key}\n{prd_key}{sep}epic-{epic_num}" }
-    - SET: { variable: description_file, value: "/tmp/issue-desc.md" }
+    - SET: { variable: description_file, value: "/tmp/issue-desc-{story_key}.md" }
     - SET: { variable: search_text, value: "{story_key}" }
     - INCLUDE: common/find-issue
     - CHECK: empty issue_id
       TRUE:
         - INCLUDE: common/create-issue
-    - RUN: rm -f /tmp/issue-desc.md
+    - RUN: rm -f /tmp/issue-desc-{story_key}.md

@@ -499,15 +499,17 @@ case_d24() {  # #2 + #33 — the create-issue lookup on a title that does not ex
   done
   echo "expected issue number for 'PRD: $key': #$want (after ${t}s)" | tee "$d/expected.txt" >&2
   local l; l="$(line_of common/create-issue.yaml '^- RUN: set -o pipefail; gh api "repos/' 1)"
-  # since #53 the lookup reads the title from /tmp/issue-title.txt (written by the WRITE
-  # step at the top of the file) instead of taking it as a rendered argv
-  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
-  replay $c absent      common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
-  printf '%s' "PRD: $key" > /tmp/issue-title.txt
-  replay $c present     common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  # Since #53 the lookup reads the title from a file the WRITE step at the top of
+  # create-issue.yaml lays down, never from a rendered argv; since #68 that file is named
+  # after {description_file} instead of a fixed /tmp path, so the case stages it there.
+  local titlef="$d/desc.md.title"
+  printf '%s' "Story 1.1: Login Form" > "$titlef"
+  replay $c absent      common/create-issue.yaml "$l" description_file="$d/desc.md" project="$REPO_GH" host=github.com sep=: prd_key="$key"
+  printf '%s' "PRD: $key" > "$titlef"
+  replay $c present     common/create-issue.yaml "$l" description_file="$d/desc.md" project="$REPO_GH" host=github.com sep=: prd_key="$key"
   # #33: the same step over the 105-issue label seeded by d4 (>1 page of 100)
-  printf '%s' "Story 1.1: Login Form" > /tmp/issue-title.txt
-  replay $c bulk-absent common/create-issue.yaml "$l" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd
+  printf '%s' "Story 1.1: Login Form" > "$titlef"
+  replay $c bulk-absent common/create-issue.yaml "$l" description_file="$d/desc.md" project="$REPO_GH" host=github.com sep=: prd_key=bulkprd
   gh api "repos/$REPO_GH/issues?state=all&per_page=100&labels=prd:bulkprd" --paginate 2>/dev/null | uv run --no-project python -c "
 import json, sys
 dec = json.JSONDecoder()
@@ -544,10 +546,10 @@ case_r1() {  # #47 — `gh issue create` prints a URL, not JSON: reading `number
   lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
   lx="$(run_line_of common/create-issue.yaml 'm = re\.search')"
   [ -n "$lc" ] && [ -n "$lx" ] || { verdict $c BLOCKED "cannot locate the create step ($lc) or the id extraction ($lx) in create-issue.yaml"; return; }
-  # since #53 the title travels in /tmp/issue-title.txt (the WRITE step at the top of the
-  # file), never on the command line — so the case lays the file down instead of
-  # rendering a {title} placeholder
-  printf '%s' "$title" > /tmp/issue-title.txt
+  # since #53 the title travels in a file the WRITE step at the top of create-issue.yaml
+  # lays down, never on the command line — so the case lays the file down instead of
+  # rendering a {title} placeholder. Since #68 that file is {description_file}.title.
+  printf '%s' "$title" > "$d/desc.md.title"
   replay $c create common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$REPO_GH"
   local url want; url="$(tail -1 "$d/create.out")"; want="${url##*/}"
   replay $c extract common/create-issue.yaml "$lx" create_result="$(cat "$d/create.out")"
@@ -578,9 +580,9 @@ except Exception as e:
   # an unknown label, a missing scope or a rate limit is reported. Rendered against a
   # repository that does not exist: the step must exit non-zero AND carry gh's own message,
   # not a traceback about a variable the caller never sees.
-  printf '%s' "R14 probe $(date +%s)" > /tmp/issue-title.txt
+  printf '%s' "R14 probe $(date +%s)" > "$d/desc.md.title"
   replay $c create-fail common/create-issue.yaml "$lc" description_file="$d/desc.md" label_arg="prd:$key" host=github.com project="$GH_OWNER/bmad-it-no-such-repo-${LAB_ID:-x}"
-  rm -f /tmp/issue-title.txt
+  rm -f "$d/desc.md.title"
   local frc ftrace=0 fbytes
   frc="$(cat "$d/create-fail.rc")"; fbytes="$(wc -c < "$d/create-fail.err")"
   grep -q 'Traceback (most recent call last)' "$d/create-fail.err" && ftrace=1
@@ -666,7 +668,7 @@ case_r7() {  # #53 — a title carrying a quote or $(…) must reach the tracker
   gh label create "prd:$key" -R "$REPO_GH" >/dev/null 2>&1 || true
   local title
   title='R7 "quoted" $(echo INJECTED) `backtick` probe '"$(date +%s)"
-  printf '%s' "$title" > /tmp/issue-title.txt
+  printf '%s' "$title" > "$d/desc.md.title"
   printf '**Sprint Key:** `r7probe`\n' > "$d/desc.md"
   local lc; lc="$(run_line_of_n common/create-issue.yaml 'STORE: create_result' 2)"
   [ -n "$lc" ] || { verdict $c BLOCKED "cannot locate the GitHub create step in create-issue.yaml"; return; }
@@ -694,10 +696,10 @@ case_r7() {  # #53 — a title carrying a quote or $(…) must reach the tracker
     echo "title stored:[$got]"
     echo "\$(echo INJECTED) executed? $inj"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
   [ -n "$n" ] && gh issue close "$n" -R "$REPO_GH" >/dev/null 2>&1
-  rm -f /tmp/issue-title.txt
+  rm -f "$d/desc.md.title"
   if [ "$(cat "$d/syntax.rc")" = 0 ] && [ "$(cat "$d/create.rc")" = 0 ] && [ -n "$n" ] \
      && [ "$got" = "$title" ] && [ "$inj" = 0 ] && [ "$online" = 0 ]; then
-    verdict $c REFUTED "create-issue.yaml:$lc never puts the title on the command line: the render does not name {title} at all (it is read from /tmp/issue-title.txt and handed to gh as one argv element), bash -n accepts the command, and issue #$n came back with the title '[$got]' byte for byte — the literal \$(echo INJECTED), the backtick and the double quotes all survived (executed=$inj)"
+    verdict $c REFUTED "create-issue.yaml:$lc never puts the title on the command line: the render does not name {title} at all (it is read from {description_file}.title and handed to gh as one argv element), bash -n accepts the command, and issue #$n came back with the title '[$got]' byte for byte — the literal \$(echo INJECTED), the backtick and the double quotes all survived (executed=$inj)"
   else
     verdict $c CONFIRMED "create-issue.yaml:$lc takes the title apart: bash -n rc=$(cat "$d/syntax.rc"), create rc=$(cat "$d/create.rc") → issue '#${n:-(none)}', title stored '[$got]' vs sent '[$title]', \$(echo INJECTED) executed=$inj, title on the command line=$online; err '$(head -c 120 "$d/create.err" | tr '\n' ' ')'"
   fi
@@ -950,10 +952,10 @@ hit = [(n, i) for n, i in enumerate(issues) if i['title'] == 'Seed 1 (bulkprd)']
 print((str(hit[0][1]['iid']) + ' ' + str(hit[0][0] + 1) + '/' + str(len(issues))) if hit else ' ')
 ")"
   echo "oldest seeded title 'Seed 1 (bulkprd)' is !${want:-(none)} at position ${pos:-?} of the concatenated stream" | tee "$d/oldest.txt" >&2
-  printf '%s' "Seed 1 (bulkprd)" > /tmp/issue-title.txt
+  printf '%s' "Seed 1 (bulkprd)" > "$d/desc.md.title"
   local l; l="$(line_of common/create-issue.yaml 'glab api --paginate' 1)"
-  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/create-issue.yaml "$l" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
-  rm -f /tmp/issue-title.txt
+  REPLAY_CWD="$CONSUMER_GL" replay $c bulk-fetch common/create-issue.yaml "$l" description_file="$d/desc.md" project_enc="$ENC" sep=:: prd_key=bulkprd host="$GLH"
+  rm -f "$d/desc.md.title"
   local got; got="$(tr -d '[:space:]' < "$d/bulk-fetch.out")"
   if [ "$(cat "$d/bulk-fetch.rc")" = 0 ] && [ -n "$want" ] && [ "$got" = "$want" ]; then verdict $c REFUTED "GitLab path reads the whole --paginate stream: create-issue.yaml:$l answers !$got for 'Seed 1 (bulkprd)', the issue at position $pos of the 105 ($(cat "$d/paginate-shape.txt")) — objects>1 means glab concatenated the pages and the step's raw_decode loop parsed every one of them; a first-document-only parse could not have reached it"
   else verdict $c CONFIRMED "GitLab path too: rc=$(cat "$d/bulk-fetch.rc") selected='${got:-(empty)}' want=!${want:-?} (position ${pos:-?}) $(head -c 160 "$d/bulk-fetch.err") ($(cat "$d/paginate-shape.txt"))"; fi

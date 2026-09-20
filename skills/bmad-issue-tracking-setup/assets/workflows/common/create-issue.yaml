@@ -12,7 +12,7 @@
 #       adopted by title). common/find-issue.yaml reads it to decide whether its next
 #       key-shaped GitHub lookup is worth re-checking; see the note at the end.
 # Side effects: creates an issue on the issue tracker if it does not already exist;
-#               writes and removes /tmp/issue-title.txt
+#               writes and removes {description_file}.title
 # Requires: host and project in scope (provided by common/check-config via callers)
 #
 # THE TITLE NEVER TOUCHES THE COMMAND LINE. It used to be interpolated inside double
@@ -24,6 +24,13 @@
 # written to a file with WRITE (no shell involved at all) and every step reads it back in
 # python, which then calls gh/glab with an ARGUMENT LIST — no shell, no quoting.
 #
+# The staging file is named after {description_file}, which every caller already makes
+# per-entity (/tmp/issue-desc-<key>.md, /tmp/prd-desc-<key>.md, ...). A FIXED /tmp path is
+# not safe here: the title is the identity this file dedupes by, so two hooks running at
+# once — two sessions, or the lab on a second consumer — could have run B overwrite the
+# file between run A's WRITE and its read, and A would create an issue under B's title
+# that neither exact-title lookup finds again.
+#
 # `capture_output=True` is what makes the argument list possible, and it also swallows the
 # CLI's stderr — the ONLY place a create says why it failed (unknown label, missing scope,
 # rate limit). Every wrapper below therefore catches CalledProcessError, writes e.stderr to
@@ -31,7 +38,7 @@
 # instead of a traceback about a variable the caller never sees.
 
 - WRITE:
-    file: /tmp/issue-title.txt
+    file: "{description_file}.title"
     content: "{title}"
     mode: overwrite
 # Look up an existing issue with this title. The step prints the issue id, or an EMPTY
@@ -60,7 +67,7 @@ issues = [i for page in pages for i in page]
 title = open(sys.argv[1], encoding='utf-8').read().strip()
 match = [i for i in issues if (i.get('title') or '') == title] or [i for i in issues if (i.get('title') or '').startswith(title)]
 print(str(match[0]['iid']) if match else '')
-" /tmp/issue-title.txt
+" "{description_file}.title"
   STORE: found_issue_id
   PLATFORM: gitlab
 # GitHub lists every issue carrying the PRD label, so the title comparison happens here:
@@ -81,7 +88,7 @@ title = open(sys.argv[1], encoding='utf-8').read().strip()
 issues = [i for page in pages for i in page if 'pull_request' not in i]
 match = [i for i in issues if i['title'] == title] or [i for i in issues if i['title'].startswith(title)]
 print(str(match[0]['number']) if match else '')
-" /tmp/issue-title.txt
+" "{description_file}.title"
   STORE: found_issue_id
   PLATFORM: github
 # If found, adopt it as issue_id and RETURN. The STOPs below are returns, not halts
@@ -91,7 +98,7 @@ print(str(match[0]['number']) if match else '')
 - CHECK: empty found_issue_id
   FALSE:
     - SET: { variable: issue_id, value: "{found_issue_id}" }
-    - RUN: rm -f /tmp/issue-title.txt
+    - RUN: rm -f "{description_file}.title"
     - CHECK: empty issue_id
       TRUE:
         - STOP
@@ -128,7 +135,7 @@ except subprocess.CalledProcessError as e:
     sys.stderr.write(e.stderr or '')
     sys.exit(e.returncode or 1)
 print(out.strip())
-" /tmp/issue-title.txt
+" "{description_file}.title"
   STORE: create_result
   PLATFORM: gitlab
 - RUN: uv run --no-project python -c "
@@ -140,7 +147,7 @@ except subprocess.CalledProcessError as e:
     sys.stderr.write(e.stderr or '')
     sys.exit(e.returncode or 1)
 print(out.strip())
-" /tmp/issue-title.txt
+" "{description_file}.title"
   STORE: create_result
   PLATFORM: github
 # Extract issue_id from creation result.
@@ -165,7 +172,7 @@ m = re.search(r'([0-9]+)[^0-9]*\Z', sys.argv[1].strip())
 print(m.group(1) if m else '')
 " "{create_result}"
       STORE: issue_id
-- RUN: rm -f /tmp/issue-title.txt
+- RUN: rm -f "{description_file}.title"
 # An unreadable create output is a halt WITH a reason, not a silent skip: every caller
 # treats an empty issue_id as "no issue yet" and would go on to label, comment on and
 # link an issue id that is the empty string.

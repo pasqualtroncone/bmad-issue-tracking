@@ -49,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Two hooks running at once could create each other's issues. `common/create-issue.yaml`
+  staged the issue title — the identity it dedupes by — at the FIXED `/tmp/issue-title.txt`,
+  so a second run overwriting it between the first run's WRITE and its read made the first
+  create an issue under the wrong title, which no later exact-title lookup finds. The title
+  is now staged at `{description_file}.title`, and the description files that were fixed
+  paths are per-key too: `/tmp/issue-desc-{story_key}.md`,
+  `/tmp/ensure-mr-desc-{story_key}.md`, `/tmp/dev-story-comment-{story_key}.md`,
+  `/tmp/review-findings-{story_key}.md`, `/tmp/prd-desc-{prd_key}.md`,
+  `/tmp/ensure-mr-prd-desc-{prd_key}.md`, `/tmp/issue-desc-prd-{prd_key}.md`,
+  `/tmp/retro-desc-epic-{epic_number}.md` and correct-course's three `/tmp/desc-*.md`.
+
 - A failed issue create showed a python traceback instead of the reason. The
   `subprocess.run(..., capture_output=True, check=True)` wrappers in
   `common/create-issue.yaml` and the retry in `common/find-issue.yaml` discarded the CLI's
