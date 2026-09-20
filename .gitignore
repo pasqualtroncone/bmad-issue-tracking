@@ -22,3 +22,6 @@ tests/e2e/evidence/
 
 # subagent worktrees
 .claude/worktrees/
+
+# personal working notes for Claude Code
+.claude.local.md

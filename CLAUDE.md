@@ -138,6 +138,16 @@ take `owner/repo` whole, so `git_project` is never split into owner and repo.
 no caller has to seed them; its same-platform branch still takes `host`/`project`/
 `project_enc` from `check-config`.
 
+### Tracker CLI facts (verified in the lab)
+
+- `gh api --paginate` and `glab api --paginate` join pages with NO separator → parse with a `raw_decode` loop.
+- `gh api` paths never contain the host (`repos/{project}/… --hostname {host}`); a raw space in a URL is a
+  silent `[]` on gh and an HTTP 400 on glab → pass query text as `-f` fields.
+- GitHub's search index lags a create by ~5 s; `gh issue create` prints a URL, not JSON; `gh pr merge` prints
+  nothing on stdout; `gh issue edit --add-label` fails on an unknown label (GitLab creates it).
+- BMM 6.12.0's classic installer does not install the v6 shims: six TOML overrides target absent skills.
+- Claude Code blocks a foreground `sleep N && …` and caps the Bash tool at 120 s default / 600 s max.
+
 ## Files to update when adding a new BMM workflow override
 
 1. Create `skills/bmad-issue-tracking-setup/assets/custom/bmad-{workflow}.toml` (pointer format — activation_steps_append and/or on_complete)
@@ -146,6 +156,14 @@ no caller has to seed them; its same-platform branch still takes `host`/`project
 4. Add the YAML files to the verify list in `skills/bmad-issue-tracking-setup/SKILL.md` (step 3)
 5. Add a row to the override table in `README.md`
 6. If the workflow has a standalone skill, create or update its `references/help.md`, add its row to `skills/module-help.csv` (classic help catalog) and bump `version` in `<skill>/module-manifest.toml`
+
+## Branching and PRs
+
+- `devel` is the integration branch and the default; `main` tracks `upstream/main` (jrevillard).
+- PRs are squash-merged: the PR title is the `devel` commit message and must follow the convention.
+- `gh pr create` / `gh issue create` need `-R pasqualtroncone/bmad-issue-tracking` — gh resolves to `upstream` otherwise.
+- `Closes #n` must be plain text in the PR body; inside backticks GitHub ignores it.
+- Upstream PRs: cherry-pick one fix onto a branch from `upstream/main`, never push `devel` wholesale.
 
 ## Commit convention
 
@@ -198,6 +216,18 @@ follow the same format with lower stakes; the `Refs #n` footer is non-negotiable
 - ❌ `docs(readme): fix stale BMM version refs, add architecture/CI/troubleshooting/license`
   → the "and" list signals several changes; split, or name the one effect that matters:
   `docs(readme): BMM version refs no longer point at 6.11`
+
+## e2e lab (tests/e2e)
+
+- `make e2e-static` — level 0, greps only, no lab. `tests/e2e/replay.sh <case>|all|gitlab` — level 1,
+  literal RUN replays (no LLM); `tests/e2e/scenarios/A*.sh` — level 2, headless Claude (~$3 each).
+- `tests/e2e/lab-up.sh` creates the GitHub lab; `--add-gitlab --gl-host <host>` adds a GitLab consumer
+  (glab must be authenticated on THAT host); `--check` proves BMM resolves the module hooks.
+- Level 1 renders steps from THIS checkout; level 2 reads the consumer's deployed copies → run
+  `tests/e2e/lab-up.sh --redeploy` after every workflow change before any A*/P* scenario.
+- Never edit `replay.sh` or a scenario while it runs (bash reads the file incrementally).
+- Cases that push CI branches (`d2`, `gl-d2`, `d16`, `gl-d16`, `d03`) cannot run concurrently on one lab.
+- Evidence lives in `tests/e2e/evidence/<lab>/` (gitignored); `tests/e2e/lab-down.sh` tears the lab down.
 
 ## Python environment
 
