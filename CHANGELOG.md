@@ -49,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `tests/e2e/lab-up.sh --redeploy` could publish the PREVIOUS assets. When no worktree held
+  the PRD branch, a failing `branch -f` was swallowed by `|| true` and the unconditional
+  force-push then put the stale branch back on the remote — the `main=<new> prd=<old>` state
+  #72 set out to remove, on the path #72 did not cover. The failure is fatal now, and the
+  redeploy asserts `origin/feat/<prd>/prd` equals `origin/main` in every consumer before it
+  exits 0.
+
 - `common/create-issue.yaml`'s adopt path kept a branch that could not execute: after
   `SET issue_id = {found_issue_id}` — inside the CHECK that proved `found_issue_id`
   non-empty — it asked `empty issue_id` again and STOPped on the TRUE side. The path is now
