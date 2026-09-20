@@ -6,6 +6,8 @@
 # source_branch={current_branch}, so --head names the branch that was just pushed — never
 # the pattern-derived feat/<prd>/<story>, which under bmad-loop exists nowhere.
 set -uo pipefail; . "$(dirname "$0")/_lib.sh"; C=A7
+# a previous run (or the d8 replay) may have pushed this branch: remove it so the hook's push is judged on its own
+( cd "$CONSUMER" && git push -q origin --delete bmad-loop/r1/1-1-login-form >/dev/null 2>&1 ) || true
 WT="$(story_worktree 1-1-login-form bmad-loop/r1/1-1-login-form --no-upstream)"
 set_outcome "$WT" pass; write_spec "$WT" in-review rows >/dev/null; set_story_status "$WT" 1-1-login-form review; touch_src "$WT" "A7: bmad-loop shaped dev"
 rm -f "$WT/ci-status.json"
