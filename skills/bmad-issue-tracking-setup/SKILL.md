@@ -176,6 +176,10 @@ cp -rf <path>/workflows/* _bmad/_config/custom/workflows/
     ```bash
     grep -qxF '.bmad-loop/plugins/close-trace-mr/' .gitignore || echo '.bmad-loop/plugins/close-trace-mr/' >> .gitignore
     ```
+    <action>And gitignore `ci-status.json`, the file the gate WRITES at the worktree root (`common/write-ci-status.yaml`). It is transient gate output — one story's verdict, read by `ci-status.sh` and then worthless. Untracked, bmad-loop's single commit of the story worktree swept it into the integration branch, so every story landed a stale `ci-status.json` there and the next story's worktree started with the previous story's verdict already on disk:</action>
+    ```bash
+    grep -qxF 'ci-status.json' .gitignore || echo 'ci-status.json' >> .gitignore
+    ```
     <action>Edit `.bmad-loop/policy.toml` (preserve existing keys). Set `[scm] isolation = "worktree"` if not already, and ensure `worktree_seed` lists both our paths:</action>
     ```toml
     [scm]
@@ -185,7 +189,7 @@ cp -rf <path>/workflows/* _bmad/_config/custom/workflows/
     [verify]
     commands = ["bash .bmad-loop/ci-status.sh"]
     ```
-    <action>Verify: `.bmad-loop/ci-status.sh` exists and is executable; `git check-ignore .bmad-loop/ci-status.sh` exits 0 (gitignored); `.bmad-loop/plugins/close-trace-mr/` is gitignored; `.bmad-loop/policy.toml` has the `[verify] commands`, `[scm] isolation = "worktree"`, and `[scm] worktree_seed` entries (with both paths listed).</action>
+    <action>Verify: `.bmad-loop/ci-status.sh` exists and is executable; `git check-ignore .bmad-loop/ci-status.sh` exits 0 (gitignored); `.bmad-loop/plugins/close-trace-mr/` is gitignored; `git check-ignore ci-status.json` exits 0 (it is output, so it is ignored but NOT listed in `worktree_seed`); `.bmad-loop/policy.toml` has the `[verify] commands`, `[scm] isolation = "worktree"`, and `[scm] worktree_seed` entries (with both paths listed).</action>
     <action>If `.bmad-loop/plugins/story-track-dev` or `.bmad-loop/plugins/story-track-review` exist, remove them and delete their `[plugins] enabled` entries from `.bmad-loop/policy.toml` (superseded by the `on_complete` hook).</action>
   </true>
   <false>

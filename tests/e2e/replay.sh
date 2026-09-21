@@ -3,7 +3,8 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
-#   replay.sh d29|d32|d33|d34|d36|d37  # local: no lab API — d29 the dev-finish INCLUDE order,
+#   replay.sh d29|d32|d33|d34|d36|d37|d38  # local: no lab API — d29 and d38 the
+#                                   #   dev-finish and review-finish INCLUDE order,
 #                                   #   d32 the sprint hooks' commit/push, d33 the review verdict,
 #                                   #   d34 the PRD-side update hooks' commit/push,
 #                                   #   d36 the PRD worktree lookup's branch,
@@ -133,7 +134,7 @@ PY
   local d22src d22push
   d22src="$(grep -c 'variable: source_branch, value: "{current_branch}"' "$WF/common/post-dev-complete.yaml")"
   d22push="$(grep -c 'push -u origin HEAD' "$WF/common/post-dev-complete.yaml")"
-  say "post-dev-complete.yaml: 'source_branch = {current_branch}' SETs = $d22src (want 2 — create-story and dev-finish, the two phases that call ensure-mr); 'push -u origin HEAD' = $d22push (want 2 — dev-finish and review-finish, the two phases bmad-loop reaches)"
+  say "post-dev-complete.yaml: 'source_branch = {current_branch}' SETs = $d22src (want 3 — create-story, dev-finish and review-finish, the three phases that call ensure-mr since #95); 'push -u origin HEAD' = $d22push (want 2 — dev-finish and review-finish, the two phases bmad-loop reaches)"
   say "module story_branch pattern (fixtures/issue-tracking.yaml.tmpl, SKILL.md step 9 default): feat/{prd_key}/{story_key}"
   if [ "$d22src" -ge 2 ] && [ "$d22push" -ge 2 ]; then
     mark D22-static REFUTED "the pattern-derived story_branch no longer reaches the remote: post-dev-complete.yaml pushes 'HEAD' ($d22push steps) and hands ensure-mr source_branch={current_branch} ($d22src SETs), so the MR is opened on the branch the hook is on — bmad-loop/<run>/<story_key> included (empirical: A7)"
@@ -1694,6 +1695,60 @@ case_d29() {  # #42 — the first dev-finish must gate on a CI it can actually s
   fi
 }
 
+case_d38() {  # #95 — the review-finish gate must read a pipeline, so it needs the MR first
+  # Static (no lab, no API): the same defect as d29, one phase over. bmad-build-auto
+  # finalises dev AND review in ONE session, so under bmad-loop the hook fires once with
+  # the spec already `done` and review-finish is the ONLY phase a story ever reaches.
+  # With no ensure-mr in the gate's own block, find-mr answers nothing, check-mr-ci maps
+  # `no_mr`, write-ci-status writes green and bmad-loop's [verify] passes over a pipeline
+  # nobody read — a red one included.
+  local c=d38 d
+  load_lab 2>/dev/null || true
+  d="$(mkdir -p "$E2E_ROOT/evidence/${LAB_ID:-static}/d38" && echo "$E2E_ROOT/evidence/${LAB_ID:-static}/d38")"
+  local f="$WF/common/post-dev-complete.yaml"
+  local phase gate_start gate_end
+  phase="$(grep -n 'CHECK: phase eq "review-finish"' "$f" | head -1 | cut -d: -f1)"
+  if [ -z "$phase" ]; then
+    verdict $c BLOCKED "cannot find the review-finish phase in post-dev-complete.yaml"; return
+  fi
+  # the LAST `review_status eq "done"` CHECK at phase indent is the CI gate's own guard
+  # (the first one is the issue-status update); its block ends at the next phase-level step
+  gate_start="$(awk -v s="$phase" 'NR>s && /^    - CHECK: review_status eq "done"/{n=NR} END{print n}' "$f")"
+  if [ -z "$gate_start" ] || [ "$gate_start" = 0 ]; then
+    verdict $c BLOCKED "no 'review_status eq \"done\"' guard found after the review-finish phase line ($phase)"; return
+  fi
+  gate_end="$(awk -v s="$gate_start" 'NR>s && /^    - /{print NR; exit}' "$f")"
+  [ -n "$gate_end" ] || gate_end="$(wc -l < "$f")"
+  sed -n "${gate_start},${gate_end}p" "$f" > "$d/gate-block.txt"
+  grep -oE '^[[:space:]]*- INCLUDE: common/[a-z-]+' "$d/gate-block.txt" | sed 's#.*common/##' > "$d/includes.txt"
+  pos() { grep -nxF "$1" "$d/includes.txt" | head -1 | cut -d: -f1; }
+  local p_mr p_ci p_write
+  p_mr="$(pos ensure-mr)"; p_ci="$(pos wait-for-green-ci)"; p_write="$(pos write-ci-status)"
+  # the whole review-finish phase, for the record, and the mapping that must survive
+  sed -n "${phase},\$p" "$f" | grep -oE '^[[:space:]]*- INCLUDE: common/[a-z-]+' | sed 's#.*common/##' > "$d/phase-includes.txt"
+  grep -n 'ci_status eq "no_mr"' "$WF/common/write-ci-status.yaml" > "$d/no-mr-green.txt" || true
+  # the comment that told the reader `no_mr` is a flow with no gate to enforce: on this
+  # path, after the fix, it is ensure-mr having produced nothing
+  local cmt; cmt="$(grep -c 'no longer means' "$f")"
+  { echo "gate block: post-dev-complete.yaml:$gate_start-$gate_end"
+    echo "gate-block INCLUDE order: $(tr '\n' ' ' < "$d/includes.txt")"
+    echo "review-finish phase INCLUDEs: $(tr '\n' ' ' < "$d/phase-includes.txt")"
+    echo "ensure-mr=#${p_mr:-?} wait-for-green-ci=#${p_ci:-?} write-ci-status=#${p_write:-?}"
+    echo "write-ci-status still maps no_mr -> green: $(cat "$d/no-mr-green.txt")"
+    echo "the no_mr comment is re-read for this path: $cmt line(s)"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ -z "$p_ci" ] || [ -z "$p_write" ]; then
+    verdict $c BLOCKED "the review-finish gate block holds no CI gate at all: $(head -4 "$d/summary.txt" | tr '\n' ' ')"
+  elif [ -z "$p_mr" ]; then
+    verdict $c CONFIRMED "post-dev-complete.yaml:$gate_start-$gate_end gates on CI (#$p_ci) and writes ci-status.json (#$p_write) without ever ensuring the MR: bmad-build-auto reaches this phase with no trace MR, find-mr answers nothing, check-mr-ci maps no_mr and the green file makes bmad-loop's [verify] pass on a gate that read no pipeline"
+  elif [ "$p_ci" -lt "$p_mr" ]; then
+    verdict $c CONFIRMED "post-dev-complete.yaml:$gate_start-$gate_end gates on CI (#$p_ci) BEFORE it ensures the MR (#$p_mr): the first pass reads no pipeline, write-ci-status (#$p_write) writes green and bmad-loop's [verify] passes whatever CI did"
+  elif [ "$p_mr" -lt "$p_ci" ] && [ "$p_ci" -lt "$p_write" ] && [ -s "$d/no-mr-green.txt" ]; then
+    verdict $c REFUTED "post-dev-complete.yaml:$gate_start-$gate_end ensures the MR (#$p_mr) BEFORE the CI gate (#$p_ci) and the ci-status.json write (#$p_write), inside the same 'review_status eq \"done\"' guard — so the only phase bmad-loop reaches gates on a pipeline that exists, and ensure-mr is a no-op when the MR is already there. no_mr still maps to green ($(cat "$d/no-mr-green.txt")), and the comment says what it now means on this path ($cmt line)"
+  else
+    verdict $c BLOCKED "neither shape: ensure-mr=#$p_mr wait-for-green-ci=#$p_ci write-ci-status=#$p_write; no_mr mapping: $(cat "$d/no-mr-green.txt")"
+  fi
+}
+
 case_d31() {  # #59 — the status label an edit adds has to exist before the edit
   # `gh issue edit --add-label` fails on a label GitHub has never seen, and the static
   # `status:*` labels are created by common/ensure-labels, which only issue-sync/prepare
@@ -2012,11 +2067,11 @@ main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|d34|d36|d37|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|d34|d36|d37|d38|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 d34 d36 d37 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
-    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 d34 d36 d37 d38 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
+    all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d38; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
 }

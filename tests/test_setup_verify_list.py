@@ -63,3 +63,20 @@ def test_readme_override_table_has_one_row_per_shipped_toml():
     shipped = _shipped_tomls()
     assert shipped - rows == set(), f"TOML shipped but missing from the README override table: {sorted(shipped - rows)}"
     assert rows - shipped == set(), f"README override table row for a TOML that is not shipped: {sorted(rows - shipped)}"
+
+
+def test_step4_gitignores_the_gates_own_output_file():
+    """`ci-status.json` is written by the gate, so setup must ignore it.
+
+    bmad-loop commits the story worktree as a single commit; untracked, the
+    file rode that commit into the integration branch and the next story's
+    worktree started with the previous story's verdict on disk (#96). It is
+    OUTPUT, so it must NOT be seeded into worktrees either.
+    """
+    step4 = _step(4)
+    assert "grep -qxF 'ci-status.json' .gitignore || echo 'ci-status.json' >> .gitignore" in step4, \
+        "step 4 must append ci-status.json to .gitignore idempotently, like the two sibling lines"
+    seed = re.search(r"worktree_seed = \[([^\]]*)\]", step4)
+    assert seed, "step 4 no longer shows the worktree_seed list"
+    assert "ci-status.json" not in seed.group(1), \
+        "ci-status.json is the gate's output, never a seeded input"

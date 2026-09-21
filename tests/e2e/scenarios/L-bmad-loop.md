@@ -23,6 +23,9 @@ cp -f $MOD/scripts/bmad-loop/ci-gate/ci-status.sh .bmad-loop/ci-status.sh && chm
 cp -rf $MOD/scripts/close-trace-mr .bmad-loop/plugins/ && chmod +x .bmad-loop/plugins/close-trace-mr/close-trace-mr.sh
 grep -qxF '.bmad-loop/ci-status.sh' .gitignore || echo '.bmad-loop/ci-status.sh' >> .gitignore
 grep -qxF '.bmad-loop/plugins/close-trace-mr/' .gitignore || echo '.bmad-loop/plugins/close-trace-mr/' >> .gitignore
+# ci-status.json is the gate's OUTPUT (transient): untracked, bmad-loop's single commit of
+# the story worktree carries it into the target branch (#96)
+grep -qxF 'ci-status.json' .gitignore || echo 'ci-status.json' >> .gitignore
 ```
 
 `.bmad-loop/policy.toml` (merge into what `init` wrote):
