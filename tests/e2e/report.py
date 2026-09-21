@@ -5,7 +5,7 @@
 
 Issue bodies quote the literal command that was replayed (the .cmd file rendered from the
 workflow), its exit code and the head of its stderr/stdout — the shortest evidence a reader
-can re-run. Level-2 runs contribute turns/cost/improvisation counts and the final message.
+can re-run. Level-2 runs contribute turns/improvisation counts and the final message.
 """
 import json
 import sys
@@ -142,7 +142,7 @@ def case_block(lab, case):
     for run in sorted(p for p in d.iterdir() if p.is_dir() and (p / "result.json").exists()):
         r = json.loads(read(run / "result.json") or "{}")
         res = r.get("result") or {}
-        out.append(f"- run `{run.name}`: turns={res.get('num_turns')} cost=${(res.get('total_cost_usd') or 0):.2f} bash={r.get('bash_commands')} improvised={r.get('improvised')} tool_errors={r.get('tool_errors')}; final message tail:\n\n```\n{head(run / 'final.txt', 700)}\n```\n")
+        out.append(f"- run `{run.name}`: turns={res.get('num_turns')} bash={r.get('bash_commands')} improvised={r.get('improvised')} tool_errors={r.get('tool_errors')}; final message tail:\n\n```\n{head(run / 'final.txt', 700)}\n```\n")
     for extra in ("summary.txt", "runs.txt", "index.txt", "paginate-shape.txt", "push-autosetupremote.txt", "pr-state-after.txt"):
         if (d / extra).exists():
             out.append(f"`{extra}`:\n```\n{head(d / extra, 600)}\n```\n")

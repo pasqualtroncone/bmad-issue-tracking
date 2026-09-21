@@ -15,4 +15,4 @@ ls "$WT/$IMPLEMENTATION"/spec-* > "$(case_dir $C)/specs.txt" 2>&1
 # dedupes by, so it is rebuilt from the key and matched whole.
 TITLE="$(uv run --no-project python -c 'import sys; p=sys.argv[1].split("-"); print("Story %s.%s: %s" % (p[0], p[1], " ".join(w.capitalize() for w in p[2:])))' "$KEY")"
 ROW="$(awk -F'\t' -v t="$TITLE" '$2 == t' "$(case_dir $C)/issues-after.txt" | head -1)"
-verdict $C OBSERVED "spec(s): $(tr '\n' ' ' < "$(case_dir $C)/specs.txt"); story issue '$TITLE': ${ROW:-(no issue with that title)}; ci-status=$(cat "$WT/ci-status.json" 2>/dev/null || echo absent); improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]') cost=\$$(rj "$D" 'round(r["result"]["total_cost_usd"] or 0,2)')"
+verdict $C OBSERVED "spec(s): $(tr '\n' ' ' < "$(case_dir $C)/specs.txt"); story issue '$TITLE': ${ROW:-(no issue with that title)}; ci-status=$(cat "$WT/ci-status.json" 2>/dev/null || echo absent); improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]')"

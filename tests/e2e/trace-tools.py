@@ -219,7 +219,7 @@ def cmd_analyze(args):
     errors = sum(1 for _, e, _ in results if e)
     summary = {
         "trace": str(trace), "tool_counts": dict(tools), "bash_commands": len(commands), "tool_errors": errors,
-        "result": {k: result.get(k) for k in ("subtype", "is_error", "duration_ms", "duration_api_ms", "num_turns", "total_cost_usd", "stop_reason")} if result else None,
+        "result": {k: result.get(k) for k in ("subtype", "is_error", "duration_ms", "duration_api_ms", "num_turns", "stop_reason")} if result else None,
         "model_usage": (result or {}).get("modelUsage"),
     }
     (out / "result.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
