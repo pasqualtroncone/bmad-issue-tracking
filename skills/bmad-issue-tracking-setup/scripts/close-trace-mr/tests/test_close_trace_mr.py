@@ -5,7 +5,9 @@ The tests target the testable surface area of `close_trace_mr.py`:
   - env var extraction (`get_env_values`)
   - config parsing (`parse_issue_tracking_config`)
   - context resolution (`resolve_ctx`) including overlay precedence
-  - MR list parsing (`list_open_mrs`) — empty result, multi-MR result, errors
+  - MR list parsing (`list_open_mrs`) — empty result, multi-MR result, errors, and
+    the GitHub lookup's shape (no `-R`, `-X GET`, `head=owner:branch`) plus the
+    defensive `head.ref` filter that keeps a foreign PR out of the close list (#98)
   - close command construction (`close_one`) — glab vs gh, success, already-closed
   - marker file write (`write_marker`) — atomic, content shape, run_dir-less path
 
@@ -344,14 +346,74 @@ class TestListOpenMrs:
         assert "repos/owner/repo/pulls" in joined
         assert "feat/prd/3-1-foo" in joined
 
+    def test_github_list_names_the_repo_in_the_path_not_with_dash_R(self):
+        """D41 (#98): `gh api` has no `-R` flag — the repo is named by the path.
+
+        With `-R` the process exits non-zero (gh 2.101.0: "unknown shorthand flag:
+        'R'"), which `list_open_mrs` deliberately turns into "no PRs found", so the
+        hook silently closed nothing on every GitHub run it ever made.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _github_ctx())
+        cmd, _ = recorder.calls[0]
+        assert "-R" not in cmd
+        assert "--repo" not in cmd
+
+    def test_github_list_filters_head_by_owner_colon_branch(self):
+        """D41 (#98): `pulls?head=` needs `owner:branch`.
+
+        A BARE branch name is not rejected — the API ignores the filter and answers
+        every open PR of the repository (verified read-only against repos/cli/cli:
+        `head=remove-claude-md` -> 30 items, `head=jarrensj:remove-claude-md` -> [14474]).
+        Without the qualifier, post_merge would close the whole open-PR list.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _github_ctx())
+        cmd, _ = recorder.calls[0]
+        assert "head=owner:feat/prd/3-1-foo" in cmd
+        assert "head=feat/prd/3-1-foo" not in cmd
+
+    def test_github_list_is_a_GET(self):
+        """`gh api` flips to POST as soon as a `-f` field is present, and POST on
+        repos/.../pulls is the CREATE endpoint (HTTP 422). `-X GET` keeps it a listing."""
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _github_ctx())
+        cmd, _ = recorder.calls[0]
+        assert cmd[cmd.index("-X") + 1] == "GET"
+
     def test_github_multi_pr_result(self):
         body = json.dumps([
-            {"number": 11, "title": "Story 3.1: foo"},
-            {"number": 22, "title": "Story 3.1: foo (dup)"},
+            {"number": 11, "title": "Story 3.1: foo", "head": {"ref": "feat/prd/3-1-foo"}},
+            {"number": 22, "title": "Story 3.1: foo (dup)", "head": {"ref": "feat/prd/3-1-foo"}},
         ])
         recorder = _Recorder()
         recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, body))
         assert ctm.list_open_mrs(recorder, _github_ctx()) == [11, 22]
+
+    def test_github_foreign_prs_in_the_answer_are_never_closed(self):
+        """The defensive half of D41: an unfiltered-looking answer closes nothing extra.
+
+        This is exactly the body a bare `head=` produced on the lab — the repository's
+        whole open-PR list. Only the PR whose `head.ref` is the merged branch survives.
+        """
+        body = json.dumps([
+            {"number": 7, "title": "someone else's work", "head": {"ref": "feat/prd/9-9-other"}},
+            {"number": 11, "title": "Story 3.1: foo", "head": {"ref": "feat/prd/3-1-foo"}},
+            {"number": 12, "title": "dependabot", "head": {"ref": "dependabot/npm/x"}},
+        ])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _github_ctx()) == [11]
+
+    def test_github_pr_without_head_is_dropped(self):
+        """A payload with no `head.ref` cannot be proven to be ours, so it is not closed."""
+        body = json.dumps([{"number": 11, "title": "Story 3.1: foo"}])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _github_ctx()) == []
 
 
 # -----------------------------------------------------------------------------

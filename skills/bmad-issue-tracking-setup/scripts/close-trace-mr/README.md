@@ -48,6 +48,33 @@ If no `platform` is found after both passes, the hook no-ops cleanly and
 writes `status: skipped` to the marker. This happens for projects that have
 not configured `bmad-issue-tracking`.
 
+## MR/PR lookup
+
+The hook closes only MRs/PRs opened FROM the branch bmad-loop just merged.
+
+| Platform | Command |
+|---|---|
+| GitLab | `glab api projects/<project>/merge_requests --hostname <host> -F source_branch=<branch> -F state=opened` |
+| GitHub | `gh api repos/<owner>/<repo>/pulls -X GET -f head=<owner>:<branch> -f state=open` |
+
+Three things about the GitHub form are not guessable, and getting any of them
+wrong is invisible — a failed listing is indistinguishable from "nothing to
+close", and the hook exits 0 either way:
+
+- **`gh api` has no `-R` flag.** The repository is named by the path. `-R` makes
+  gh exit with `unknown shorthand flag: 'R'`, which this hook reads as an empty
+  list, so before #98 it had never closed a single GitHub trace PR.
+- **`head` must be `owner:branch`.** A bare branch name is not an error: GitHub
+  *ignores* the filter and returns every open PR of the repository. So the `-R`
+  failure was the only thing preventing `post_merge` from closing all of them.
+- **`-X GET` is required.** `gh api` switches to POST as soon as a `-f` field is
+  given, and `POST repos/.../pulls` is the *create* endpoint (HTTP 422). Query
+  text still has to travel as `-f` fields, because a raw space in the URL is a
+  silent `[]` on gh.
+
+On top of the server-side filter, every returned PR is checked against
+`head.ref` and skipped (with a line on stderr) when it is not the merged branch.
+
 ## Idempotency
 
 Re-running on an already-closed MR is safe:
@@ -149,7 +176,7 @@ close-trace-mr/
 ## Tests
 
 ```bash
-uv run --no-project --directory .bmad-loop/plugins/close-trace-mr \
+uv run --no-project --with pytest --directory .bmad-loop/plugins/close-trace-mr \
     python -m pytest tests/ -v
 ```
 

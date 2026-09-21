@@ -42,6 +42,19 @@
 # failing to close the trace MR must NOT defer an already-merged unit. Operators
 # see the journal line if anything went wrong and can clean up by hand.
 #
+# ----- MR/PR lookup -----------------------------------------------------------
+# GitLab: glab api projects/<project>/merge_requests --hostname <host>
+#             -F source_branch=<branch> -F state=opened
+# GitHub: gh api repos/<owner>/<repo>/pulls -X GET
+#             -f head=<owner>:<branch> -f state=open
+# The GitHub form is exact, and every part of it is load-bearing (#98): `gh api`
+# has NO `-R` flag (the repo is in the path), `head` must be `owner:branch` — a
+# bare branch name makes GitHub IGNORE the filter and return every open PR — and
+# `-X GET` is needed because any `-f` field otherwise turns the call into POST
+# repos/.../pulls, the PR-create endpoint. A malformed listing is indistinguishable
+# from "nothing to close" here, so the returned PRs are additionally filtered on
+# `head.ref` before anything is closed.
+#
 # ----- Idempotency ------------------------------------------------------------
 # Re-running on an already-closed MR is safe:
 #   * `glab api .../state_event=close` on a closed MR → 409 (HTTP) wrapped as a

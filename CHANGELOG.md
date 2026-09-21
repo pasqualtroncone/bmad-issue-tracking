@@ -58,6 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- No GitHub trace PR had ever been closed, and fixing that naively would have closed every
+  other open PR of the repository. The `close-trace-mr` bmad-loop plugin looked its PR up with
+  `gh api repos/<project>/pulls -R <project> -f head=<branch> -f state=open`: `gh api` has no
+  `-R` flag, so the call exited non-zero, the lookup's deliberate leniency turned that into
+  "nothing to close" and the hook reported rc=0 with `closed_mrs: []`. The `head` filter was
+  wrong too — GitHub needs `owner:branch` and silently IGNORES a bare branch name, answering
+  the repository's whole open-PR list — and any `-f` field turns `gh api` into a POST, which
+  on `repos/.../pulls` is the PR-*create* endpoint. The lookup is now
+  `gh api repos/<owner>/<repo>/pulls -X GET -f head=<owner>:<branch> -f state=open`, and every
+  PR it returns is checked against `head.ref` before it can be closed, so an over-broad answer
+  can never close somebody else's work.
+
 - Under bmad-loop the CI gate passed without ever reading a pipeline. `bmad-build-auto`
   finalises dev and review in one session, so the hook fires once with the spec already
   `done` and `common/post-dev-complete.yaml` routes it to review-finish — the only phase a

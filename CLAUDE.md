@@ -247,6 +247,7 @@ The scope is semantic (what area is being talked about), not a folder path.
 | `overrides` | The TOML pointers in `assets/custom/` (which BMM workflows are hooked, and to what) |
 | `workflows` | The workflow YAML bodies in `assets/workflows/` (`common/`, per-workflow folders) |
 | `ci-gate` | `ci-status.sh`, the `ci-status.json` contract, CI wait/poll behaviour for bmad-loop |
+| `close-trace-mr` | The bmad-loop `post_merge` plugin (`scripts/close-trace-mr/`): its MR/PR lookup, the close, the marker file |
 | `lang` | `bmad-workflow-lang.md`, the workflow language itself |
 | `tests` | The test suite infrastructure (`conftest.py`, runners); a test for area X is `chore(X)` |
 | `readme` / `changelog` | The respective file, when the change belongs to no area (a docs change about an area takes that area's scope, e.g. `docs(install)`) |

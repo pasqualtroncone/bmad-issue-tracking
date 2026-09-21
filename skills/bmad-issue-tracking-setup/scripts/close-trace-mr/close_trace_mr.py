@@ -232,6 +232,16 @@ def resolve_ctx(env_values: Mapping[str, str], config: Mapping[str, str]) -> Ctx
 # CLI invocations — pure except for the injected Runner
 # -----------------------------------------------------------------------------
 
+def _github_head_ref(item: Mapping) -> str:
+    """The branch a GitHub PR object is opened FROM (`head.ref`), "" when absent."""
+    head = item.get("head")
+    if isinstance(head, dict):
+        ref = head.get("ref")
+        if isinstance(ref, str):
+            return ref
+    return ""
+
+
 def list_open_mrs(
     runner: Runner,
     ctx: Ctx,
@@ -240,11 +250,14 @@ def list_open_mrs(
 
     GitLab: `glab api projects/{url-encoded project}/merge_requests?source_branch=X&state=opened`
             — the body is a JSON array of MR objects; we extract `iid`.
-    GitHub: `gh api repos/{owner}/{repo}/pulls?head={owner}:{branch}&state=open`
+    GitHub: `gh api repos/{owner}/{repo}/pulls -X GET -f head={owner}:{branch} -f state=open`
             — body is a JSON array of PR objects; we extract `number`.
 
     The script treats a non-zero exit or a non-JSON body as "no MRs found"
-    (logged on stderr) so a transient CLI error does NOT abort the run.
+    (logged on stderr) so a transient CLI error does NOT abort the run. That
+    leniency is why the GitHub call has to be exactly right: a malformed command
+    is indistinguishable from "nothing to close", and this hook is the only thing
+    that ever closes a trace PR.
     """
     if ctx.platform == "gitlab":
         cmd = [
@@ -256,18 +269,40 @@ def list_open_mrs(
             "-F", "state", "opened",
         ]
         iid_key = "iid"
+        # GitLab's listing is already scoped by `source_branch`; there is no second
+        # identity in the payload to cross-check it against.
+        source_of = None
     else:  # github
-        # `head` is `owner:branch` per the GitHub REST contract; we only know
-        # `branch`, so we use the search-shaped endpoint that takes branch only.
+        # Three things this call gets wrong if written from memory (D41, #98):
+        #
+        #   * `gh api` has NO `-R` flag (gh 2.101.0: "unknown shorthand flag: 'R'").
+        #     The repo is named by the PATH. With `-R` the process exits non-zero,
+        #     the leniency above turns that into "no PRs found", and the hook has
+        #     never closed a GitHub trace PR in its life.
+        #   * `head` really is `owner:branch` and the API does NOT error on a bare
+        #     branch name — it IGNORES the filter and answers the full list of open
+        #     PRs (verified read-only against repos/cli/cli: bare `head=` -> 30 items,
+        #     `head=<owner>:<branch>` -> the one PR). So the `-R` bug was the only
+        #     thing standing between this hook and closing every open PR of the repo.
+        #     `owner` is the part of the tracker/remote project path before the slash.
+        #   * `gh api` switches to POST as soon as any `-f` field is given, and
+        #     POST repos/.../pulls is the CREATE endpoint (HTTP 422, "base, head
+        #     weren't supplied"). `-X GET` keeps it a listing and puts the fields in
+        #     the query string — and a `-f` field is still how query text is passed,
+        #     because a raw space in a URL is a silent `[]` on gh.
+        owner = ctx.project.split("/")[0]
         cmd = [
             "gh", "api",
             f"repos/{ctx.project}/pulls",
-            "-R", ctx.project,
-            "-f", f"head={ctx.branch}",
+            "-X", "GET",
+            "-f", f"head={owner}:{ctx.branch}",
             "-f", "state=open",
             "--paginate",
         ]
         iid_key = "number"
+        # Belt and braces over the filter above: whatever the listing contains, only
+        # a PR whose head really is the branch bmad-loop just merged may be closed.
+        source_of = _github_head_ref
 
     proc = runner(cmd, capture_output=True, text=True, timeout=_SUBPROC_TIMEOUT_SEC)
     if proc.returncode != 0:
@@ -291,6 +326,15 @@ def list_open_mrs(
     for item in items:
         if not isinstance(item, dict):
             continue
+        if source_of is not None:
+            src = source_of(item)
+            if src != ctx.branch:
+                print(
+                    f"[close-trace-mr] ignoring #{item.get(iid_key)}: its source branch "
+                    f"{src!r} is not the merged branch {ctx.branch!r}",
+                    file=sys.stderr,
+                )
+                continue
         iid = item.get(iid_key)
         if isinstance(iid, int):
             out.append(iid)

@@ -260,7 +260,7 @@ The module is compatible with [`bmad-loop`](https://github.com/bmad-code-org/bma
 | `awaiting-operator` | `status::awaiting-operator` (issue stays **open** — external action pending, confirm with `bmad-loop confirm`) |
 | `done` | `status::done` + issue closed |
 
-**Execution trace:** the unified workflow's `ensure-mr.yaml` ensures a trace MR/PR exists per story (left open) — a CI vehicle and the story's execution trace. After the local merge-back is pushed to the target branch, GitLab auto-marks it merged, keeping the story's diff and pipeline as a durable record. On GitHub there is no auto-detection of an out-of-band merge, so the trace PR stays open; close it with `gh pr close <number>` when the story is `done` if you want it tidied.
+**Execution trace:** the unified workflow's `ensure-mr.yaml` ensures a trace MR/PR exists per story (left open) — a CI vehicle and the story's execution trace. After the local merge-back is pushed to the target branch, GitLab auto-marks it merged, keeping the story's diff and pipeline as a durable record. On GitHub there is no auto-detection of an out-of-band merge, so the trace PR would stay open — the `close-trace-mr` bmad-loop plugin (setup step 5) closes it at `post_merge`, looking it up with `gh api repos/<owner>/<repo>/pulls -X GET -f head=<owner>:<branch> -f state=open` and closing only PRs whose `head.ref` is the branch that was merged. Without the plugin, close it with `gh pr close <number>` when the story is `done`.
 
 ## Migration from ci-wait.sh (if upgrading)
 
