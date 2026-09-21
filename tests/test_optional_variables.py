@@ -26,7 +26,14 @@ from conftest import WORKFLOWS_DIR
 
 # Flags a CHECK branches on. A new one is fixed with a SET at the entry point, never
 # with a spec change.
-GUARDED_FLAGS = ("lookup_after_create", "review_producer", "label_color", "allow_merge")
+GUARDED_FLAGS = (
+    "lookup_after_create", "review_producer", "label_color", "allow_merge",
+    # #99: the three post-dev-complete phases compose the trace MR title out of
+    # {story_title} and branch on `empty story_title` for the key fallback.
+    # common/story-title.yaml STOREs it, but review-finish INCLUDEs that atomic
+    # only under `empty issue_id` FALSE, so the phase seeds "" of its own.
+    "story_title",
+)
 # Plus three names no CHECK branches on, so §4.5 is the only thing that guards them:
 # `error`, which no file reads but every caller of common/merge-mr.yaml is told to,
 # `head_sha` (#81), which the CI lookups interpolate and only a phase that PUSHES can know,

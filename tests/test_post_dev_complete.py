@@ -5,9 +5,15 @@ Covers:
 - post-dev-complete.yaml dispatches on phase variable
 - ci-status.json contract is preserved (written by write-ci-status.yaml)
 - ensure-issue / ensure-mr are reused across phases
+- the trace MR is named after the story, not after the story key (#99)
 """
 
-from conftest import load_workflow, flatten_steps, collect_includes
+import re
+
+from conftest import WORKFLOWS_DIR, load_workflow, flatten_steps, collect_includes
+
+# The value side of `- SET: { variable: mr_title, value: "..." }`.
+_MR_TITLE_SET_RE = re.compile(r'variable:\s*mr_title\s*,\s*value:\s*"([^"]*)"')
 
 
 def test_dispatch_routes_ready_for_dev_to_create_story():
@@ -112,3 +118,39 @@ def test_wrappers_set_phase():
         assert f"phase, value: \"{phase}\"" in content, f"{rel}: wrong phase value"
         includes = collect_includes(wf)
         assert "common/post-dev-complete" in includes, f"{rel}: missing unified workflow include"
+
+
+def test_no_mr_title_is_named_after_the_story_key():
+    """D40 (#99): a trace MR carries the story's TITLE, the same string its issue carries.
+
+    `common/post-dev-complete.yaml` composed `Story N.M: {story_key}` in all three phases,
+    so one story showed up twice under two names — `Story 1.10: Login Form Extended` as the
+    issue and `Story 1.10: 1-10-login-form-extended` as the PR. The title is also what
+    `common/create-issue.yaml` dedupes by, so the two must not drift. `{story_key}` may
+    still appear elsewhere in a title (a PRD MR has no story), but never as the NAME of a
+    story: an `mr_title` value carrying it is the defect coming back.
+    """
+    offenders = []
+    for path in sorted(WORKFLOWS_DIR.rglob("*.yaml")):
+        for n, line in enumerate(path.read_text(encoding="utf-8").split("\n"), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            m = _MR_TITLE_SET_RE.search(line)
+            if m and "{story_key}" in m.group(1):
+                offenders.append(f"{path.relative_to(WORKFLOWS_DIR)}:{n}: {line.strip()}")
+    assert not offenders, (
+        "mr_title must be named after the story title, not its key "
+        "(common/story-title.yaml returns {story_title}):\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_every_story_mr_title_uses_the_shared_story_title():
+    """The counterpart: the three phases DO compose the title the issue side composes."""
+    content = load_workflow("common/post-dev-complete.yaml")["content"]
+    sets = [
+        line.strip() for line in content.split("\n")
+        if not line.lstrip().startswith("#") and _MR_TITLE_SET_RE.search(line)
+    ]
+    assert len(sets) == 3, f"expected one mr_title SET per phase, found {len(sets)}: {sets}"
+    for line in sets:
+        assert 'Story {epic_num}.{story_num}: {story_title}' in line, line

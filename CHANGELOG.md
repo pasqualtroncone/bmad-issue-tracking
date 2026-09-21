@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PR it returns is checked against `head.ref` before it can be closed, so an over-broad answer
   can never close somebody else's work.
 
+- One story showed up under two names. The three phases of `common/post-dev-complete.yaml`
+  titled the trace MR `Story N.M: <story key>` while its issue read `Story N.M: <story title>`
+  — `Story 1.10: 1-10-login-form-extended` next to `Story 1.10: Login Form Extended` for the
+  same story. All three now compose the title `common/story-title.yaml` resolves, the one the
+  issue side already used, falling back to the key only when no title can be resolved at all.
+
 - Under bmad-loop the CI gate passed without ever reading a pipeline. `bmad-build-auto`
   finalises dev and review in one session, so the hook fires once with the spec already
   `done` and `common/post-dev-complete.yaml` routes it to review-finish — the only phase a
