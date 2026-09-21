@@ -7,7 +7,8 @@
 # Input variables:
 #   - prd_key: from activation or re-derived from frontmatter
 # Output variables: (none)
-# Side effects: creates/updates issue on tracker, pushes branch, may create draft MR
+# Side effects: creates/updates issue on tracker, commits {planning_artifacts} and
+#               pushes the PRD branch, may create draft MR
 
 - INCLUDE: common/check-config
 # Read prd_key (should have been set during activation, re-derive if lost)
@@ -61,8 +62,10 @@ print(''.join(lines[start:]).strip())
     - SET: { variable: labels, value: "type{sep}prd\nprd{sep}{prd_key}" }
     - SET: { variable: description_file, value: "/tmp/prd-desc-{prd_key}.md" }
     - INCLUDE: common/create-issue
-    # Commit and push
-    - RUN: git add .
+    # Commit and push. Only the planning artefacts are staged (#88): `git add .` here
+    # committed whatever else the PRD worktree was carrying — render folders,
+    # ci-status.json, another hook's half-finished edit.
+    - RUN: git add {planning_artifacts}
     - RUN: git commit --allow-empty -m "update PRD {prd_key}"
     - RUN: git push -u origin {prd_branch}
     # Create draft MR via atomic ensure-mr (caller-agnostic INPUT contract)
@@ -123,3 +126,13 @@ print(''.join(lines[start:]).strip())
     - SET: { variable: description_file, value: "/tmp/prd-desc-{prd_key}.md" }
     - INCLUDE: common/update-issue-description
     - RUN: rm -f /tmp/prd-desc-{prd_key}.md
+    # The update branch refreshed the issue and returned, so the tracker showed a PRD that
+    # existed only as an uncommitted edit in the worktree: the next common/find-prd pull, or
+    # a fresh worktree, lost it (#87). Same shape, same fix as the sprint hooks (#84):
+    # `--allow-empty` so a validate run with no edit still reaches the push (D07), and
+    # `-u origin HEAD` because the PRD branch may have no upstream yet (D08).
+    - RUN: git add {planning_artifacts}
+    - RUN: git commit --allow-empty -m "update PRD {prd_key}"
+    - RUN: git push -u origin HEAD
+    - OUTPUT:
+        message: "PRD {prd_key} updated, committed and pushed."

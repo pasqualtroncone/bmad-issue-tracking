@@ -14,7 +14,7 @@
 # or a fresh worktree lost it and the following sync reverted the labels.
 #
 # {prd_key} is in scope: issue-sync/sync runs common/find-prd-key itself.
-# Only sprint-status.yaml is staged; `--allow-empty` keeps a no-change re-run from halting
+# Only sprint-status.yaml is staged (#88); `--allow-empty` keeps a no-change re-run from halting
 # the hook (D07) and `-u origin HEAD` covers a branch with no upstream (D08).
 #
 # bmad-loop is unaffected: it owns sprint-status.yaml during a run and never fires this

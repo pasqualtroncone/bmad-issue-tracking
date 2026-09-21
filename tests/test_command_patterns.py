@@ -86,6 +86,36 @@ class TestCommandPatterns:
                 assert "-R" in cmd, f"{rel}:L{step['start_line']+1}: gh command without -R"
 
 
+class TestStagingScope:
+    """A hook stages what it owns, never the whole worktree.
+
+    Seven PRD-worktree hooks ran `git add .` and committed whatever else the worktree
+    happened to be carrying: render folders, ci-status.json, the leftovers of an earlier
+    skill run. A real /bmad-create-epics-and-stories run swept three files from an earlier
+    /bmad-prd run into the epics commit (#88). Every staging step now names its own
+    artefact path, and `bmad-build-auto.toml` already forbade the bare form for story
+    worktrees, where the orchestrator owns the files.
+
+    Scope: RUN steps only. An OUTPUT message that tells a human how to fix a red pipeline
+    in their own worktree is prose, not a staging action.
+    """
+
+    @pytest.mark.parametrize("rel, wf", list(load_all_workflows().items()), ids=lambda x: x[0] if isinstance(x, tuple) else str(x))
+    def test_no_bare_add_of_the_worktree(self, rel, wf):
+        """No RUN step may stage the whole worktree (`git add .`, `-A`, `--all`, `:/`)."""
+        bare = re.compile(r"\bgit\s+add\s+(\.|-A\b|--all\b|:/)")
+        for step in flatten_steps(wf["steps"]):
+            if step["type"] != "RUN":
+                continue
+            for text in (step["raw_value"], step.get("block_scalar") or ""):
+                m = bare.search(text)
+                assert not m, (
+                    f"{rel}:L{step['start_line']+1}: stages the whole worktree "
+                    f"({m.group(0)!r}). Stage the artefact path the hook owns instead "
+                    f"(e.g. `git add {{planning_artifacts}}`) — #88."
+                )
+
+
 class TestIssueSearchScoping:
     """P1: Issue search API calls must be scoped by prd_key label to prevent multi-PRD collisions."""
 

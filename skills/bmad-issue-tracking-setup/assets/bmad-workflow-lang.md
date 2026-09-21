@@ -111,7 +111,7 @@ Extracts a value from a previously stored variable using a condition.
 - FILTER:
     source: worktree_list
     select: path
-    where: branch matches "{prd_pattern}"
+    where: branch eq "{prd_branch}"
     store: prd_worktree_path
 ```
 
@@ -130,7 +130,7 @@ Extracts a value from a previously stored variable using a condition.
 - FILTER:
     source: worktree_list
     select: path
-    where: branch matches "{prd_pattern}"
+    where: branch eq "{prd_branch}"
     store: prd_worktree_path
 ```
 

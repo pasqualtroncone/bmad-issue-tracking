@@ -3,8 +3,10 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
-#   replay.sh d29|d32|d33          # local: no lab API — d29 the dev-finish INCLUDE order,
-#                                  #   d32 the sprint hooks' commit/push, d33 the review verdict
+#   replay.sh d29|d32|d33|d34|d36  # local: no lab API — d29 the dev-finish INCLUDE order,
+#                                   #   d32 the sprint hooks' commit/push, d33 the review verdict,
+#                                   #   d34 the PRD-side update hooks' commit/push,
+#                                   #   d36 the PRD worktree lookup's branch
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -254,8 +256,11 @@ print('documents=%d items=%d bytes=%d newlines=%d' % (len(pages), len(items), le
 case_d7() {
   local c=d7; load_lab; local d; d="$(case_dir $c)"
   cd "$CONSUMER"; git checkout -q main; git status --short > "$d/status-before.txt"
-  local l1 l2; l1="$(line_of create-prd/complete.yaml 'RUN: git add \.' 1)"; l2="$(line_of create-prd/complete.yaml 'RUN: git commit( --allow-empty)? -m' 1)"
-  replay $c add create-prd/complete.yaml "$l1"
+  # the staging step is located by `RUN: git add`, not by the path it stages: it was
+  # `git add .` until #88, and naming the argument made the locator go stale the moment
+  # the hook started staging {planning_artifacts}.
+  local l1 l2; l1="$(line_of create-prd/complete.yaml 'RUN: git add' 1)"; l2="$(line_of create-prd/complete.yaml 'RUN: git commit( --allow-empty)? -m' 1)"
+  replay $c add create-prd/complete.yaml "$l1" planning_artifacts="$PLANNING"
   replay $c commit create-prd/complete.yaml "$l2" prd_key="$PRD_KEY"
   grep -n 'git commit' "$WF/bmad-prd/complete.yaml" "$WF/retrospective/complete.yaml" "$WF/create-prd/complete.yaml" > "$d/other-callers.txt"
   if [ -z "$(cat "$d/status-before.txt")" ] && [ "$(cat "$d/commit.rc")" = 1 ] && grep -qi 'nothing to commit' "$d/commit.out$( [ -s "$d/commit.err" ] && echo " $d/commit.err")" 2>/dev/null; then
@@ -1833,15 +1838,124 @@ case_d32() {  # #84 — the tracker was reconciled against a sprint-status.yaml 
   fi
 }
 
+case_d34() {  # #87 — the update path refreshed the issue and left the PRD edit uncommitted
+  # Static + one rendered commit, the d32 shape. /bmad-prd's update branch ran
+  # find-issue -> update-issue-description and returned: the tracker showed a PRD that
+  # existed only as an uncommitted edit in the worktree, which the next common/find-prd
+  # pull (or a fresh worktree) threw away. edit-prd and correct-course had the same
+  # shape. Each must now stage, commit and push AFTER the description update, and the
+  # commit must survive a clean tree (D07) or a validate run with no edit halts before
+  # the push.
+  local c=d34
+  load_lab 2>/dev/null || true
+  EVIDENCE="${EVIDENCE:-$E2E_ROOT/evidence/static}"
+  local d; d="$(case_dir $c)"
+  local ok=1 rel lu la lc lp lcp=""
+  : > "$d/order.txt"
+  # bmad-prd's update steps live in the FALSE branch, so they are indented; the other two
+  # files are flat. The locators take the LAST match of each so the create branch of
+  # bmad-prd — which stages and commits too — cannot answer for the update branch.
+  for rel in bmad-prd/complete.yaml edit-prd/complete.yaml correct-course/complete.yaml; do
+    lu="$(grep -n -- '- INCLUDE: common/update-issue-description' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    la="$(grep -n -E -- '- RUN: git add \{(planning|implementation)_artifacts\}' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    lc="$(grep -n -E -- '- RUN: git commit --allow-empty -m' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    lp="$(grep -n -- '- RUN: git push -u origin HEAD' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    echo "$rel: update-issue-description :${lu:-absent}  add :${la:-absent}  commit :${lc:-absent}  push :${lp:-absent}" >> "$d/order.txt"
+    if [ -z "$lu" ] || [ -z "$la" ] || [ -z "$lc" ] || [ -z "$lp" ] \
+       || [ "$lu" -ge "$la" ] || [ "$la" -ge "$lc" ] || [ "$lc" -ge "$lp" ]; then ok=0; fi
+    [ "$rel" = bmad-prd/complete.yaml ] && lcp="$lc"
+  done
+  cat "$d/order.txt" >&2
+  # the update branch's commit step on a CLEAN tree — the D07 shape
+  local work="$d/scratch"; rm -rf "$work"; mkdir -p "$work"
+  ( cd "$work" && git init -q -b main && git config user.email e2e@local && git config user.name e2e \
+      && git commit -q --allow-empty -m init ) || { verdict $c BLOCKED "could not build the scratch repo at $work"; return; }
+  ( cd "$work" && git status --short ) > "$d/status-before.txt"
+  local crc="(not rendered)"
+  if [ -n "$lcp" ]; then
+    local REPLAY_CWD="$work"
+    replay $c commit bmad-prd/complete.yaml "$lcp" prd_key="$PRD_KEY"
+    crc="$(cat "$d/commit.rc")"
+  fi
+  { echo "clean tree before the commit: '$(cat "$d/status-before.txt")' (want empty)"
+    echo "rendered commit step rc=$crc (want 0)  out=$(head -c 120 "$d/commit.out" 2>/dev/null | tr '\n' ' ')"; } >> "$d/order.txt"
+  tail -2 "$d/order.txt" >&2
+  if [ "$ok" = 1 ] && [ "$crc" = 0 ] && [ ! -s "$d/status-before.txt" ]; then
+    verdict $c REFUTED "every hook that refreshes a PRD-side issue description commits and pushes what it mirrored: $(tr '\n' '; ' < "$d/order.txt" | head -c 460). The rendered update-branch commit exits 0 on a clean tree (rc=$crc), so a validate run with no edit still reaches the push"
+  elif [ "$ok" != 1 ]; then
+    verdict $c CONFIRMED "a hook still ends at the description update, so the tracker shows a PRD that exists in no commit: $(tr '\n' '; ' < "$d/order.txt" | head -c 460)"
+  else
+    verdict $c CONFIRMED "the update-branch commit does not survive a clean tree: rc=$crc, status-before='$(cat "$d/status-before.txt")' — a validate run with no PRD edit halts before the push (D07)"
+  fi
+}
+
+case_d36() {  # #89 — the worktree FILTER tested the raw config pattern, not a branch
+  # Local, no lab API: common/find-prd.yaml EXTRACTs prd_pattern straight out of
+  # issue-tracking.yaml (`feat/{prd_key}/prd`), globs it to find the branch, and then
+  # filtered the worktree list with `branch matches "{prd_pattern}"` — that same raw
+  # string, whose braces are regex quantifier syntax. It cannot match feat/labprd/prd.
+  # A lenient interpreter resolved the intent; a literal one matched nothing, halted on
+  # the FILTER (lang section 5) and took every PRD-side hook down at activation.
+  # The scratch repo reproduces the only shape that matters: the PRD branch is checked
+  # out in a worktree, so a plain `branch --list` prints it as `+ feat/labprd/prd`.
+  local c=d36
+  load_lab 2>/dev/null || true
+  EVIDENCE="${EVIDENCE:-$E2E_ROOT/evidence/static}"
+  local d; d="$(case_dir $c)"
+  local f="$WF/common/find-prd.yaml"
+  local pat; pat="$(sed -n 's/^    prd: "\(.*\)"$/\1/p' "$E2E_ROOT/fixtures/issue-tracking.yaml.tmpl" | head -1)"
+  [ -n "$pat" ] || pat='feat/{prd_key}/prd'
+  local branch="feat/$PRD_KEY/prd"
+  # what the pre-fix FILTER was asked to match, and what a literal reading answers
+  local prefix; prefix="$($PY - "$pat" "$branch" <<'PY'
+import re, sys
+pattern, branch = sys.argv[1], sys.argv[2]
+try:
+    print("match" if re.search(pattern, branch) else "no-match")
+except re.error as e:
+    print("regex-error: %s" % e)
+PY
+)"
+  local work="$d/scratch"; rm -rf "$work"; mkdir -p "$work/repo"
+  ( cd "$work/repo" && git init -q -b main && git config user.email e2e@local && git config user.name e2e \
+      && git commit -q --allow-empty -m init && git branch "$branch" \
+      && git worktree add -q "$work/prd" "$branch" ) \
+    || { verdict $c BLOCKED "could not build the scratch repo at $work"; return; }
+  ( cd "$work/repo" && git branch --list ) > "$d/plain-listing.txt"
+  local lg lr
+  lg="$(run_line_of common/find-prd.yaml 'STORE: prd_branch_glob')"
+  lr="$(run_line_of common/find-prd.yaml 'STORE: prd_branch$')"
+  if [ -z "$lr" ]; then verdict $c CONFIRMED "common/find-prd.yaml resolves no prd_branch at all: the FILTER can only be reading the raw pattern"; return; fi
+  local REPLAY_CWD="$work/repo"
+  replay $c glob common/find-prd.yaml "$lg" prd_pattern="$pat"
+  local glob; glob="$(head -1 "$d/glob.out")"
+  replay $c resolve common/find-prd.yaml "$lr" prd_branch_glob="$glob"
+  local got; got="$(head -1 "$d/resolve.out")"
+  # no FILTER in this file may still select on the unresolved pattern
+  grep -n -A 5 -- '- FILTER:' "$f" | grep -E 'where:' > "$d/filters.txt" || true
+  local leaks; leaks="$(grep -c 'prd_pattern' "$d/filters.txt" || true)"
+  { echo "config pattern: '$pat' read as a regex against '$branch' → $prefix"
+    echo "plain 'branch --list' in the scratch repo (the PRD branch is in a worktree):"; sed 's/^/    /' "$d/plain-listing.txt"
+    echo "find-prd.yaml:$lg glob → '$glob'; find-prd.yaml:$lr resolution → '$got' (want $branch)"
+    echo "FILTER where clauses in find-prd.yaml:"; cat "$d/filters.txt"
+    echo "…still naming {prd_pattern}: $leaks"; } > "$d/summary.txt"; cat "$d/summary.txt" >&2
+  if [ "$got" = "$branch" ] && [ "$leaks" = 0 ] && grep -q 'prd_branch' "$d/filters.txt"; then
+    verdict $c REFUTED "find-prd.yaml:$lr resolves the PRD branch off the listing its own glob '$glob' produced → '$got', marker-free although a plain listing in the same repo prints '$(grep -F "$branch" "$d/plain-listing.txt" | sed 's/^ *//')' (the branch is checked out in a worktree, which is the normal case here). The worktree FILTER now selects on $(tr -d ' ' < "$d/filters.txt" | tr '\n' ' ') and no FILTER reads {prd_pattern}. The pre-fix condition asked a literal interpreter to match the raw '$pat' against '$branch': $prefix"
+  else
+    verdict $c CONFIRMED "the worktree lookup still rides on the unresolved pattern: glob '$glob' → resolution '$got' (want $branch), $leaks FILTER where clause(s) still name {prd_pattern} ($(tr -d ' ' < "$d/filters.txt" | tr '\n' ' ')). Raw '$pat' as a regex against '$branch': $prefix"
+  fi
+  ( cd "$work/repo" && git worktree remove --force "$work/prd" ) >/dev/null 2>&1 || true
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|d34|d36|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 d34 d36 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

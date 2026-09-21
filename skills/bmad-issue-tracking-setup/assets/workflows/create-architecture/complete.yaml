@@ -1,11 +1,13 @@
 # create-architecture/complete.yaml
 #
-# Purpose: Commits and pushes architecture changes in the PRD worktree.
+# Purpose: Commits and pushes the architecture BMM wrote in the PRD worktree.
 # Input variables: (none)
 # Output variables: (none)
-# Side effects: commits and pushes changes
+# Side effects: commits and pushes {planning_artifacts}
 
-- RUN: git add .
+# Only the planning artefacts are staged — the rule every PRD-worktree hook follows since
+# #88; `git add .` committed whatever else the worktree happened to be carrying.
+- RUN: git add {planning_artifacts}
 - RUN: git commit --allow-empty -m "update architecture"
 - RUN: git push
 - OUTPUT:

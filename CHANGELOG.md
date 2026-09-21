@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A request to create a second PRD no longer ends in silence. The module (like BMM 6.12.0)
+  supports one PRD per repository with the initiative key set once: `bmad-prd` reads the intent
+  off `prd.md`'s frontmatter, so asking to create a PRD with a new key on a repo that already
+  has one took the update path and produced no issue, branch or PR for the key the user named,
+  with no explanation. The update branch now states the rule and which PRD it is continuing
+  with, and README and `CLAUDE.md` document the limit. The lab scenario `P1.sh create` refuses
+  to run against a consumer whose fixture PRD is already keyed instead of pretending to test
+  creation.
+
 - `/bmad-issue-tracking-sync` runs the prepare and sync workflows and nothing else. Its
   steps 3 and 4 described routing on `BMAD_MR_ACTION` / `BMAD_ISSUE_ACTION` environment
   variables to reach single atomics; no workflow file ever read them, the workflow language
@@ -48,6 +57,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   **Sprint Key** marker, once per entry.
 
 ### Fixed
+
+- Every PRD-side hook could halt at activation. `common/find-prd.yaml` globbed the PRD branch
+  correctly and then filtered the worktree list with `branch matches "{prd_pattern}"` — the RAW
+  config value `feat/{prd_key}/prd`, whose braces are regex quantifier syntax, so as a regex it
+  can never match `feat/mobile-oidc/prd`. A lenient interpreter resolved the intent; a literal
+  one matched nothing, halted on the FILTER and took the hook down before the BMM workflow ran.
+  The branch is now resolved off the glob's own listing (`--format='%(refname:short)'`, so the
+  `+`/`*` worktree marker never reaches it) and the FILTER selects `branch eq "{prd_branch}"`.
+  The two activation FILTERs that already had a resolved branch moved from `matches` to `eq`
+  as well, and `bmad-workflow-lang.md` no longer ships the broken condition as its FILTER
+  example.
+
+- A PRD edit reached the tracker but never the repository. The update/validate branch of
+  `bmad-prd/complete.yaml` refreshed the PRD issue description and ended there; `edit-prd` and
+  `correct-course` had the same shape. The issue then described a PRD that existed only as an
+  uncommitted edit in the PRD worktree, which the next `common/find-prd` pull — or a fresh
+  worktree — threw away. All three now stage their artefacts, `commit --allow-empty` and
+  `push -u origin HEAD` after the description update: `--allow-empty` so a validate run with no
+  edit still reaches the push, `-u origin HEAD` for a PRD branch with no upstream. `edit-prd`
+  also removes the `/tmp/prd-desc-*.md` body its header always claimed it removed.
+
+- The PRD-worktree hooks committed files they did not own. `bmad-ux`, `bmad-prd`,
+  `create-architecture`, `create-epics-and-stories`, `create-prd` and `retrospective` staged
+  with `git add .`, so a hook's commit carried whatever else the worktree held — render
+  folders, `ci-status.json`, another skill's unfinished edit (a real
+  `/bmad-create-epics-and-stories` run swept in three files an earlier `/bmad-prd` had left).
+  Each hook now stages its own artefact path (`{planning_artifacts}`, or
+  `{implementation_artifacts}` for retrospective, whose document and `--set-retro-done`
+  sprint-status write both live there), and `TestStagingScope` fails any RUN step that stages
+  `.`, `-A`, `--all` or `:/`.
 
 - A story reviewed by `bmad-build` or `bmad-build-auto` never reached done. The
   review-finish phase of `common/post-dev-complete.yaml` derived its verdict from

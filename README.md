@@ -196,6 +196,17 @@ Copied to `_bmad/_config/custom/` — referenced by TOML `on_complete` hooks.
 
 Creates/updates issues for all sprint entries, manages labels, reconciles statuses, marks draft PR ready when all epics are done.
 
+## One PRD per repository
+
+A project has **one PRD and one initiative key**, set once. BMM 6.12.0 writes a single
+`{planning_artifacts}/prd.md`, and the module derives everything from it: one PRD issue
+(`PRD: <prd-key>`), one PRD branch (`branch_patterns.prd` with the key substituted) and
+one PRD worktree. `bmad-prd` reads the intent off that file — a `prd.md` that already
+carries a `prd_key` is an update, whatever the user asked for — so asking to create a
+second PRD with a new key continues as an update to the existing one and says so. The
+key lives in the PRD frontmatter; to work on a different initiative, use a different
+repository.
+
 ## Issue titles
 
 Issues created by the module follow a fixed naming convention:
@@ -211,7 +222,8 @@ Epic titles are derived from the planning artifacts created by BMM workflows (`e
 
 ## Branch strategy
 
-When `branch_patterns` is configured in the setup:
+When `branch_patterns` is configured in the setup — one PRD branch per repository, story
+branches beneath it:
 
 | Event | Action |
 |---|---|

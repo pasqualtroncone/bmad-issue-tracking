@@ -49,7 +49,7 @@ print(sys.argv[1].replace('{prd_key}', sys.argv[2]))
 - FILTER:
     source: worktrees
     select: path
-    where: branch matches "{prd_branch}"
+    where: branch eq "{prd_branch}"
     store: prd_worktree_path
 - CD: {prd_worktree_path}
 - OUTPUT:
