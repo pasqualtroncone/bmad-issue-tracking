@@ -27,10 +27,13 @@ from conftest import WORKFLOWS_DIR
 # Flags a CHECK branches on. A new one is fixed with a SET at the entry point, never
 # with a spec change.
 GUARDED_FLAGS = ("lookup_after_create", "review_producer", "label_color", "allow_merge")
-# Plus two names no CHECK branches on, so §4.5 is the only thing that guards them:
-# `error`, which no file reads but every caller of common/merge-mr.yaml is told to, and
-# `head_sha` (#81), which the CI lookups interpolate and only a phase that PUSHES can know.
-GUARDED_VARS = GUARDED_FLAGS + ("error", "head_sha")
+# Plus three names no CHECK branches on, so §4.5 is the only thing that guards them:
+# `error`, which no file reads but every caller of common/merge-mr.yaml is told to,
+# `head_sha` (#81), which the CI lookups interpolate and only a phase that PUSHES can know,
+# and `spec_status` (#83), the producer's own review verdict: `common/post-build-dispatch`
+# carries it off the spec frontmatter, and the three post-dev-complete wrappers — reached
+# from a BMM skill's hook with no spec status in scope — seed it "".
+GUARDED_VARS = GUARDED_FLAGS + ("error", "head_sha", "spec_status")
 
 _INCLUDE_RE = re.compile(r"^\s*-\s*INCLUDE:\s*(\S+)\s*$", re.MULTILINE)
 _SET_RE = re.compile(r"^\s*-\s*SET:\s*\{\s*variable:\s*(\w+)", re.MULTILINE)

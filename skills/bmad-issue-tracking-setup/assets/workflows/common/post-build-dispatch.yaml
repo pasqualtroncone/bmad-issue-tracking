@@ -6,13 +6,24 @@
 #          (post-build-dispatch-interactive.yaml, post-build-dispatch-auto.yaml),
 #          which seed allow_merge and review_producer first.
 # Input variables: (none — dispatcher reads spec itself)
-# Output variables: (none)
+# Output variables:
+#   - spec_status: the spec frontmatter `status` this dispatcher routed on, carried into
+#     common/post-dev-complete for the review verdict (see below)
 # Side effects: dispatches to common/post-dev-complete with phase set
 
 - INCLUDE: common/check-config
 - READ: {spec_file}
   EXTRACT:
     status: frontmatter.status
+# Carry the producer's own verdict into the phase. review-finish used to derive it from
+# `development_status.{story_key}` in sprint-status.yaml alone, and in BMM 6.12.0 neither
+# bmad-build (its `sync-sprint-status.md` is handed `review` at most) nor bmad-build-auto
+# (writes `done` into the spec only) ever puts `done` there — only bmad-loop, which owns
+# that file, does. So on the manual and auto paths the verdict was never `done`: the issue
+# was labelled in-progress instead of done+closed and the CI gate, the ci-status.json write
+# and the merge offer were all skipped. The status is already read here; it just has to
+# survive the INCLUDE, and the shared scope of lang §2.1 carries it.
+- SET: { variable: spec_status, value: "{status}" }
 - CHECK: status eq "ready-for-dev"
   TRUE:
     - SET: { variable: phase, value: "create-story" }
