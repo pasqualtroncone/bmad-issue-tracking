@@ -78,6 +78,15 @@ shared too (`{spec_path}` hint, `{spec_file}`, `spec-<prefix>-*.md`,
 
 ## Branch/MR flow
 
+**One PRD per repository, key set once.** BMM 6.12.0 writes a single
+`{planning_artifacts}/prd.md`; `bmad-prd/activation.yaml` reads the intent off its
+frontmatter and creates the single worktree `{worktree_base}/prd`, so once a PRD exists the
+create branch is unreachable and a request to create a second PRD with a new key IS an
+update (#90). That is BMM's limit, not a defect — but it used to happen silently, with no
+issue, branch or PR for the key the user named, so the update branch now OUTPUTs what it is
+doing and why. Do not "fix" this by keying worktrees or issues per PRD: the one-PRD
+assumption is also what lets `common/find-prd` glob a single branch.
+
 Branch setup happens in activation (before BMM workflow runs). The BMM workflow creates files directly in the worktree. on_complete handles commit/push/issue/MR. Never commit on PRD for story work.
 
 **A hook that mirrors an artefact to the tracker commits that artefact.** The update paths

@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A request to create a second PRD no longer ends in silence. The module (like BMM 6.12.0)
+  supports one PRD per repository with the initiative key set once: `bmad-prd` reads the intent
+  off `prd.md`'s frontmatter, so asking to create a PRD with a new key on a repo that already
+  has one took the update path and produced no issue, branch or PR for the key the user named,
+  with no explanation. The update branch now states the rule and which PRD it is continuing
+  with, and README and `CLAUDE.md` document the limit. The lab scenario `P1.sh create` refuses
+  to run against a consumer whose fixture PRD is already keyed instead of pretending to test
+  creation.
+
 - `/bmad-issue-tracking-sync` runs the prepare and sync workflows and nothing else. Its
   steps 3 and 4 described routing on `BMAD_MR_ACTION` / `BMAD_ISSUE_ACTION` environment
   variables to reach single atomics; no workflow file ever read them, the workflow language

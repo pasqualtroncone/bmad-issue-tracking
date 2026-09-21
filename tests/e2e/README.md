@@ -94,7 +94,7 @@ Cases and what they prove:
 | `d36` | 1 | #89 | local: a scratch repo whose PRD branch is checked out in a worktree (so a plain listing marks it `+`); `common/find-prd.yaml`'s glob and resolution steps must answer `feat/labprd/prd`, and no FILTER in that file may still select on `{prd_pattern}` |
 | `d26` | 1 | D26 | the retrospective description rendered for epic 1 carries the `**Sprint Key:**` marker, and GitLab `find-issue` selects that issue for `epic-1-retrospective`; a pre-fix body is invisible to the same search |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
-| `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2 |
+| `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2. `P1.sh create` is BLOCKED on a consumer whose `prd.md` is already keyed: one PRD per repository (#90), so it would only re-run P1 update at full cost |
 | `L` | 3 | D08/D22 end to end | `bmad-loop run --story 1-1` (runbook, by hand) |
 
 ## Reading a level-2 run

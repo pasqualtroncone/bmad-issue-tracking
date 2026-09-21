@@ -3,10 +3,10 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
-#   replay.sh d29|d32|d33|d34     # local: no lab API — d29 the dev-finish INCLUDE order,
-#                                  #   d32 the sprint hooks' commit/push, d33 the review verdict,
-#                                  #   d34 the PRD-side update hooks' commit/push,
-#                                  #   d36 the PRD worktree lookup's branch
+#   replay.sh d29|d32|d33|d34|d36  # local: no lab API — d29 the dev-finish INCLUDE order,
+#                                   #   d32 the sprint hooks' commit/push, d33 the review verdict,
+#                                   #   d34 the PRD-side update hooks' commit/push,
+#                                   #   d36 the PRD worktree lookup's branch
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #

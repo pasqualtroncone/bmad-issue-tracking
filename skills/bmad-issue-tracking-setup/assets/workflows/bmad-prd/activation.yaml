@@ -4,6 +4,8 @@
 #          - Create: no prd_key in frontmatter → ask for key, create worktree
 #          - Update: prd_key exists → find existing worktree, switch to it
 #          - Validate: same as update (prd_key exists, just critiquing)
+#          One PRD per repository: a keyed prd.md means update, whatever the user asked
+#          for, and the update branch says so instead of substituting silently (#90).
 # Input variables: (none)
 # Output variables:
 #   - prd_key: the initiative key (asked or re-derived)
@@ -79,7 +81,16 @@ print(sys.argv[1].replace('{prd_key}', sys.argv[2]))
         message: "Switched to PRD worktree ({prd_branch})."
   FALSE:
     # --- UPDATE / VALIDATE MODE ---
+    # Intent is read from the frontmatter, not from the user: a keyed prd.md IS the
+    # update path. So a user who asked to CREATE a PRD with a new key lands here, and
+    # until #90 the run said nothing — no issue, no branch, no PR for the key they named,
+    # and no explanation. One PRD per repository is the design (BMM 6.12.0 writes a single
+    # {planning_artifacts}/prd.md and this module derives one worktree and one PRD issue
+    # from it); the initiative key is set once. The message states that before anything
+    # else happens, so the outcome is never a silent substitution.
     - INCLUDE: common/find-prd
+    - OUTPUT:
+        message: "This repository already has PRD {prd_key}. The module supports one PRD per repository — the initiative key is set once — so a request to create a new PRD continues as an update to {prd_key}."
     - CD: {prd_worktree_path}
     - OUTPUT:
         message: "Switched to PRD worktree for PRD editing."
