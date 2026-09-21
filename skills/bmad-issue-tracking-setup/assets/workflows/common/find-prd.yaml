@@ -6,7 +6,8 @@
 # Output variables:
 #   - prd_key: the PRD key from frontmatter or user input
 #   - prd_worktree_path: the filesystem path to the PRD worktree
-#   - prd_pattern: the resolved PRD branch pattern (from config)
+#   - prd_pattern: the RAW PRD branch pattern from config, {prd_key} unsubstituted
+#   - prd_branch: the actual PRD branch, e.g. feat/mobile-oidc/prd
 # Side effects: pulls the PRD worktree; writes prd_key to PRD frontmatter if not present
 
 - READ: _bmad/custom/issue-tracking.yaml
@@ -24,12 +25,24 @@ print(sys.argv[1].replace('{prd_key}', '*'))
     - OUTPUT:
         message: "No PRD found. Run /bmad-create-prd first."
         stop: true
+# The branch the glob matched IS the PRD branch — resolved, not a pattern. The FILTER
+# below used to test `branch matches "{prd_pattern}"`, and prd_pattern is the RAW config
+# value `feat/{prd_key}/prd`: read as a regex its braces are quantifier syntax, so it can
+# never match `feat/mobile-oidc/prd`. A lenient interpreter guessed the intent; a literal
+# one matched nothing and halted (lang section 5), taking every PRD-side hook down at
+# activation (#89). prd_key is NOT available here — resolving it is this file's job, two
+# steps below — so the branch is read off the listing instead of composed from the key.
+# The sed strips the listing's leading marker: the PRD branch is checked out in a
+# worktree, so the line reads `+ feat/mobile-oidc/prd` (`* ` when it is the current
+# one), and the marker would go straight into the FILTER below.
+- RUN: git branch --list '{prd_branch_glob}' | head -1 | sed 's/^[ *+]*//'
+  STORE: prd_branch
 - RUN: git worktree list
   STORE: worktree_list
 - FILTER:
     source: worktree_list
     select: path
-    where: branch matches "{prd_pattern}"
+    where: branch eq "{prd_branch}"
     store: prd_worktree_path
 - RUN: cd {prd_worktree_path} && git pull --ff-only
   EXPECT_EXIT: 0

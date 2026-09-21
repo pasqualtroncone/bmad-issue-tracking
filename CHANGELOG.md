@@ -49,6 +49,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every PRD-side hook could halt at activation. `common/find-prd.yaml` globbed the PRD branch
+  correctly and then filtered the worktree list with `branch matches "{prd_pattern}"` — the RAW
+  config value `feat/{prd_key}/prd`, whose braces are regex quantifier syntax, so as a regex it
+  can never match `feat/mobile-oidc/prd`. A lenient interpreter resolved the intent; a literal
+  one matched nothing, halted on the FILTER and took the hook down before the BMM workflow ran.
+  The branch is now resolved off the glob's own listing (`--format='%(refname:short)'`, so the
+  `+`/`*` worktree marker never reaches it) and the FILTER selects `branch eq "{prd_branch}"`.
+  The two activation FILTERs that already had a resolved branch moved from `matches` to `eq`
+  as well, and `bmad-workflow-lang.md` no longer ships the broken condition as its FILTER
+  example.
+
 - A PRD edit reached the tracker but never the repository. The update/validate branch of
   `bmad-prd/complete.yaml` refreshed the PRD issue description and ended there; `edit-prd` and
   `correct-course` had the same shape. The issue then described a PRD that existed only as an
