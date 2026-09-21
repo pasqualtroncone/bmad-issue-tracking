@@ -58,6 +58,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The GitLab half of the plugin never reached the API either. Its `glab api` calls passed
+  `-F source_branch <branch>` as three argv items where glab wants one `key=value` token,
+  so glab refused the whole call with `Accepts 1 arg(s), received 3` before any request —
+  and the lookup's leniency reported "nothing to close", exit 0, exactly the silence #98
+  fixed on GitHub. Two more defects sat behind it: glab (like gh) turns the call into a
+  POST as soon as a field is given, and POST on that path is the MR-*create* endpoint
+  (`400 title is missing, target_branch is missing`), so `--method GET` is required; and
+  `projects/:id` takes the project path **URL-encoded**, while it was interpolated raw,
+  making `group/sub/repo` a different path that answers 404. List and close are now
+  `glab api projects/<enc>/merge_requests --method GET -F source_branch=<b> -F state=opened`
+  and `glab api projects/<enc>/merge_requests/<iid> -X PUT -F state_event=close`, and the
+  returned MRs are filtered on `source_branch` the way the GitHub answers are filtered on
+  `head.ref`. The idempotency note is corrected while here: re-closing an already-closed
+  MR answers 200 OK, not the documented 409, and what makes the hook safe to re-run is
+  that the listing asks for open MRs only.
+
 - Even with the lookup fixed, the GitHub close itself could not run. `close_one` built
   `gh pr close <n> -R <project> --delete-branch false`, but `--delete-branch` is a BOOLEAN
   flag, so the literal `false` arrived as a second positional and gh answered

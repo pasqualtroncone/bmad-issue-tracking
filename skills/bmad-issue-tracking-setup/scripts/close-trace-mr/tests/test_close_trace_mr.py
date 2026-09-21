@@ -7,8 +7,12 @@ The tests target the testable surface area of `close_trace_mr.py`:
   - context resolution (`resolve_ctx`) including overlay precedence
   - MR list parsing (`list_open_mrs`) — empty result, multi-MR result, errors, and
     the GitHub lookup's shape (no `-R`, `-X GET`, `head=owner:branch`) plus the
-    defensive `head.ref` filter that keeps a foreign PR out of the close list (#98)
-  - close command construction (`close_one`) — glab vs gh, success, already-closed
+    defensive `head.ref` filter that keeps a foreign PR out of the close list (#98),
+    and the GitLab lookup's shape (encoded project path, `--method GET`, one
+    `key=value` token per `-F`) with the matching `source_branch` filter (#102)
+  - close command construction (`close_one`) — glab vs gh, success, already-closed,
+    the encoded path + single-token `-F` on glab (#102) and the absence of gh's
+    boolean `--delete-branch` (#101)
   - marker file write (`write_marker`) — atomic, content shape, run_dir-less path
 
 The subprocess runner is injected via the `runner` parameter — no real glab/gh
@@ -296,27 +300,79 @@ class TestListOpenMrs:
         assert len(recorder.calls) == 1
         cmd, _ = recorder.calls[0]
         assert cmd[0] == "glab" and cmd[1] == "api"
-        assert "projects/group/sub/repo/merge_requests" in cmd[2]
+        assert "projects/group%2Fsub%2Frepo/merge_requests" in cmd[2]
         assert "--hostname" in cmd and "gl.example" in cmd
-        # branch + state filters (either as flags or -F flags depending on version)
         joined = " ".join(cmd)
         assert "feat/prd/3-1-foo" in joined
         assert "opened" in joined
 
+    def test_gitlab_list_project_path_is_url_encoded(self):
+        """D43 (#102): GitLab's `projects/:id` takes the path URL-encoded.
+
+        Raw, `group/sub/repo` makes the request `projects/group/sub/repo/merge_requests`
+        — a different path, HTTP 404 on the lab.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _gitlab_ctx())
+        cmd, _ = recorder.calls[0]
+        assert cmd[2] == "projects/group%2Fsub%2Frepo/merge_requests"
+
+    def test_gitlab_list_fields_are_single_key_value_tokens(self):
+        """D43 (#102): one `-F` takes ONE `key=value` argv item.
+
+        `-F source_branch <branch>` is three items and glab refuses the whole call with
+        `Accepts 1 arg(s), received 3` — before any request, so the lookup's leniency
+        reported "nothing to close" on every GitLab run.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _gitlab_ctx())
+        cmd, _ = recorder.calls[0]
+        fields = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-F"]
+        assert fields == ["source_branch=feat/prd/3-1-foo", "state=opened"]
+        # and nothing bare follows a field (that is what made it three args)
+        assert "source_branch" not in cmd and "state" not in cmd
+
+    def test_gitlab_list_is_a_GET(self):
+        """D43 (#102): glab, like gh, POSTs as soon as a field is given — and POST on
+        this path is the MR-CREATE endpoint (HTTP 400, "title is missing")."""
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _gitlab_ctx())
+        cmd, _ = recorder.calls[0]
+        assert cmd[cmd.index("--method") + 1] == "GET"
+
     def test_gitlab_multi_mr_result(self):
         body = json.dumps([
-            {"iid": 17, "title": "Story 3.1: foo"},
-            {"iid": 42, "title": "Story 3.1: foo (duplicate)"},
+            {"iid": 17, "title": "Story 3.1: foo", "source_branch": "feat/prd/3-1-foo"},
+            {"iid": 42, "title": "Story 3.1: foo (duplicate)", "source_branch": "feat/prd/3-1-foo"},
         ])
         recorder = _Recorder()
         recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
         assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == [17, 42]
 
     def test_gitlab_string_iid_is_coerced(self):
-        body = json.dumps([{"iid": "99"}])
+        body = json.dumps([{"iid": "99", "source_branch": "feat/prd/3-1-foo"}])
         recorder = _Recorder()
         recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
         assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == [99]
+
+    def test_gitlab_foreign_mrs_in_the_answer_are_never_closed(self):
+        """Same defensive filter as GitHub: only the merged branch's MR may be closed."""
+        body = json.dumps([
+            {"iid": 8, "source_branch": "feat/prd/9-9-other"},
+            {"iid": 17, "source_branch": "feat/prd/3-1-foo"},
+        ])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == [17]
+
+    def test_gitlab_mr_without_source_branch_is_dropped(self):
+        body = json.dumps([{"iid": 17, "title": "Story 3.1: foo"}])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == []
 
     def test_gitlab_non_json_body_returns_empty(self):
         recorder = _Recorder()
@@ -431,8 +487,13 @@ class TestCloseOne:
         cmd, _ = recorder.calls[0]
         joined = " ".join(cmd)
         assert "merge_requests/17" in joined
-        assert "state_event" in joined and "close" in joined
         assert "-X" in cmd and "PUT" in cmd
+        # D43 (#102): one `-F` token, and the project path encoded — the same two
+        # defects the listing carried. `-F state_event close` is three argv items and
+        # glab refuses the call outright.
+        assert cmd[2] == "projects/group%2Fsub%2Frepo/merge_requests/17"
+        assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "-F"] == ["state_event=close"]
+        assert "state_event" not in cmd and "close" not in cmd
 
     def test_gitlab_already_closed_is_success(self):
         recorder = _Recorder()
@@ -669,7 +730,7 @@ class TestRunEndToEnd:
         runner_script = [
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api" and "merge_requests" in cmd[2] and "/17" not in cmd[2],
-                _FakeProc(0, json.dumps([{"iid": 17}])),
+                _FakeProc(0, json.dumps([{"iid": 17, "source_branch": "feat/prd/3-1-foo"}])),
             ),
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api" and "merge_requests/17" in cmd[2],
@@ -696,7 +757,10 @@ class TestRunEndToEnd:
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api"
                 and "merge_requests" in cmd[2]
                 and not any(f"/{iid}" in cmd[2] for iid in ("17", "42")),
-                _FakeProc(0, json.dumps([{"iid": 17}, {"iid": 42}])),
+                _FakeProc(0, json.dumps([
+                    {"iid": 17, "source_branch": "feat/prd/3-1-foo"},
+                    {"iid": 42, "source_branch": "feat/prd/3-1-foo"},
+                ])),
             ),
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api",
@@ -726,7 +790,10 @@ class TestRunEndToEnd:
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api"
                 and "merge_requests" in cmd[2]
                 and not any(f"/{iid}" in cmd[2] for iid in ("17", "42")),
-                _FakeProc(0, json.dumps([{"iid": 17}, {"iid": 42}])),
+                _FakeProc(0, json.dumps([
+                    {"iid": 17, "source_branch": "feat/prd/3-1-foo"},
+                    {"iid": 42, "source_branch": "feat/prd/3-1-foo"},
+                ])),
             ),
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api" and "merge_requests/17" in cmd[2],

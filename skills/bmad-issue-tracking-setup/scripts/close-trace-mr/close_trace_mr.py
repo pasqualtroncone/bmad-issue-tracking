@@ -38,6 +38,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
@@ -232,6 +233,16 @@ def resolve_ctx(env_values: Mapping[str, str], config: Mapping[str, str]) -> Ctx
 # CLI invocations — pure except for the injected Runner
 # -----------------------------------------------------------------------------
 
+def _enc_project(project: str) -> str:
+    """GitLab's `projects/:id` takes the path URL-ENCODED, slashes included (D43, #102).
+
+    Interpolated raw, a `group/sub/repo` path becomes `projects/group/sub/repo/...`,
+    which is not that endpoint at all — the lab answers HTTP 404. `safe=""` is the
+    point: the default would leave `/` alone, which is exactly the bug.
+    """
+    return urllib.parse.quote(project, safe="")
+
+
 def _github_head_ref(item: Mapping) -> str:
     """The branch a GitHub PR object is opened FROM (`head.ref`), "" when absent."""
     head = item.get("head")
@@ -242,13 +253,20 @@ def _github_head_ref(item: Mapping) -> str:
     return ""
 
 
+def _gitlab_source_branch(item: Mapping) -> str:
+    """The branch a GitLab MR object is opened FROM, "" when absent."""
+    src = item.get("source_branch")
+    return src if isinstance(src, str) else ""
+
+
 def list_open_mrs(
     runner: Runner,
     ctx: Ctx,
 ) -> list[int]:
     """Find open MRs/PRs whose source_branch == ctx.branch. Empty list = none.
 
-    GitLab: `glab api projects/{url-encoded project}/merge_requests?source_branch=X&state=opened`
+    GitLab: `glab api projects/<url-encoded project>/merge_requests --method GET
+             -F source_branch=<branch> -F state=opened`
             — the body is a JSON array of MR objects; we extract `iid`.
     GitHub: `gh api repos/{owner}/{repo}/pulls -X GET -f head={owner}:{branch} -f state=open`
             — body is a JSON array of PR objects; we extract `number`.
@@ -260,18 +278,29 @@ def list_open_mrs(
     that ever closes a trace PR.
     """
     if ctx.platform == "gitlab":
+        # The same three traps as the GitHub branch below, in glab's dialect (D43, #102):
+        #
+        #   * one `-F` takes ONE `key=value` token. `-F source_branch <branch>` is three
+        #     argv items, and glab stops at `Accepts 1 arg(s), received 3` before any
+        #     request — which the leniency below reads as "nothing to close".
+        #   * glab, like gh, makes the call a POST as soon as a field is given, and POST
+        #     on this path is the MR-CREATE endpoint (the lab answers HTTP 400,
+        #     "title is missing, target_branch is missing"). `--method GET` is required.
+        #   * `projects/:id` wants the path URL-ENCODED; raw it is a different path
+        #     entirely (HTTP 404 on the lab).
         cmd = [
             "glab", "api",
-            f"projects/{ctx.project}/merge_requests",
+            f"projects/{_enc_project(ctx.project)}/merge_requests",
             "--hostname", ctx.host,
+            "--method", "GET",
             "--paginate",
-            "-F", "source_branch", ctx.branch,
-            "-F", "state", "opened",
+            "-F", f"source_branch={ctx.branch}",
+            "-F", "state=opened",
         ]
         iid_key = "iid"
-        # GitLab's listing is already scoped by `source_branch`; there is no second
-        # identity in the payload to cross-check it against.
-        source_of = None
+        # Same belt and braces as GitHub: the server-side filter is trusted to narrow,
+        # never to be the only thing standing between this hook and someone else's MR.
+        source_of = _gitlab_source_branch
     else:  # github
         # Three things this call gets wrong if written from memory (D41, #98):
         #
@@ -346,8 +375,12 @@ def list_open_mrs(
 def close_one(runner: Runner, ctx: Ctx, iid: int) -> CloseResult:
     """Close a single MR/PR. Classifies the outcome for the marker file.
 
-    GitLab: `glab api projects/.../merge_requests/{iid} -X PUT -F state_event=close`
-            — 200 OK on success, 409 with "Already closed" body when closed.
+    GitLab: `glab api projects/<url-encoded project>/merge_requests/<iid> -X PUT
+             -F state_event=close`
+            — 200 OK on success, and 200 OK again on an ALREADY-closed MR
+              (verified on the lab: re-closing !15 returned rc 0, so the result is
+              classified `closed`, not `already_closed`). The "already" text match
+              below is belt and braces for the hosts that answer 409 instead.
     GitHub: `gh pr close <iid> -R <project>`
             — exit 0 even when already closed (message on stdout); non-zero
               only on real failures. `-R` is right here: `gh pr close` takes it,
@@ -357,12 +390,15 @@ def close_one(runner: Runner, ctx: Ctx, iid: int) -> CloseResult:
     so the marker records the miss and the operator can re-run by hand.
     """
     if ctx.platform == "gitlab":
+        # `-F state_event=close` as ONE token, and the project path encoded — the same
+        # two defects the listing had (#102). `-X PUT` already names the method, so the
+        # POST-by-default rule does not bite here.
         cmd = [
             "glab", "api",
-            f"projects/{ctx.project}/merge_requests/{iid}",
+            f"projects/{_enc_project(ctx.project)}/merge_requests/{iid}",
             "--hostname", ctx.host,
             "-X", "PUT",
-            "-F", "state_event", "close",
+            "-F", "state_event=close",
         ]
     else:  # github
         # No `--delete-branch` (D42, #101): it is a BOOLEAN flag, so the literal
