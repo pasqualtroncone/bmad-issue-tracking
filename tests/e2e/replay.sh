@@ -254,8 +254,11 @@ print('documents=%d items=%d bytes=%d newlines=%d' % (len(pages), len(items), le
 case_d7() {
   local c=d7; load_lab; local d; d="$(case_dir $c)"
   cd "$CONSUMER"; git checkout -q main; git status --short > "$d/status-before.txt"
-  local l1 l2; l1="$(line_of create-prd/complete.yaml 'RUN: git add \.' 1)"; l2="$(line_of create-prd/complete.yaml 'RUN: git commit( --allow-empty)? -m' 1)"
-  replay $c add create-prd/complete.yaml "$l1"
+  # the staging step is located by `RUN: git add`, not by the path it stages: it was
+  # `git add .` until #88, and naming the argument made the locator go stale the moment
+  # the hook started staging {planning_artifacts}.
+  local l1 l2; l1="$(line_of create-prd/complete.yaml 'RUN: git add' 1)"; l2="$(line_of create-prd/complete.yaml 'RUN: git commit( --allow-empty)? -m' 1)"
+  replay $c add create-prd/complete.yaml "$l1" planning_artifacts="$PLANNING"
   replay $c commit create-prd/complete.yaml "$l2" prd_key="$PRD_KEY"
   grep -n 'git commit' "$WF/bmad-prd/complete.yaml" "$WF/retrospective/complete.yaml" "$WF/create-prd/complete.yaml" > "$d/other-callers.txt"
   if [ -z "$(cat "$d/status-before.txt")" ] && [ "$(cat "$d/commit.rc")" = 1 ] && grep -qi 'nothing to commit' "$d/commit.out$( [ -s "$d/commit.err" ] && echo " $d/commit.err")" 2>/dev/null; then

@@ -1,11 +1,14 @@
 # create-epics-and-stories/complete.yaml
 #
-# Purpose: Commits and pushes epic/story changes in the PRD worktree.
+# Purpose: Commits and pushes the epics/stories BMM wrote in the PRD worktree.
 # Input variables: (none)
 # Output variables: (none)
-# Side effects: commits and pushes changes
+# Side effects: commits and pushes {planning_artifacts}
 
-- RUN: git add .
+# Only the planning artefacts are staged — the rule every PRD-worktree hook follows since
+# #88. This is the hook that proved it: a real run of the BMM skill swept three files an
+# earlier /bmad-prd run had left in the worktree into the epics commit.
+- RUN: git add {planning_artifacts}
 - RUN: git commit --allow-empty -m "update epics and stories"
 - RUN: git push
 - OUTPUT:

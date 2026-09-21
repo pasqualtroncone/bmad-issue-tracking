@@ -1,11 +1,15 @@
 # bmad-ux/complete.yaml
 #
-# Purpose: Commits and pushes UX design changes in the PRD worktree.
+# Purpose: Commits and pushes the UX design BMM wrote in the PRD worktree.
 # Input variables: (none)
 # Output variables: (none)
-# Side effects: commits and pushes changes
+# Side effects: commits and pushes {planning_artifacts}
 
-- RUN: git add .
+# Only the planning artefacts are staged. `git add .` swept the whole PRD worktree into
+# this commit (#88) — render folders, ci-status.json, another hook's half-finished edit,
+# whatever the lab or the user left lying around — and BMM's ux workflow writes under
+# {planning_artifacts} and nowhere else.
+- RUN: git add {planning_artifacts}
 - RUN: git commit --allow-empty -m "update ux design"
 - RUN: git push
 - OUTPUT:

@@ -61,8 +61,10 @@ print(''.join(lines[start:]).strip())
     - SET: { variable: labels, value: "type{sep}prd\nprd{sep}{prd_key}" }
     - SET: { variable: description_file, value: "/tmp/prd-desc-{prd_key}.md" }
     - INCLUDE: common/create-issue
-    # Commit and push
-    - RUN: git add .
+    # Commit and push. Only the planning artefacts are staged (#88): `git add .` here
+    # committed whatever else the PRD worktree was carrying — render folders,
+    # ci-status.json, another hook's half-finished edit.
+    - RUN: git add {planning_artifacts}
     - RUN: git commit --allow-empty -m "update PRD {prd_key}"
     - RUN: git push -u origin {prd_branch}
     # Create draft MR via atomic ensure-mr (caller-agnostic INPUT contract)

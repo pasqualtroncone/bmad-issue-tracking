@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The PRD-worktree hooks committed files they did not own. `bmad-ux`, `bmad-prd`,
+  `create-architecture`, `create-epics-and-stories`, `create-prd` and `retrospective` staged
+  with `git add .`, so a hook's commit carried whatever else the worktree held — render
+  folders, `ci-status.json`, another skill's unfinished edit (a real
+  `/bmad-create-epics-and-stories` run swept in three files an earlier `/bmad-prd` had left).
+  Each hook now stages its own artefact path (`{planning_artifacts}`, or
+  `{implementation_artifacts}` for retrospective, whose document and `--set-retro-done`
+  sprint-status write both live there), and `TestStagingScope` fails any RUN step that stages
+  `.`, `-A`, `--all` or `:/`.
+
 - A story reviewed by `bmad-build` or `bmad-build-auto` never reached done. The
   review-finish phase of `common/post-dev-complete.yaml` derived its verdict from
   `development_status.{story_key}` in `sprint-status.yaml`, and in BMM 6.12.0 only

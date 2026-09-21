@@ -15,8 +15,8 @@
 # state the tracker was actually mirrored from.
 #
 # {prd_key} is in scope: issue-sync/sync runs common/find-prd-key itself.
-# Only sprint-status.yaml is staged — `git add .`, the shape the other PRD-worktree hooks
-# use, would sweep up whatever else that worktree happens to be carrying.
+# Only sprint-status.yaml is staged: it is the one file this hook mirrored to the
+# tracker. Every PRD-worktree hook stages what it owns and nothing else (#88).
 # `--allow-empty` because a re-run with an unchanged file must not halt the hook (D07).
 # `-u origin HEAD` because the PRD branch may have no upstream yet (D08).
 #

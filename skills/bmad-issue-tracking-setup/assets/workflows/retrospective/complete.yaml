@@ -49,8 +49,11 @@ with open(sys.argv[1], 'r', encoding='utf-8') as f:
 - SET: { variable: labels, value: "type{sep}retrospective\nstatus{sep}done\nprd{sep}{prd_key}\n{prd_key}{sep}epic-{epic_number}" }
 - SET: { variable: description_file, value: "/tmp/retro-desc-epic-{epic_number}.md" }
 - INCLUDE: common/create-issue
-# Commit and push
-- RUN: git add .
+# Commit and push. Only the implementation artefacts are staged (#88): BMM writes the
+# retrospective document and the `--set-retro-done` transition of sprint-status.yaml
+# under {implementation_artifacts}, and both were just read above, so the path exists.
+# `git add .` instead committed the whole PRD worktree.
+- RUN: git add {implementation_artifacts}
 - RUN: git commit --allow-empty -m "retrospective epic {epic_number}"
 - RUN: git push
 # Close the issue immediately (status is "done")

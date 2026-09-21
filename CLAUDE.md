@@ -80,6 +80,15 @@ shared too (`{spec_path}` hint, `{spec_file}`, `spec-<prefix>-*.md`,
 
 Branch setup happens in activation (before BMM workflow runs). The BMM workflow creates files directly in the worktree. on_complete handles commit/push/issue/MR. Never commit on PRD for story work.
 
+**A hook stages the artefact path it owns, never the worktree.** Seven PRD-worktree hooks ran
+`git add .` and committed whatever else the worktree was carrying — render folders,
+`ci-status.json`, the leftovers of an earlier skill run (#88: a real epics run swept in three
+files from an earlier `/bmad-prd`). The staging step names the path: `git add {planning_artifacts}`
+for the PRD-side hooks, `git add {implementation_artifacts}/sprint-status.yaml` for the two sprint
+hooks, `git add {implementation_artifacts}` for retrospective (BMM writes both the retro document
+and the `--set-retro-done` transition there). `tests/test_command_patterns.py::TestStagingScope`
+fails any RUN step that stages `.`, `-A`, `--all` or `:/`.
+
 | Workflow | Activation | on_complete | MR direction |
 |----------|-----------|-------------|--------------|
 | bmad-prd (6.11.0+) | Detect intent: create → ask key + create worktree; update/validate → find worktree | Create → issue + commit + push + draft MR; update → update description | PRD → default (draft, create only) |
