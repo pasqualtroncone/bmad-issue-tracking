@@ -8,6 +8,9 @@
 #   - "review-finish": review session done — push + wait CI + post review findings + update issue final + optional merge
 # Input variables:
 #   - phase: "create-story" | "dev-finish" | "review-finish" (set by dispatcher or caller)
+#   - spec_status: the spec frontmatter `status` the dispatcher routed on — the producer's
+#       own review verdict. "" on the dev-story / code-review shims, which have none; the
+#       review-finish phase then falls back to sprint-status.yaml (bmad-loop's verdict).
 #   - ci_status: set by common/wait-for-green-ci (dev-finish, review-finish) — maps to ci-status.json
 #   - pipeline_id: set by common/wait-for-green-ci on failure — carried into ci-status.json diagnostic
 #   - jobs: set by common/get-failed-jobs (via wait-for-green-ci) on failure — carried into ci-status.json diagnostic
@@ -195,10 +198,34 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
 # =============================================================================
 - CHECK: phase eq "review-finish"
   TRUE:
-    # Read sprint-status to determine the review verdict
+    # THE REVIEW VERDICT — which producer says this story passed review.
+    #
+    # Two answer, and only one of them ever speaks on a given run:
+    #   - the SPEC frontmatter `status` is the verdict of the skill that just ran.
+    #     bmad-build and bmad-build-auto write `done` there when the review passed; the
+    #     dispatcher already read it and left it in {spec_status}.
+    #   - `development_status.{story_key}` in sprint-status.yaml is bmad-loop's verdict.
+    #     bmad-loop owns that file and is the ONLY producer that ever writes `done` into
+    #     it: in BMM 6.12.0 bmad-build hands `sync-sprint-status.md` `review` at most
+    #     (step-05-present.md:17) and bmad-build-auto writes `done` to the spec only
+    #     (step-04-review.md:111).
+    # The rule is therefore: a spec that says `done` wins; otherwise the sprint-status
+    # value stands. Reading sprint-status ALONE — what this phase did until #83 — made
+    # `review_status eq "done"` unreachable on the manual and auto paths, so the issue was
+    # labelled in-progress instead of done+closed and the CI gate, the ci-status.json write
+    # and the merge offer were all skipped ("Not offering the merge: the CI gate ended ''").
+    # {spec_status} is "" on the dev-story / code-review shims, which have no spec verdict
+    # of their own in scope; "" is not "done", so those flows read sprint-status exactly as
+    # they did before.
     - READ: {implementation_artifacts}/sprint-status.yaml
       EXTRACT:
-        review_status: development_status.{story_key}
+        sprint_review_status: development_status.{story_key}
+    - RUN: uv run --no-project python -c "
+import sys
+spec, sprint = sys.argv[1].strip(), sys.argv[2].strip()
+print('done' if spec == 'done' else sprint)
+" "{spec_status}" "{sprint_review_status}"
+      STORE: review_status
     # The CI gate below only runs when the verdict is `done`, and lang section 4.5 stops a
     # run on a CHECK that reads an undefined variable. Seed the verdict as "no verdict":
     # the merge guard reads it, and "no verdict" must never be a green one.

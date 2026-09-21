@@ -25,8 +25,8 @@ The sync task is split into two phases so callers can skip redundant setup:
 - **`issue-sync/sync.yaml`** (steps 4-6) — sync issues, mark MR ready, summary (includes its own `check-config` + `find-prd` since context may be compacted)
 
 Callers:
-- `sprint-planning/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint planning)
-- `sprint-status/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint status)
+- `sprint-planning/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint planning), then `git add`/`commit --allow-empty`/`push -u origin HEAD` of `{implementation_artifacts}/sprint-status.yaml`
+- `sprint-status/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint status), then the same commit + push
 - `/bmad-issue-tracking-sync` standalone → `INCLUDE: issue-sync/prepare` then `INCLUDE: issue-sync/sync`
 
 ## TOML override semantics
@@ -87,14 +87,14 @@ Branch setup happens in activation (before BMM workflow runs). The BMM workflow 
 | create-architecture | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | bmad-ux | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | create-epics-and-stories | Switch to PRD worktree | Commit + push | (PRD worktree) |
-| sprint-planning | Switch to PRD worktree | Trigger issue sync (steps 4-6) | (PRD worktree) |
+| sprint-planning | Switch to PRD worktree | Trigger issue sync (steps 4-6), then commit + push `sprint-status.yaml` — BMM regenerates it in the worktree and without the commit the tracker mirrors a file in no commit (#84) | (PRD worktree) |
 | edit-prd (6.11.0+ shim) | Switch to PRD worktree | Update PRD issue description | (PRD worktree) |
 | correct-course | Switch to PRD worktree | Update issue descriptions if artifacts modified | (PRD worktree) |
 | retrospective | Switch to PRD worktree | Create retrospective issue + close | (PRD worktree) |
 | create-story (shim) | Ask story key, create/switch to story worktree (from PRD) | Commit + push + issue + MR | story → PRD |
 | dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + issue + MR, then the CI gate, then update issue (the MR is ensured BEFORE the gate: with no MR the gate has nothing to read and writes green) | (MR from create-story) |
-| code-review | Find story with status `review`, switch to worktree | Commit + push + post review + optional merge | story → PRD |
-| sprint-status (shim) | Switch to PRD worktree | Trigger issue sync (steps 4-6) | (none) |
+| code-review | Find story with status `review`, switch to worktree | Commit + push + post review + optional merge; the verdict is the spec `status` when the producer set one, else `sprint-status.yaml` (see "which producer wrote the review VERDICT") | story → PRD |
+| sprint-status (shim) | Switch to PRD worktree | Trigger issue sync (steps 4-6), then commit + push `sprint-status.yaml` | (none) |
 
 ### bmad-loop flow (unattended)
 
@@ -317,8 +317,9 @@ four have caught real defects:
   "unset reads false" idiom: an optional flag is one whose DEFAULT is SET at the entry
   point. `common/check-config.yaml` seeds `lookup_after_create`, the three
   `post-dev-complete-*` wrappers plus the two dispatchers seed `review_producer` and
-  `allow_merge`, `ensure-labels`/`create-issue` seed `label_color`, and `merge-mr` seeds
-  its `error` output. `test_optional_variables.py` walks the INCLUDE graph from every
+  `allow_merge`, those same three wrappers seed `spec_status` (`common/post-build-dispatch.yaml`
+  carries the real value), `ensure-labels`/`create-issue` seed `label_color`, and
+  `merge-mr` seeds its `error` output. `test_optional_variables.py` walks the INCLUDE graph from every
   entry workflow and fails when a closure reaches a reader with no setter. Two headless
   interpreters have read the same file both ways; the strict reading is the one that
   holds.
@@ -343,6 +344,30 @@ list of every file the setup step must have copied. Adding
 installer green while the file is missing in the consumer.
 
 ## Which producer wrote the review section (post-dev-complete review-finish)
+
+### …and which one wrote the review VERDICT
+
+Two files answer "did this story pass review", and they belong to different producers:
+
+| Source | Whose verdict | Who writes `done` there |
+|---|---|---|
+| the spec frontmatter `status`, carried in `{spec_status}` | the skill that just ran | `bmad-build` and `bmad-build-auto` |
+| `development_status.{story_key}` in `sprint-status.yaml` | bmad-loop's, which owns the file | bmad-loop, and only bmad-loop |
+
+**The rule: a spec that says `done` wins; otherwise the sprint-status value stands.** In
+BMM 6.12.0 `bmad-build` hands `sync-sprint-status.md` `review` at most
+(`step-05-present.md:17`) and `bmad-build-auto` writes `done` into the spec only
+(`step-04-review.md:111`), so a review-finish that reads sprint-status ALONE — what it did
+until #83 — can never reach `done` on the manual or auto path: the story issue is labelled
+`status:in-progress` instead of done+closed, and the CI gate, the `ci-status.json` write
+and the merge offer are all skipped ("Not offering the merge: the CI gate ended ''", P4
+trace). `common/post-build-dispatch.yaml` already read the frontmatter to route on it, so
+it `SET`s `spec_status` and the shared INCLUDE scope (lang §2.1) carries it into the phase.
+The three `post-dev-complete-*` wrappers — the `dev-story` / `code-review` shims, reached
+from a BMM skill's own hook with no spec verdict in scope — seed `spec_status: ""` per the
+optional-variable rule; `""` is not `"done"`, so those flows and bmad-loop read
+sprint-status exactly as before. `tests/e2e/replay.sh d33` renders the verdict step for all
+three shapes.
 
 Three producers reach `common/post-dev-complete.yaml`, and they disagree about the
 `## Review Triage Log` / `### Review Findings` section:

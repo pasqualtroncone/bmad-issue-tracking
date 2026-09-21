@@ -4,13 +4,20 @@
 # Input variables: (none — phase is set by this wrapper)
 # Output variables:
 #   - review_producer, allow_merge: "" — the optional flags post-dev-complete CHECKs
+#   - spec_status: "" — no spec verdict reaches this flow (see below)
 # Side effects: dispatches to common/post-dev-complete with phase=dev-finish
 
-# Optional-flag defaults (lang §4.5): common/post-dev-complete.yaml CHECKs both, and a
-# CHECK may only read a variable that is predefined, SET on every path, or an INCLUDE
-# output. Neither flag belongs to this flow, and "" is what "not this producer / no merge
+# Optional-variable defaults (lang §4.5): common/post-dev-complete.yaml reads all three,
+# and a step may only read a variable that is predefined, SET on every path, or an INCLUDE
+# output. None of them belongs to this flow, and "" is what "not this producer / no merge
 # prompt" has always meant.
+#
+# spec_status (#83) is the producer's own review verdict, which only the bmad-build /
+# bmad-build-auto dispatcher reads off the spec frontmatter. This shim is reached from a
+# BMM skill's own on_complete hook with no spec status in scope, so it seeds "": the
+# review-finish phase then takes its verdict from sprint-status.yaml, exactly as before.
 - SET: { variable: review_producer, value: "" }
 - SET: { variable: allow_merge, value: "" }
+- SET: { variable: spec_status, value: "" }
 - SET: { variable: phase, value: "dev-finish" }
 - INCLUDE: common/post-dev-complete

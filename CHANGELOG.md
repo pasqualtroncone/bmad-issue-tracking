@@ -49,6 +49,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A story reviewed by `bmad-build` or `bmad-build-auto` never reached done. The
+  review-finish phase of `common/post-dev-complete.yaml` derived its verdict from
+  `development_status.{story_key}` in `sprint-status.yaml`, and in BMM 6.12.0 only
+  bmad-loop ever writes `done` there: `bmad-build` hands `sync-sprint-status.md` `review`
+  at most and `bmad-build-auto` writes `done` into the spec only. So on the manual and
+  unattended paths `review_status eq "done"` was unreachable — the story issue was
+  labelled `status:in-progress` instead of done+closed and the CI gate, the
+  `ci-status.json` write and the merge offer were all skipped ("Not offering the merge:
+  the CI gate ended ''"), leaving `ci-status.json` stale. The verdict now takes BOTH
+  producers: `common/post-build-dispatch.yaml` carries the spec frontmatter `status` it
+  already read into `spec_status`, a spec that says `done` wins, and otherwise the
+  sprint-status value stands. The `dev-story` / `code-review` shims seed `spec_status: ""`
+  (the optional-variable rule), so they and bmad-loop read sprint-status as before.
+
+- `sprint-planning` and `sprint-status` reconciled the tracker against a
+  `sprint-status.yaml` that existed in no commit. BMM regenerates the file in the PRD
+  worktree, `complete.yaml` ran the sync over it and returned; the next `common/find-prd`
+  pull, or a fresh worktree, lost the file and the following sync reverted every label the
+  first one had just set. Both hooks now `git add` that one file, `git commit
+  --allow-empty` and `git push -u origin HEAD` after the sync. bmad-loop is unaffected: it
+  owns `sprint-status.yaml` during a run and never fires these hooks.
+
 - The CI gate could pass on a tree CI never built. `common/get-mr-pipeline.yaml` and the poll
   rounds of `common/wait-for-green-ci.yaml` asked for "the newest run ON THE BRANCH", and for
   the first seconds after a push that is the PREVIOUS commit's run — the dev-finish and
