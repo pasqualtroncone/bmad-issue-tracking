@@ -3,7 +3,8 @@
 # Purpose: Updates issue descriptions for any artifacts modified during a course correction.
 # Input variables: (none)
 # Output variables: (none)
-# Side effects: updates issue descriptions on the issue tracker; creates/removes
+# Side effects: updates issue descriptions on the issue tracker; commits and pushes
+#               {planning_artifacts} + {implementation_artifacts}; creates/removes
 #               /tmp/desc-<key>.md (one name per entity: two hooks at once must not
 #               overwrite each other's body between the WRITE and the API call)
 
@@ -166,3 +167,12 @@ print(content[start:end].strip())
             FALSE:
               - SET: { variable: description_file, value: "/tmp/desc-epic-{epic_num}.md" }
               - INCLUDE: common/update-issue-description
+# The corrections themselves were never committed (#87): the tracker carried descriptions
+# read out of a worktree whose edits existed in no commit, and the `diff --name-only HEAD`
+# above depends on exactly that, so the commit can only come last. Both artefact trees are
+# staged because a course correction rewrites planning documents and story files alike.
+- RUN: git add {planning_artifacts} {implementation_artifacts}
+- RUN: git commit --allow-empty -m "course correction {prd_key}"
+- RUN: git push -u origin HEAD
+- OUTPUT:
+    message: "Course correction committed and pushed."

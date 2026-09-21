@@ -80,6 +80,14 @@ shared too (`{spec_path}` hint, `{spec_file}`, `spec-<prefix>-*.md`,
 
 Branch setup happens in activation (before BMM workflow runs). The BMM workflow creates files directly in the worktree. on_complete handles commit/push/issue/MR. Never commit on PRD for story work.
 
+**A hook that mirrors an artefact to the tracker commits that artefact.** The update paths
+(`bmad-prd` update/validate, `edit-prd`, `correct-course`) refreshed the issue description and
+returned, so the tracker showed a PRD that existed only as an uncommitted edit in the worktree —
+and the next `common/find-prd` pull, or a fresh worktree, threw it away (#87). They stage,
+`commit --allow-empty` and `push -u origin HEAD` after the description update, the shape the
+sprint hooks got in #84: `--allow-empty` so a validate run with no edit still reaches the push
+(D07), `-u origin HEAD` for a PRD branch with no upstream (D08).
+
 **A hook stages the artefact path it owns, never the worktree.** Seven PRD-worktree hooks ran
 `git add .` and committed whatever else the worktree was carrying — render folders,
 `ci-status.json`, the leftovers of an earlier skill run (#88: a real epics run swept in three
@@ -91,14 +99,14 @@ fails any RUN step that stages `.`, `-A`, `--all` or `:/`.
 
 | Workflow | Activation | on_complete | MR direction |
 |----------|-----------|-------------|--------------|
-| bmad-prd (6.11.0+) | Detect intent: create → ask key + create worktree; update/validate → find worktree | Create → issue + commit + push + draft MR; update → update description | PRD → default (draft, create only) |
+| bmad-prd (6.11.0+) | Detect intent: create → ask key + create worktree; update/validate → find worktree | Create → issue + commit + push + draft MR; update → update description + commit + push | PRD → default (draft, create only) |
 | create-prd (6.11.0+ shim) | Create/switch to PRD worktree | Commit + push + issue + draft MR | PRD → default (draft) |
 | create-architecture | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | bmad-ux | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | create-epics-and-stories | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | sprint-planning | Switch to PRD worktree | Trigger issue sync (steps 4-6), then commit + push `sprint-status.yaml` — BMM regenerates it in the worktree and without the commit the tracker mirrors a file in no commit (#84) | (PRD worktree) |
-| edit-prd (6.11.0+ shim) | Switch to PRD worktree | Update PRD issue description | (PRD worktree) |
-| correct-course | Switch to PRD worktree | Update issue descriptions if artifacts modified | (PRD worktree) |
+| edit-prd (6.11.0+ shim) | Switch to PRD worktree | Update PRD issue description + commit + push | (PRD worktree) |
+| correct-course | Switch to PRD worktree | Update issue descriptions if artifacts modified + commit + push | (PRD worktree) |
 | retrospective | Switch to PRD worktree | Create retrospective issue + close | (PRD worktree) |
 | create-story (shim) | Ask story key, create/switch to story worktree (from PRD) | Commit + push + issue + MR | story → PRD |
 | dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + issue + MR, then the CI gate, then update issue (the MR is ensured BEFORE the gate: with no MR the gate has nothing to read and writes green) | (MR from create-story) |

@@ -3,8 +3,9 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
-#   replay.sh d29|d32|d33          # local: no lab API — d29 the dev-finish INCLUDE order,
-#                                  #   d32 the sprint hooks' commit/push, d33 the review verdict
+#   replay.sh d29|d32|d33|d34     # local: no lab API — d29 the dev-finish INCLUDE order,
+#                                  #   d32 the sprint hooks' commit/push, d33 the review verdict,
+#                                  #   d34 the PRD-side update hooks' commit/push
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -1836,15 +1837,66 @@ case_d32() {  # #84 — the tracker was reconciled against a sprint-status.yaml 
   fi
 }
 
+case_d34() {  # #87 — the update path refreshed the issue and left the PRD edit uncommitted
+  # Static + one rendered commit, the d32 shape. /bmad-prd's update branch ran
+  # find-issue -> update-issue-description and returned: the tracker showed a PRD that
+  # existed only as an uncommitted edit in the worktree, which the next common/find-prd
+  # pull (or a fresh worktree) threw away. edit-prd and correct-course had the same
+  # shape. Each must now stage, commit and push AFTER the description update, and the
+  # commit must survive a clean tree (D07) or a validate run with no edit halts before
+  # the push.
+  local c=d34
+  load_lab 2>/dev/null || true
+  EVIDENCE="${EVIDENCE:-$E2E_ROOT/evidence/static}"
+  local d; d="$(case_dir $c)"
+  local ok=1 rel lu la lc lp lcp=""
+  : > "$d/order.txt"
+  # bmad-prd's update steps live in the FALSE branch, so they are indented; the other two
+  # files are flat. The locators take the LAST match of each so the create branch of
+  # bmad-prd — which stages and commits too — cannot answer for the update branch.
+  for rel in bmad-prd/complete.yaml edit-prd/complete.yaml correct-course/complete.yaml; do
+    lu="$(grep -n -- '- INCLUDE: common/update-issue-description' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    la="$(grep -n -E -- '- RUN: git add \{(planning|implementation)_artifacts\}' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    lc="$(grep -n -E -- '- RUN: git commit --allow-empty -m' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    lp="$(grep -n -- '- RUN: git push -u origin HEAD' "$WF/$rel" | tail -1 | cut -d: -f1)"
+    echo "$rel: update-issue-description :${lu:-absent}  add :${la:-absent}  commit :${lc:-absent}  push :${lp:-absent}" >> "$d/order.txt"
+    if [ -z "$lu" ] || [ -z "$la" ] || [ -z "$lc" ] || [ -z "$lp" ] \
+       || [ "$lu" -ge "$la" ] || [ "$la" -ge "$lc" ] || [ "$lc" -ge "$lp" ]; then ok=0; fi
+    [ "$rel" = bmad-prd/complete.yaml ] && lcp="$lc"
+  done
+  cat "$d/order.txt" >&2
+  # the update branch's commit step on a CLEAN tree — the D07 shape
+  local work="$d/scratch"; rm -rf "$work"; mkdir -p "$work"
+  ( cd "$work" && git init -q -b main && git config user.email e2e@local && git config user.name e2e \
+      && git commit -q --allow-empty -m init ) || { verdict $c BLOCKED "could not build the scratch repo at $work"; return; }
+  ( cd "$work" && git status --short ) > "$d/status-before.txt"
+  local crc="(not rendered)"
+  if [ -n "$lcp" ]; then
+    local REPLAY_CWD="$work"
+    replay $c commit bmad-prd/complete.yaml "$lcp" prd_key="$PRD_KEY"
+    crc="$(cat "$d/commit.rc")"
+  fi
+  { echo "clean tree before the commit: '$(cat "$d/status-before.txt")' (want empty)"
+    echo "rendered commit step rc=$crc (want 0)  out=$(head -c 120 "$d/commit.out" 2>/dev/null | tr '\n' ' ')"; } >> "$d/order.txt"
+  tail -2 "$d/order.txt" >&2
+  if [ "$ok" = 1 ] && [ "$crc" = 0 ] && [ ! -s "$d/status-before.txt" ]; then
+    verdict $c REFUTED "every hook that refreshes a PRD-side issue description commits and pushes what it mirrored: $(tr '\n' '; ' < "$d/order.txt" | head -c 460). The rendered update-branch commit exits 0 on a clean tree (rc=$crc), so a validate run with no edit still reaches the push"
+  elif [ "$ok" != 1 ]; then
+    verdict $c CONFIRMED "a hook still ends at the description update, so the tracker shows a PRD that exists in no commit: $(tr '\n' '; ' < "$d/order.txt" | head -c 460)"
+  else
+    verdict $c CONFIRMED "the update-branch commit does not survive a clean tree: rc=$crc, status-before='$(cat "$d/status-before.txt")' — a validate run with no PRD edit halts before the push (D07)"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|d34|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 d34 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

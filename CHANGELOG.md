@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A PRD edit reached the tracker but never the repository. The update/validate branch of
+  `bmad-prd/complete.yaml` refreshed the PRD issue description and ended there; `edit-prd` and
+  `correct-course` had the same shape. The issue then described a PRD that existed only as an
+  uncommitted edit in the PRD worktree, which the next `common/find-prd` pull — or a fresh
+  worktree — threw away. All three now stage their artefacts, `commit --allow-empty` and
+  `push -u origin HEAD` after the description update: `--allow-empty` so a validate run with no
+  edit still reaches the push, `-u origin HEAD` for a PRD branch with no upstream. `edit-prd`
+  also removes the `/tmp/prd-desc-*.md` body its header always claimed it removed.
+
 - The PRD-worktree hooks committed files they did not own. `bmad-ux`, `bmad-prd`,
   `create-architecture`, `create-epics-and-stories`, `create-prd` and `retrospective` staged
   with `git add .`, so a hook's commit carried whatever else the worktree held — render
