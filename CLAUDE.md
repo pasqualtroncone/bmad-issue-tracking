@@ -287,6 +287,15 @@ follow the same format with lower stakes; the `Refs #n` footer is non-negotiable
 - Never edit `replay.sh` or a scenario while it runs (bash reads the file incrementally).
 - Cases that push CI branches (`d2`, `gl-d2`, `d16`, `gl-d16`, `d03`, `r24`) cannot run concurrently on one lab.
 - Evidence lives in `tests/e2e/evidence/<lab>/` (gitignored); `tests/e2e/lab-down.sh` tears the lab down.
+- `P*` scenarios drive the REAL BMM skill: their `improvised` count includes the skill's own commands (the
+  detector only knows the module's RUN steps) and their verdicts are OBSERVED — judge from the trace tail and
+  the tracker delta, not the label. Use `E2E_CLAUDE_TIMEOUT=2400` for them.
+- One level-2 run at a time, and check the 5 h quota window before queuing several: a hook run is 50–60
+  turns of the session, a real `/bmad-build` about 100.
+- A finished A5/P4 leaves lab story 1-1 post-review (spec `done`, issue closed); `--redeploy` refreshes the
+  worktrees, not the tracker — a scenario that needs the pre-dev state must reset it itself (P4 in #86 did).
+- A scenario that recreates a remote branch must delete it on origin first (see `d8`, `A7`): a fixed
+  `git push -u` otherwise fails non-fast-forward and the run reads like a module halt.
 
 ## Python environment
 
