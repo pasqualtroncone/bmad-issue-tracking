@@ -42,11 +42,31 @@
 # failing to close the trace MR must NOT defer an already-merged unit. Operators
 # see the journal line if anything went wrong and can clean up by hand.
 #
+# ----- MR/PR lookup -----------------------------------------------------------
+# GitLab: glab api projects/<url-encoded project>/merge_requests --hostname <host>
+#             --method GET -F source_branch=<branch> -F state=opened
+# GitHub: gh api repos/<owner>/<repo>/pulls -X GET
+#             -f head=<owner>:<branch> -f state=open
+# The GitHub form is exact, and every part of it is load-bearing (#98): `gh api`
+# has NO `-R` flag (the repo is in the path), `head` must be `owner:branch` — a
+# bare branch name makes GitHub IGNORE the filter and return every open PR — and
+# `-X GET` is needed because any `-f` field otherwise turns the call into POST
+# repos/.../pulls, the PR-create endpoint. A malformed listing is indistinguishable
+# from "nothing to close" here, so the returned PRs are additionally filtered on
+# `head.ref` before anything is closed.
+# The GitLab form has the same three traps in glab's dialect (#102): one `-F` per
+# `key=value` argv item (three items = "Accepts 1 arg(s), received 3", no request at
+# all), `--method GET` because a field otherwise makes it the MR-CREATE POST, and the
+# project path URL-encoded (raw it is a different path, 404). Its answers are filtered
+# on `source_branch` the same way.
+#
 # ----- Idempotency ------------------------------------------------------------
-# Re-running on an already-closed MR is safe:
-#   * `glab api .../state_event=close` on a closed MR → 409 (HTTP) wrapped as a
-#     non-zero exit; our script detects that and treats it as success (the
-#     MR is closed, that was the goal).
+# Re-running the hook is safe because the listing asks for OPEN MRs/PRs only: a
+# second post_merge on the same branch finds nothing and no-ops at rc 0.
+# The close itself is idempotent as well, for a caller that passes an iid directly:
+#   * `glab api .../state_event=close` on an already-closed MR answers 200 OK on the
+#     lab's GitLab (recorded as `closed`); versions that answer 409 wrap it as a
+#     non-zero exit with "already closed", which the script treats as success too.
 #   * `gh pr close <n>` on a closed PR → "already closed" message; same handling.
 # A multi-MR defensive sweep is included: if the source_branch somehow resolves
 # to 2+ open MRs (e.g. a prior duplicate), every open MR is closed.

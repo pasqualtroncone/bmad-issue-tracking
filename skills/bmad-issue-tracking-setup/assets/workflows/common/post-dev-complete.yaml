@@ -97,7 +97,17 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # mr_repo (the git remote's "host/project") comes from check-config.
     - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
-    - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
+    # The MR carries the SAME name as the story issue: "Story N.M: <human title>"
+    # (CLAUDE.md "Issue title formats"). {story_title} is the bare title
+    # common/story-title.yaml resolved — reached here through common/ensure-issue,
+    # which also replaces an empty one with "Untitled" — so the trace MR and the issue
+    # of one story can no longer read as two different stories. The guard is the
+    # fallback the issue side does not need: a caller that reaches this SET without a
+    # resolved title has only the key to name the story by.
+    - CHECK: empty story_title
+      TRUE:
+        - SET: { variable: story_title, value: "{story_key}" }
+    - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_title}" }
     - WRITE:
         file: /tmp/ensure-mr-desc-{story_key}.md
         content: "Sprint key: {story_key}\n\nRelated to #{issue_id}"
@@ -143,7 +153,12 @@ print(pattern.replace('{prd_key}', pk).replace('{story_key}', key))
     # mr_repo (the git remote's "host/project") comes from check-config.
     - SET: { variable: source_branch, value: "{current_branch}" }
     - SET: { variable: target_branch, value: "{prd_branch}" }
-    - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
+    # Same title rule as the create-story phase above: the MR is named after the story,
+    # not after its key.
+    - CHECK: empty story_title
+      TRUE:
+        - SET: { variable: story_title, value: "{story_key}" }
+    - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_title}" }
     - WRITE:
         file: /tmp/ensure-mr-desc-{story_key}.md
         content: "Sprint key: {story_key}\n\nRelated to #{issue_id}"
@@ -234,6 +249,10 @@ print('done' if spec == 'done' else sprint)
     # run on a CHECK that reads an undefined variable. Seed the verdict as "no verdict":
     # the merge guard reads it, and "no verdict" must never be a green one.
     - SET: { variable: ci_status, value: "" }
+    # Seeded for the same reason (lang §4.5): common/story-title.yaml is INCLUDEd below
+    # only when this story HAS an issue, while the MR title further down is composed on
+    # every path. "" is the "no title resolved" value the guard there turns into the key.
+    - SET: { variable: story_title, value: "" }
     # Commit and push any review modifications
     
     - RUN: git commit --allow-empty -m "code review {story_key}" 2>/dev/null || true
@@ -377,7 +396,13 @@ print(body)
       TRUE:
         - SET: { variable: source_branch, value: "{current_branch}" }
         - SET: { variable: target_branch, value: "{prd_branch}" }
-        - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
+        # Same title rule as the two phases above. Here the guard is load-bearing:
+        # common/story-title is INCLUDEd under `empty issue_id` FALSE, so a story with
+        # no issue reaches this SET with the "" seeded at the top of the phase.
+        - CHECK: empty story_title
+          TRUE:
+            - SET: { variable: story_title, value: "{story_key}" }
+        - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_title}" }
         - WRITE:
             file: /tmp/ensure-mr-desc-{story_key}.md
             content: "Sprint key: {story_key}\n\nRelated to #{issue_id}"

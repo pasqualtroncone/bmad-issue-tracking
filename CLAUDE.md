@@ -59,6 +59,8 @@ All workflows that create issues use these title formats. They must stay consist
 | Story | `Story {epic_num}.{story_num}: {title}` | `create-story/complete.yaml`, `sync-issues.yaml` |
 | Epic | `Epic {n}: {title}` | `sync-issues.yaml` |
 | Retrospective | `Retrospective: Epic {n}` | `retrospective/complete.yaml` |
+| MR/PR (story) | `Story {epic_num}.{story_num}: {story_title}` | `common/post-dev-complete.yaml`, all three phases |
+| MR/PR (PRD) | `PRD: {prd_key}` | `bmad-prd/complete.yaml`, `create-prd/complete.yaml` |
 
 For stories, the spec's LOCATION and `{title}` both come from **one shared atomic**,
 `common/story-title.yaml`, which returns `spec_path` and `story_title`:
@@ -75,6 +77,16 @@ shared too (`{spec_path}` hint, `{spec_file}`, `spec-<prefix>-*.md`,
 `stories/<prefix>-*.md`, the legacy `{implementation_artifacts}/{story_key}.md`):
 `ensure-issue.yaml` used to try only the last two, so a sprint-mode story with an empty
 `{spec_file}` produced no body and no issue.
+
+**The trace MR carries the same name as the issue.** The three `common/post-dev-complete.yaml`
+phases composed `Story N.M: {story_key}`, so one story appeared twice under two names —
+`Story 1.10: Login Form Extended` as the issue and `Story 1.10: 1-10-login-form-extended` as
+the PR (#99). They now compose `{story_title}`, which `common/story-title.yaml` resolves:
+create-story and dev-finish get it through `common/ensure-issue` (which also replaces an
+empty one with `Untitled`), review-finish `INCLUDE`s the atomic itself — but only under
+`empty issue_id` FALSE, so the phase seeds `story_title: ""` next to its `ci_status` seed and
+each `SET` falls back to the key when it is still empty. `tests/test_post_dev_complete.py`
+fails any `mr_title` value that interpolates `{story_key}`.
 
 ## Branch/MR flow
 
@@ -247,6 +259,7 @@ The scope is semantic (what area is being talked about), not a folder path.
 | `overrides` | The TOML pointers in `assets/custom/` (which BMM workflows are hooked, and to what) |
 | `workflows` | The workflow YAML bodies in `assets/workflows/` (`common/`, per-workflow folders) |
 | `ci-gate` | `ci-status.sh`, the `ci-status.json` contract, CI wait/poll behaviour for bmad-loop |
+| `close-trace-mr` | The bmad-loop `post_merge` plugin (`scripts/close-trace-mr/`): its MR/PR lookup, the close, the marker file |
 | `lang` | `bmad-workflow-lang.md`, the workflow language itself |
 | `tests` | The test suite infrastructure (`conftest.py`, runners); a test for area X is `chore(X)` |
 | `readme` / `changelog` | The respective file, when the change belongs to no area (a docs change about an area takes that area's scope, e.g. `docs(install)`) |

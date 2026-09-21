@@ -5,8 +5,14 @@ The tests target the testable surface area of `close_trace_mr.py`:
   - env var extraction (`get_env_values`)
   - config parsing (`parse_issue_tracking_config`)
   - context resolution (`resolve_ctx`) including overlay precedence
-  - MR list parsing (`list_open_mrs`) — empty result, multi-MR result, errors
-  - close command construction (`close_one`) — glab vs gh, success, already-closed
+  - MR list parsing (`list_open_mrs`) — empty result, multi-MR result, errors, and
+    the GitHub lookup's shape (no `-R`, `-X GET`, `head=owner:branch`) plus the
+    defensive `head.ref` filter that keeps a foreign PR out of the close list (#98),
+    and the GitLab lookup's shape (encoded project path, `--method GET`, one
+    `key=value` token per `-F`) with the matching `source_branch` filter (#102)
+  - close command construction (`close_one`) — glab vs gh, success, already-closed,
+    the encoded path + single-token `-F` on glab (#102) and the absence of gh's
+    boolean `--delete-branch` (#101)
   - marker file write (`write_marker`) — atomic, content shape, run_dir-less path
 
 The subprocess runner is injected via the `runner` parameter — no real glab/gh
@@ -294,27 +300,79 @@ class TestListOpenMrs:
         assert len(recorder.calls) == 1
         cmd, _ = recorder.calls[0]
         assert cmd[0] == "glab" and cmd[1] == "api"
-        assert "projects/group/sub/repo/merge_requests" in cmd[2]
+        assert "projects/group%2Fsub%2Frepo/merge_requests" in cmd[2]
         assert "--hostname" in cmd and "gl.example" in cmd
-        # branch + state filters (either as flags or -F flags depending on version)
         joined = " ".join(cmd)
         assert "feat/prd/3-1-foo" in joined
         assert "opened" in joined
 
+    def test_gitlab_list_project_path_is_url_encoded(self):
+        """D43 (#102): GitLab's `projects/:id` takes the path URL-encoded.
+
+        Raw, `group/sub/repo` makes the request `projects/group/sub/repo/merge_requests`
+        — a different path, HTTP 404 on the lab.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _gitlab_ctx())
+        cmd, _ = recorder.calls[0]
+        assert cmd[2] == "projects/group%2Fsub%2Frepo/merge_requests"
+
+    def test_gitlab_list_fields_are_single_key_value_tokens(self):
+        """D43 (#102): one `-F` takes ONE `key=value` argv item.
+
+        `-F source_branch <branch>` is three items and glab refuses the whole call with
+        `Accepts 1 arg(s), received 3` — before any request, so the lookup's leniency
+        reported "nothing to close" on every GitLab run.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _gitlab_ctx())
+        cmd, _ = recorder.calls[0]
+        fields = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-F"]
+        assert fields == ["source_branch=feat/prd/3-1-foo", "state=opened"]
+        # and nothing bare follows a field (that is what made it three args)
+        assert "source_branch" not in cmd and "state" not in cmd
+
+    def test_gitlab_list_is_a_GET(self):
+        """D43 (#102): glab, like gh, POSTs as soon as a field is given — and POST on
+        this path is the MR-CREATE endpoint (HTTP 400, "title is missing")."""
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _gitlab_ctx())
+        cmd, _ = recorder.calls[0]
+        assert cmd[cmd.index("--method") + 1] == "GET"
+
     def test_gitlab_multi_mr_result(self):
         body = json.dumps([
-            {"iid": 17, "title": "Story 3.1: foo"},
-            {"iid": 42, "title": "Story 3.1: foo (duplicate)"},
+            {"iid": 17, "title": "Story 3.1: foo", "source_branch": "feat/prd/3-1-foo"},
+            {"iid": 42, "title": "Story 3.1: foo (duplicate)", "source_branch": "feat/prd/3-1-foo"},
         ])
         recorder = _Recorder()
         recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
         assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == [17, 42]
 
     def test_gitlab_string_iid_is_coerced(self):
-        body = json.dumps([{"iid": "99"}])
+        body = json.dumps([{"iid": "99", "source_branch": "feat/prd/3-1-foo"}])
         recorder = _Recorder()
         recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
         assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == [99]
+
+    def test_gitlab_foreign_mrs_in_the_answer_are_never_closed(self):
+        """Same defensive filter as GitHub: only the merged branch's MR may be closed."""
+        body = json.dumps([
+            {"iid": 8, "source_branch": "feat/prd/9-9-other"},
+            {"iid": 17, "source_branch": "feat/prd/3-1-foo"},
+        ])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == [17]
+
+    def test_gitlab_mr_without_source_branch_is_dropped(self):
+        body = json.dumps([{"iid": 17, "title": "Story 3.1: foo"}])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("glab"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _gitlab_ctx()) == []
 
     def test_gitlab_non_json_body_returns_empty(self):
         recorder = _Recorder()
@@ -344,14 +402,74 @@ class TestListOpenMrs:
         assert "repos/owner/repo/pulls" in joined
         assert "feat/prd/3-1-foo" in joined
 
+    def test_github_list_names_the_repo_in_the_path_not_with_dash_R(self):
+        """D41 (#98): `gh api` has no `-R` flag — the repo is named by the path.
+
+        With `-R` the process exits non-zero (gh 2.101.0: "unknown shorthand flag:
+        'R'"), which `list_open_mrs` deliberately turns into "no PRs found", so the
+        hook silently closed nothing on every GitHub run it ever made.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _github_ctx())
+        cmd, _ = recorder.calls[0]
+        assert "-R" not in cmd
+        assert "--repo" not in cmd
+
+    def test_github_list_filters_head_by_owner_colon_branch(self):
+        """D41 (#98): `pulls?head=` needs `owner:branch`.
+
+        A BARE branch name is not rejected — the API ignores the filter and answers
+        every open PR of the repository (verified read-only against repos/cli/cli:
+        `head=remove-claude-md` -> 30 items, `head=jarrensj:remove-claude-md` -> [14474]).
+        Without the qualifier, post_merge would close the whole open-PR list.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _github_ctx())
+        cmd, _ = recorder.calls[0]
+        assert "head=owner:feat/prd/3-1-foo" in cmd
+        assert "head=feat/prd/3-1-foo" not in cmd
+
+    def test_github_list_is_a_GET(self):
+        """`gh api` flips to POST as soon as a `-f` field is present, and POST on
+        repos/.../pulls is the CREATE endpoint (HTTP 422). `-X GET` keeps it a listing."""
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "[]"))
+        ctm.list_open_mrs(recorder, _github_ctx())
+        cmd, _ = recorder.calls[0]
+        assert cmd[cmd.index("-X") + 1] == "GET"
+
     def test_github_multi_pr_result(self):
         body = json.dumps([
-            {"number": 11, "title": "Story 3.1: foo"},
-            {"number": 22, "title": "Story 3.1: foo (dup)"},
+            {"number": 11, "title": "Story 3.1: foo", "head": {"ref": "feat/prd/3-1-foo"}},
+            {"number": 22, "title": "Story 3.1: foo (dup)", "head": {"ref": "feat/prd/3-1-foo"}},
         ])
         recorder = _Recorder()
         recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, body))
         assert ctm.list_open_mrs(recorder, _github_ctx()) == [11, 22]
+
+    def test_github_foreign_prs_in_the_answer_are_never_closed(self):
+        """The defensive half of D41: an unfiltered-looking answer closes nothing extra.
+
+        This is exactly the body a bare `head=` produced on the lab — the repository's
+        whole open-PR list. Only the PR whose `head.ref` is the merged branch survives.
+        """
+        body = json.dumps([
+            {"number": 7, "title": "someone else's work", "head": {"ref": "feat/prd/9-9-other"}},
+            {"number": 11, "title": "Story 3.1: foo", "head": {"ref": "feat/prd/3-1-foo"}},
+            {"number": 12, "title": "dependabot", "head": {"ref": "dependabot/npm/x"}},
+        ])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _github_ctx()) == [11]
+
+    def test_github_pr_without_head_is_dropped(self):
+        """A payload with no `head.ref` cannot be proven to be ours, so it is not closed."""
+        body = json.dumps([{"number": 11, "title": "Story 3.1: foo"}])
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, body))
+        assert ctm.list_open_mrs(recorder, _github_ctx()) == []
 
 
 # -----------------------------------------------------------------------------
@@ -369,8 +487,13 @@ class TestCloseOne:
         cmd, _ = recorder.calls[0]
         joined = " ".join(cmd)
         assert "merge_requests/17" in joined
-        assert "state_event" in joined and "close" in joined
         assert "-X" in cmd and "PUT" in cmd
+        # D43 (#102): one `-F` token, and the project path encoded — the same two
+        # defects the listing carried. `-F state_event close` is three argv items and
+        # glab refuses the call outright.
+        assert cmd[2] == "projects/group%2Fsub%2Frepo/merge_requests/17"
+        assert [cmd[i + 1] for i, a in enumerate(cmd) if a == "-F"] == ["state_event=close"]
+        assert "state_event" not in cmd and "close" not in cmd
 
     def test_gitlab_already_closed_is_success(self):
         recorder = _Recorder()
@@ -399,7 +522,26 @@ class TestCloseOne:
         cmd, _ = recorder.calls[0]
         joined = " ".join(cmd)
         assert "pr close 11" in joined
+        # `-R` IS a flag of `gh pr close` — unlike `gh api`, see TestListOpenMrs.
         assert "-R owner/repo" in joined
+
+    def test_github_close_passes_no_delete_branch_flag(self):
+        """D42 (#101): `--delete-branch` is a boolean flag.
+
+        The command was `gh pr close <n> -R <p> --delete-branch false`; the literal
+        "false" became a second positional and gh answered "too many arguments"
+        (rc=2, marker `failed_mrs: [<n>]`). Keeping the branch is gh's default and
+        is what the flag was reaching for — the trace PR must stay readable.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "✓ Closed pull request #11\n"))
+        ctm.close_one(recorder, _github_ctx(), iid=11)
+        cmd, _ = recorder.calls[0]
+        assert "--delete-branch" not in cmd
+        assert "-d" not in cmd
+        assert "false" not in cmd
+        # A positional count of exactly one: `gh pr close <n>` and nothing else.
+        assert [a for a in cmd if not a.startswith("-")] == ["gh", "pr", "close", "11", "owner/repo"]
 
     def test_github_already_closed_is_success(self):
         recorder = _Recorder()
@@ -588,7 +730,7 @@ class TestRunEndToEnd:
         runner_script = [
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api" and "merge_requests" in cmd[2] and "/17" not in cmd[2],
-                _FakeProc(0, json.dumps([{"iid": 17}])),
+                _FakeProc(0, json.dumps([{"iid": 17, "source_branch": "feat/prd/3-1-foo"}])),
             ),
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api" and "merge_requests/17" in cmd[2],
@@ -615,7 +757,10 @@ class TestRunEndToEnd:
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api"
                 and "merge_requests" in cmd[2]
                 and not any(f"/{iid}" in cmd[2] for iid in ("17", "42")),
-                _FakeProc(0, json.dumps([{"iid": 17}, {"iid": 42}])),
+                _FakeProc(0, json.dumps([
+                    {"iid": 17, "source_branch": "feat/prd/3-1-foo"},
+                    {"iid": 42, "source_branch": "feat/prd/3-1-foo"},
+                ])),
             ),
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api",
@@ -645,7 +790,10 @@ class TestRunEndToEnd:
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api"
                 and "merge_requests" in cmd[2]
                 and not any(f"/{iid}" in cmd[2] for iid in ("17", "42")),
-                _FakeProc(0, json.dumps([{"iid": 17}, {"iid": 42}])),
+                _FakeProc(0, json.dumps([
+                    {"iid": 17, "source_branch": "feat/prd/3-1-foo"},
+                    {"iid": 42, "source_branch": "feat/prd/3-1-foo"},
+                ])),
             ),
             (
                 lambda cmd: cmd[0] == "glab" and cmd[1] == "api" and "merge_requests/17" in cmd[2],

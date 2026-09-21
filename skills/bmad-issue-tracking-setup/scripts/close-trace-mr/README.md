@@ -48,14 +48,56 @@ If no `platform` is found after both passes, the hook no-ops cleanly and
 writes `status: skipped` to the marker. This happens for projects that have
 not configured `bmad-issue-tracking`.
 
+## MR/PR lookup
+
+The hook closes only MRs/PRs opened FROM the branch bmad-loop just merged.
+
+| Platform | Command |
+|---|---|
+| GitLab | `glab api projects/<url-encoded project>/merge_requests --hostname <host> --method GET -F source_branch=<branch> -F state=opened` |
+| GitHub | `gh api repos/<owner>/<repo>/pulls -X GET -f head=<owner>:<branch> -f state=open` |
+
+Three things about the GitHub form are not guessable, and getting any of them
+wrong is invisible — a failed listing is indistinguishable from "nothing to
+close", and the hook exits 0 either way:
+
+- **`gh api` has no `-R` flag.** The repository is named by the path. `-R` makes
+  gh exit with `unknown shorthand flag: 'R'`, which this hook reads as an empty
+  list, so before #98 it had never closed a single GitHub trace PR.
+- **`head` must be `owner:branch`.** A bare branch name is not an error: GitHub
+  *ignores* the filter and returns every open PR of the repository. So the `-R`
+  failure was the only thing preventing `post_merge` from closing all of them.
+- **`-X GET` is required.** `gh api` switches to POST as soon as a `-f` field is
+  given, and `POST repos/.../pulls` is the *create* endpoint (HTTP 422). Query
+  text still has to travel as `-f` fields, because a raw space in the URL is a
+  silent `[]` on gh.
+
+GitLab has the same three traps in glab's dialect, and they cost the GitLab side
+the same silence (#102): one `-F` takes ONE `key=value` argv item (`-F source_branch
+<branch>` is three, and glab stops at `Accepts 1 arg(s), received 3` before any
+request); glab also POSTs as soon as a field is given, and POST on that path is the
+MR-*create* endpoint (`400 title is missing, target_branch is missing`), so
+`--method GET` is required; and `projects/:id` takes the path **URL-encoded**, slashes
+included — raw, `group/sub/repo` is a different path and answers 404.
+
+On top of the server-side filter, every returned MR/PR is checked against its own
+source branch (`head.ref` on GitHub, `source_branch` on GitLab) and skipped, with a
+line on stderr, when it is not the branch that was merged.
+
 ## Idempotency
 
-Re-running on an already-closed MR is safe:
+Re-running the hook is safe, and the listing is what makes it so: both
+platforms are asked for OPEN MRs/PRs only, so a second `post_merge` on the same
+branch finds nothing and no-ops at rc 0 (verified on the lab, both platforms).
 
-- **GitLab**: `PUT .../merge_requests/{iid}?state_event=close` on a closed
-  MR returns HTTP 409, which `glab` surfaces as a non-zero exit. The hook
-  intercepts this and treats it as success (the MR is closed — that was the
-  goal).
+`close_one` is idempotent on its own too, for the case where it is handed an
+iid directly:
+
+- **GitLab**: `PUT .../merge_requests/{iid}?state_event=close` on an already
+  closed MR returns **200 OK** on the lab's GitLab, so the result is recorded as
+  `closed`. Some versions answer HTTP 409 with "already closed" instead, which
+  `glab` surfaces as a non-zero exit; the hook matches that text and treats it as
+  success too (the MR is closed — that was the goal).
 - **GitHub**: `gh pr close <n>` on a closed PR returns rc=0 with "already
   closed" on stdout. The hook matches that message and treats it as success.
 
@@ -149,7 +191,7 @@ close-trace-mr/
 ## Tests
 
 ```bash
-uv run --no-project --directory .bmad-loop/plugins/close-trace-mr \
+uv run --no-project --with pytest --directory .bmad-loop/plugins/close-trace-mr \
     python -m pytest tests/ -v
 ```
 

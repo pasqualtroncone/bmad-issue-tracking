@@ -58,6 +58,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The GitLab half of the plugin never reached the API either. Its `glab api` calls passed
+  `-F source_branch <branch>` as three argv items where glab wants one `key=value` token,
+  so glab refused the whole call with `Accepts 1 arg(s), received 3` before any request —
+  and the lookup's leniency reported "nothing to close", exit 0, exactly the silence #98
+  fixed on GitHub. Two more defects sat behind it: glab (like gh) turns the call into a
+  POST as soon as a field is given, and POST on that path is the MR-*create* endpoint
+  (`400 title is missing, target_branch is missing`), so `--method GET` is required; and
+  `projects/:id` takes the project path **URL-encoded**, while it was interpolated raw,
+  making `group/sub/repo` a different path that answers 404. List and close are now
+  `glab api projects/<enc>/merge_requests --method GET -F source_branch=<b> -F state=opened`
+  and `glab api projects/<enc>/merge_requests/<iid> -X PUT -F state_event=close`, and the
+  returned MRs are filtered on `source_branch` the way the GitHub answers are filtered on
+  `head.ref`. The idempotency note is corrected while here: re-closing an already-closed
+  MR answers 200 OK, not the documented 409, and what makes the hook safe to re-run is
+  that the listing asks for open MRs only.
+
+- Even with the lookup fixed, the GitHub close itself could not run. `close_one` built
+  `gh pr close <n> -R <project> --delete-branch false`, but `--delete-branch` is a BOOLEAN
+  flag, so the literal `false` arrived as a second positional and gh answered
+  `too many arguments` — rc=2, marker `closed_mrs: [] failed_mrs: [<n>]`. The flag is gone:
+  keeping the branch is gh's default, and the trace PR's branch has to survive anyway,
+  since the PR exists to stay readable as the story's execution trace after the local merge.
+
+- No GitHub trace PR had ever been closed, and fixing that naively would have closed every
+  other open PR of the repository. The `close-trace-mr` bmad-loop plugin looked its PR up with
+  `gh api repos/<project>/pulls -R <project> -f head=<branch> -f state=open`: `gh api` has no
+  `-R` flag, so the call exited non-zero, the lookup's deliberate leniency turned that into
+  "nothing to close" and the hook reported rc=0 with `closed_mrs: []`. The `head` filter was
+  wrong too — GitHub needs `owner:branch` and silently IGNORES a bare branch name, answering
+  the repository's whole open-PR list — and any `-f` field turns `gh api` into a POST, which
+  on `repos/.../pulls` is the PR-*create* endpoint. The lookup is now
+  `gh api repos/<owner>/<repo>/pulls -X GET -f head=<owner>:<branch> -f state=open`, and every
+  PR it returns is checked against `head.ref` before it can be closed, so an over-broad answer
+  can never close somebody else's work.
+
+- One story showed up under two names. The three phases of `common/post-dev-complete.yaml`
+  titled the trace MR `Story N.M: <story key>` while its issue read `Story N.M: <story title>`
+  — `Story 1.10: 1-10-login-form-extended` next to `Story 1.10: Login Form Extended` for the
+  same story. All three now compose the title `common/story-title.yaml` resolves, the one the
+  issue side already used, falling back to the key only when no title can be resolved at all.
+
 - Under bmad-loop the CI gate passed without ever reading a pipeline. `bmad-build-auto`
   finalises dev and review in one session, so the hook fires once with the spec already
   `done` and `common/post-dev-complete.yaml` routes it to review-finish — the only phase a

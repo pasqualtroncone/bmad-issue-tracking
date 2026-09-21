@@ -228,7 +228,7 @@ cp -rf <path>/workflows/* _bmad/_config/custom/workflows/
 
     <action>Run the plugin's tests to confirm the deployment is healthy:</action>
     ```bash
-    uv run --no-project --directory .bmad-loop/plugins/close-trace-mr \
+    uv run --no-project --with pytest --directory .bmad-loop/plugins/close-trace-mr \
         python -m pytest tests/ -v
     ```
   </true>
