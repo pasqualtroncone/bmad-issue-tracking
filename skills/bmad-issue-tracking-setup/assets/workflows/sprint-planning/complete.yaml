@@ -1,8 +1,30 @@
 # sprint-planning/complete.yaml
 #
-# Purpose: Triggers a full issue sync after sprint planning completes.
+# Purpose: Triggers a full issue sync after sprint planning completes, then commits and
+#          pushes the sprint-status.yaml BMM has just (re)generated in the PRD worktree.
 # Input variables: (none)
 # Output variables: (none)
-# Side effects: runs issue sync (steps 4-6 only; prepare ran during sprint planning)
+# Side effects: runs issue sync (steps 4-6 only; prepare ran during sprint planning);
+#               commits and pushes {implementation_artifacts}/sprint-status.yaml
 
 - INCLUDE: issue-sync/sync
+# BMM regenerates sprint-status.yaml in the PRD worktree and nothing here used to commit
+# it, so the tracker was reconciled against a file that existed in no commit: the next
+# common/find-prd pull, or a fresh worktree, lost it and the following sync reverted every
+# label this one had just set. The commit comes AFTER the sync so the push carries the
+# state the tracker was actually mirrored from.
+#
+# {prd_key} is in scope: issue-sync/sync runs common/find-prd-key itself.
+# Only sprint-status.yaml is staged — `git add .`, the shape the other PRD-worktree hooks
+# use, would sweep up whatever else that worktree happens to be carrying.
+# `--allow-empty` because a re-run with an unchanged file must not halt the hook (D07).
+# `-u origin HEAD` because the PRD branch may have no upstream yet (D08).
+#
+# bmad-loop is unaffected: it owns sprint-status.yaml for the length of a run and never
+# fires this hook — the hook belongs to the interactive sprint-planning skill, which
+# bmad-loop does not invoke.
+- RUN: git add {implementation_artifacts}/sprint-status.yaml
+- RUN: git commit --allow-empty -m "sprint status {prd_key}"
+- RUN: git push -u origin HEAD
+- OUTPUT:
+    message: "Sprint status committed and pushed."

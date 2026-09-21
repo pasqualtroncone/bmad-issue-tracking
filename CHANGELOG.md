@@ -63,6 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sprint-status value stands. The `dev-story` / `code-review` shims seed `spec_status: ""`
   (the optional-variable rule), so they and bmad-loop read sprint-status as before.
 
+- `sprint-planning` and `sprint-status` reconciled the tracker against a
+  `sprint-status.yaml` that existed in no commit. BMM regenerates the file in the PRD
+  worktree, `complete.yaml` ran the sync over it and returned; the next `common/find-prd`
+  pull, or a fresh worktree, lost the file and the following sync reverted every label the
+  first one had just set. Both hooks now `git add` that one file, `git commit
+  --allow-empty` and `git push -u origin HEAD` after the sync. bmad-loop is unaffected: it
+  owns `sprint-status.yaml` during a run and never fires these hooks.
+
 - The CI gate could pass on a tree CI never built. `common/get-mr-pipeline.yaml` and the poll
   rounds of `common/wait-for-green-ci.yaml` asked for "the newest run ON THE BRANCH", and for
   the first seconds after a push that is the PREVIOUS commit's run — the dev-finish and

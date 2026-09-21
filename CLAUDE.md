@@ -25,8 +25,8 @@ The sync task is split into two phases so callers can skip redundant setup:
 - **`issue-sync/sync.yaml`** (steps 4-6) — sync issues, mark MR ready, summary (includes its own `check-config` + `find-prd` since context may be compacted)
 
 Callers:
-- `sprint-planning/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint planning)
-- `sprint-status/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint status)
+- `sprint-planning/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint planning), then `git add`/`commit --allow-empty`/`push -u origin HEAD` of `{implementation_artifacts}/sprint-status.yaml`
+- `sprint-status/complete.yaml` → `INCLUDE: issue-sync/sync` (steps 4-6 only, prepare ran during sprint status), then the same commit + push
 - `/bmad-issue-tracking-sync` standalone → `INCLUDE: issue-sync/prepare` then `INCLUDE: issue-sync/sync`
 
 ## TOML override semantics
@@ -87,14 +87,14 @@ Branch setup happens in activation (before BMM workflow runs). The BMM workflow 
 | create-architecture | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | bmad-ux | Switch to PRD worktree | Commit + push | (PRD worktree) |
 | create-epics-and-stories | Switch to PRD worktree | Commit + push | (PRD worktree) |
-| sprint-planning | Switch to PRD worktree | Trigger issue sync (steps 4-6) | (PRD worktree) |
+| sprint-planning | Switch to PRD worktree | Trigger issue sync (steps 4-6), then commit + push `sprint-status.yaml` — BMM regenerates it in the worktree and without the commit the tracker mirrors a file in no commit (#84) | (PRD worktree) |
 | edit-prd (6.11.0+ shim) | Switch to PRD worktree | Update PRD issue description | (PRD worktree) |
 | correct-course | Switch to PRD worktree | Update issue descriptions if artifacts modified | (PRD worktree) |
 | retrospective | Switch to PRD worktree | Create retrospective issue + close | (PRD worktree) |
 | create-story (shim) | Ask story key, create/switch to story worktree (from PRD) | Commit + push + issue + MR | story → PRD |
 | dev-story (shim) | Find story with status `ready-for-dev`, switch to worktree | Commit + push + issue + MR, then the CI gate, then update issue (the MR is ensured BEFORE the gate: with no MR the gate has nothing to read and writes green) | (MR from create-story) |
 | code-review | Find story with status `review`, switch to worktree | Commit + push + post review + optional merge; the verdict is the spec `status` when the producer set one, else `sprint-status.yaml` (see "which producer wrote the review VERDICT") | story → PRD |
-| sprint-status (shim) | Switch to PRD worktree | Trigger issue sync (steps 4-6) | (none) |
+| sprint-status (shim) | Switch to PRD worktree | Trigger issue sync (steps 4-6), then commit + push `sprint-status.yaml` | (none) |
 
 ### bmad-loop flow (unattended)
 

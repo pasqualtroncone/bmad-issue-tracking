@@ -3,8 +3,8 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
-#   replay.sh d29|d33              # local: no lab API — d29 the dev-finish INCLUDE order,
-#                                  #   d33 the review verdict
+#   replay.sh d29|d32|d33          # local: no lab API — d29 the dev-finish INCLUDE order,
+#                                  #   d32 the sprint hooks' commit/push, d33 the review verdict
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -1786,15 +1786,62 @@ case_d33() {  # #83 — the review verdict came out of a file bmad-build never w
   fi
 }
 
+case_d32() {  # #84 — the tracker was reconciled against a sprint-status.yaml in no commit
+  # Static + one rendered commit: BMM regenerates sprint-status.yaml in the PRD worktree,
+  # sprint-planning/complete.yaml ran the sync over it and returned, and nothing ever
+  # committed the file — the next find-prd pull or a fresh worktree lost it and the
+  # following sync reverted the labels this one had just written. The commit must also
+  # survive a clean tree (D07): without --allow-empty it exits 1 and the hook halts
+  # before the push.
+  local c=d32
+  load_lab 2>/dev/null || true
+  EVIDENCE="${EVIDENCE:-$E2E_ROOT/evidence/static}"
+  local d; d="$(case_dir $c)"
+  local ok=1 rel li la lc lp lcp=""
+  : > "$d/order.txt"
+  for rel in sprint-planning/complete.yaml sprint-status/complete.yaml; do
+    li="$(grep -nF -- '- INCLUDE: issue-sync/sync' "$WF/$rel" | head -1 | cut -d: -f1)"
+    la="$(grep -nF -- '- RUN: git add {implementation_artifacts}/sprint-status.yaml' "$WF/$rel" | head -1 | cut -d: -f1)"
+    lc="$(grep -nF -- '- RUN: git commit --allow-empty -m "sprint status {prd_key}"' "$WF/$rel" | head -1 | cut -d: -f1)"
+    lp="$(grep -nF -- '- RUN: git push -u origin HEAD' "$WF/$rel" | head -1 | cut -d: -f1)"
+    echo "$rel: INCLUDE issue-sync/sync :${li:-absent}  add :${la:-absent}  commit :${lc:-absent}  push :${lp:-absent}" >> "$d/order.txt"
+    if [ -z "$li" ] || [ -z "$la" ] || [ -z "$lc" ] || [ -z "$lp" ] \
+       || [ "$li" -ge "$la" ] || [ "$la" -ge "$lc" ] || [ "$lc" -ge "$lp" ]; then ok=0; fi
+    [ "$rel" = sprint-planning/complete.yaml ] && lcp="$lc"
+  done
+  cat "$d/order.txt" >&2
+  # the commit step on a CLEAN tree, in a scratch clone of nothing — the D07 shape
+  local work="$d/scratch"; rm -rf "$work"; mkdir -p "$work"
+  ( cd "$work" && git init -q -b main && git config user.email e2e@local && git config user.name e2e \
+      && git commit -q --allow-empty -m init ) || { verdict $c BLOCKED "could not build the scratch repo at $work"; return; }
+  ( cd "$work" && git status --short ) > "$d/status-before.txt"
+  local crc="(not rendered)"
+  if [ -n "$lcp" ]; then
+    local REPLAY_CWD="$work"
+    replay $c commit sprint-planning/complete.yaml "$lcp" prd_key="$PRD_KEY"
+    crc="$(cat "$d/commit.rc")"
+  fi
+  { echo "clean tree before the commit: '$(cat "$d/status-before.txt")' (want empty)"
+    echo "rendered commit step rc=$crc (want 0)  out=$(head -c 120 "$d/commit.out" 2>/dev/null | tr '\n' ' ')"; } >> "$d/order.txt"
+  tail -2 "$d/order.txt" >&2
+  if [ "$ok" = 1 ] && [ "$crc" = 0 ] && [ ! -s "$d/status-before.txt" ]; then
+    verdict $c REFUTED "both sprint hooks commit the file the sync mirrored: $(tr '\n' '; ' < "$d/order.txt" | head -c 400). The rendered commit exits 0 on a clean tree (rc=$crc), so a re-run with an unchanged sprint-status.yaml still reaches the push"
+  elif [ "$ok" != 1 ]; then
+    verdict $c CONFIRMED "a sprint hook still ends at the sync, so the tracker mirrors a sprint-status.yaml that exists in no commit: $(tr '\n' '; ' < "$d/order.txt" | head -c 400)"
+  else
+    verdict $c CONFIRMED "the commit step does not survive a clean tree: rc=$crc, status-before='$(cat "$d/status-before.txt")' — the hook halts before the push on any re-run without changes (D07)"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d33|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d33 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac
