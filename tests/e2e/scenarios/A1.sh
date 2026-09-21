@@ -15,7 +15,7 @@ D="$("$E2E_ROOT/run-hook.sh" --case $C --worktree "$WT" --toml bmad-build-auto -
 story_issues > "$(case_dir $C)/issues-after.txt"; cat "$(case_dir $C)/issues-after.txt" >&2
 ci="$(cat "$WT/ci-status.json" 2>/dev/null || echo absent)"
 title="$(grep -E 'Story 1\.1' "$(case_dir $C)/issues-after.txt" | head -1 | cut -f2)"
-notes="ci-status.json=$ci; issue='$title'; PR=#$(pr_for "feat/$PRD_KEY/1-1-login-form"); improvised=$(rj "$D" 'r.get("improvised")')/$(rj "$D" 'r["bash_commands"]') bash; turns=$(rj "$D" 'r["result"]["num_turns"]') cost=\$$(rj "$D" 'round(r["result"]["total_cost_usd"] or 0,2)')"
+notes="ci-status.json=$ci; issue='$title'; PR=#$(pr_for "feat/$PRD_KEY/1-1-login-form"); improvised=$(rj "$D" 'r.get("improvised")')/$(rj "$D" 'r["bash_commands"]') bash; turns=$(rj "$D" 'r["result"]["num_turns"]')"
 if [ -n "$title" ] && printf '%s' "$title" | grep -qE 'Story 1\.1: ?$|Story 1\.1: Intent'; then verdict $C-D21 CONFIRMED "ensure-issue.yaml title from a 6.12.0 spec (no '# ' H1): '$title'. $notes"
 elif [ -n "$title" ]; then verdict $C-D21 REFUTED "issue title '$title' (agent may have improvised the title). $notes"; else verdict $C-D21 BLOCKED "no story issue created. $notes"; fi
 if saw "$D" 'no_mr' || ! ran "$D" 'gh run list'; then verdict $C-nomr OBSERVED "the first dev-finish did NOT consult CI: no_mr seen, or no run lookup ran, so ci-status.json was written green without a pipeline. Since #45 ensure-mr precedes wait-for-green-ci, so the gate should have had a PR to read. $notes"; else verdict $C-nomr OBSERVED "the first dev-finish consulted CI: the trace PR is ensured before the gate (#45), so there is no no_mr shortcut. $notes"; fi

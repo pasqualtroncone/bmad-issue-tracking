@@ -279,7 +279,8 @@ follow the same format with lower stakes; the `Refs #n` footer is non-negotiable
 ## e2e lab (tests/e2e)
 
 - `make e2e-static` — level 0, greps only, no lab. `tests/e2e/replay.sh <case>|all|gitlab` — level 1,
-  literal RUN replays (no LLM); `tests/e2e/scenarios/A*.sh` — level 2, headless Claude (~$3 each).
+  literal RUN replays (no LLM); `tests/e2e/scenarios/A*.sh` — level 2, headless Claude (50–60 turns
+  of the quota window each).
 - `tests/e2e/lab-up.sh` creates the GitHub lab; `--add-gitlab --gl-host <host>` adds a GitLab consumer
   (glab must be authenticated on THAT host); `--check` proves BMM resolves the module hooks.
 - Level 1 renders steps from THIS checkout; level 2 reads the consumer's deployed copies → run

@@ -17,7 +17,7 @@ Nothing here is collected by pytest (no `test_*.py`), and nothing runs without y
 | `gh` | authenticated; `repo` + `workflow` scopes. `delete_repo` only for `lab-down.sh` (else it archives and prints the delete command) |
 | `glab` | for the GitLab consumer and the `g06`/`gl-*` cases; authenticated on the host you pass with `--gl-host` (check `glab auth status --hostname <host>`, not just gitlab.com). Scopes `api`, `write_repository`. The namespace is the authenticated username |
 | `uv`, `node`/`npx`, `git` | `npx -y bmad-method@6.12.0` is fetched from npm on `lab-up` |
-| `claude` | level 2 / BMM phase: headless `claude -p` runs on your account (≈ $0.5–3 per scenario) |
+| `claude` | level 2 / BMM phase: headless `claude -p` runs on your account; they spend the 5-hour quota window |
 | `bmad-loop` 0.11.1 | level 3 only (`uv tool install bmad-loop`) |
 
 ## Layout
@@ -95,7 +95,7 @@ Cases and what they prove:
 | `d37` | 1 | #92 | local: a scratch dir holding the retrospective document under BMM 6.12.0's name (`epic-1-retro-2026-09-21.md`, next to an older one), under the legacy `retrospectives/epic-1-retrospective.md`, and under neither; the resolution step of `retrospective/complete.yaml` must answer the newest BMM name, the legacy name and empty, and the empty answer must reach a halt naming both candidates |
 | `d26` | 1 | D26 | the retrospective description rendered for epic 1 carries the `**Sprint Key:**` marker, and GitLab `find-issue` selects that issue for `epic-1-retrospective`; a pre-fix body is invisible to the same search |
 | `A1`…`A9` | 2 | D21, D18+D03, D17/D15, D07, review gate, D09, D08/D22, D16/S1, marker | real TOML text → headless Claude in the worktree |
-| `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2. `P1.sh create` is BLOCKED on a consumer whose `prd.md` is already keyed: one PRD per repository (#90), so it would only re-run P1 update at full cost |
+| `P1`…`P5` | BMM | D07, D17, D21, D02 in the real flow | `bmad-prd`, `create-epics-and-stories`, `sprint-planning`, `bmad-build` ×2. `P1.sh create` is BLOCKED on a consumer whose `prd.md` is already keyed: one PRD per repository (#90), so it would only re-run P1 update again |
 | `L` | 3 | D08/D22 end to end | `bmad-loop run --story 1-1` (runbook, by hand) |
 
 ## Reading a level-2 run
@@ -103,7 +103,7 @@ Cases and what they prove:
 `evidence/<lab>/<case>/<tag>/`:
 
 - `prompt.txt` — exactly what the agent got: the TOML `on_complete` text verbatim, preceded only by the variables the skill run would have left in scope (`spec_file`, …).
-- `trace.jsonl` — the raw `stream-json` transcript; `result.json` — turns, cost, tool counts, tool errors.
+- `trace.jsonl` — the raw `stream-json` transcript; `result.json` — turns, tool counts, tool errors.
 - `commands.txt` / `tool-results.txt` — every Bash command and its result.
 - `improvisation.txt` — each command matched against the `RUN` steps reachable from the entry workflow through `INCLUDE` (placeholders → wildcards). `IMPROVISED` = a command the workflow never wrote (lang §7 forbids it). `coverage.txt` = reachable `RUN` steps never executed.
 - `snap-<tag>/` — `git log`, upstream, `ci-status.json`, `gh run/issue/pr list --json`, `/tmp` leftovers.
@@ -124,15 +124,18 @@ what a hook really needs.
   `sleep N && …` Bash call outright and defaults the Bash tool to 120 s (600 s max), which is
   what A2 measures against.
 
-## Cost and time
+## Time
 
-| Level | Wall time | LLM cost |
-|---|---|---|
-| 0 static | seconds | none |
-| 1 replay (all) | ≈45 min | none (≈35 min of private Actions minutes) |
-| 2 hooks (A1–A9, A2 ×3) | ≈1.5 h | ≈17 `claude -p` runs |
-| BMM phase (P1–P5) | ≈1 h | 5–6 skill runs |
-| 3 bmad-loop | 30–60 min | 1–2 sessions |
+| Level | Wall time |
+|---|---|
+| 0 static | seconds |
+| 1 replay (all) | ≈45 min, of which ≈35 min of private Actions minutes |
+| 2 hooks (A1–A9, A2 ×3) | ≈1.5 h over ≈17 `claude -p` runs |
+| BMM phase (P1–P5) | ≈1 h over 5–6 skill runs |
+| 3 bmad-loop | 30–60 min over 1–2 sessions |
+
+Level 2 and above spend the 5-hour quota window, not money: a hook run is 50–60 turns of
+the session and a real `/bmad-build` about 100, so queue them one at a time.
 
 ## Teardown
 

@@ -25,7 +25,7 @@ n="$(printf '%s' "$row" | cut -f1 | tr -d '#')"
 state="$(printf '%s' "$row" | cut -f3,4)"
 comments="$([ -n "$n" ] && gh issue view "$n" -R "$REPO_GH" --json comments --jq '.comments | length' || echo 0)"
 ci="$(cat "$WT/ci-status.json" 2>/dev/null || echo absent)"
-notes="issue=#$n state=$state comments=$comments ci-status.json=$ci merged=$(gh pr list -R "$REPO_GH" --state merged --head "feat/$PRD_KEY/1-1-login-form" --json number --jq 'length') improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]') cost=\$$(rj "$D" 'round(r["result"]["total_cost_usd"] or 0,2)'); final: $(tail -c 250 "$D/final.txt" | tr '\n' ' ')"
+notes="issue=#$n state=$state comments=$comments ci-status.json=$ci merged=$(gh pr list -R "$REPO_GH" --state merged --head "feat/$PRD_KEY/1-1-login-form" --json number --jq 'length') improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]'); final: $(tail -c 250 "$D/final.txt" | tr '\n' ' ')"
 case "$MODE" in
   rows) if printf '%s' "$state" | grep -q 'CLOSED' && [ "$comments" -ge 1 ]; then verdict $C-rows OBSERVED "happy path: comment + closed. $notes"; else verdict $C-rows OBSERVED "$notes"; fi;;
   none) if saw "$D" 'Refusing to merge an unreviewed story|review never ran|has no rows'; then verdict $C-none CONFIRMED "review_producer gate halted on the empty triage section. $notes"; else verdict $C-none OBSERVED "$notes"; fi;;

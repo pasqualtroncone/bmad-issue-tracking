@@ -17,7 +17,7 @@ for i in $(seq 1 "$N"); do
   created=$(( $(wc -l < "$(case_dir $C)/issues-after-$i.txt") - $(wc -l < "$(case_dir $C)/issues-before-$i.txt") ))
   entries=$(grep -cE '^  [0-9a-z-]+: ' "$WT/$IMPLEMENTATION/sprint-status.yaml")
   nameerr=0; saw "$D" "NameError: name 'sys' is not defined" && nameerr=1
-  notes="run $i: entries=$entries created=$created NameError-seen=$nameerr improvised=$(rj "$D" 'r.get("improvised")')/$(rj "$D" 'r["bash_commands"]') turns=$(rj "$D" 'r["result"]["num_turns"]') cost=\$$(rj "$D" 'round(r["result"]["total_cost_usd"] or 0,2)'); final: $(tail -c 300 "$D/final.txt" | tr '\n' ' ')"
+  notes="run $i: entries=$entries created=$created NameError-seen=$nameerr improvised=$(rj "$D" 'r.get("improvised")')/$(rj "$D" 'r["bash_commands"]') turns=$(rj "$D" 'r["result"]["num_turns"]'); final: $(tail -c 300 "$D/final.txt" | tr '\n' ' ')"
   if [ "$nameerr" = 1 ] && [ "$created" -le 2 ]; then verdict $C-D17-$i CONFIRMED "sync stopped after the first created issue on a NameError from the counter increment (sync-issues.yaml:${INCL:-?}). $notes"
   elif [ "$nameerr" = 1 ]; then verdict $C-D17-$i OBSERVED "NameError hit but the agent continued (improvised around it). $notes"
   else verdict $C-D17-$i REFUTED "no NameError in the trace: the increment at sync-issues.yaml:${INCL:-?} imports sys, so the sync walks every entry. $notes"; fi

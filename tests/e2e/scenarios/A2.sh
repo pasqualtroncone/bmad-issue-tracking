@@ -36,7 +36,7 @@ wall=$(( $(date +%s) - t0 ))
 [ "$PASS" = patched ] && { mv "$WT/_bmad/_config/custom/workflows/common/wait-for-green-ci.yaml.orig" "$WT/_bmad/_config/custom/workflows/common/wait-for-green-ci.yaml"; ( cd "$WT" && git add -A _bmad/_config/custom/workflows/common/wait-for-green-ci.yaml && git commit -q -m "A2 patched: restore" ); }
 ci="$(cat "$WT/ci-status.json" 2>/dev/null || echo absent)"
 timed_out=0; saw "$D" 'timed out|Command timed out|exceeded.*timeout' && timed_out=1
-notes="pass=$PASS wall=${wall}s ci-status.json=$ci tool-timeout-seen=$timed_out improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]') cost=\$$(rj "$D" 'round(r["result"]["total_cost_usd"] or 0,2)')"
+notes="pass=$PASS wall=${wall}s ci-status.json=$ci tool-timeout-seen=$timed_out improvised=$(rj "$D" 'r.get("improvised")') turns=$(rj "$D" 'r["result"]["num_turns"]')"
 case "$PASS" in
   proxy|default)
     if [ "$timed_out" = 1 ]; then verdict $C-$PASS CONFIRMED "D18+D03: the polling RUN never returned before the Bash tool timeout (CI itself finished in ~60 s). $notes"
