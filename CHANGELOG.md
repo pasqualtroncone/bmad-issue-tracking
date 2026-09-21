@@ -58,6 +58,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Under bmad-loop the CI gate passed without ever reading a pipeline. `bmad-build-auto`
+  finalises dev and review in one session, so the hook fires once with the spec already
+  `done` and `common/post-dev-complete.yaml` routes it to review-finish — the only phase a
+  bmad-loop story ever reaches, and the one phase that gated on CI without ensuring the trace
+  MR first. `common/find-mr` answered nothing, `common/check-mr-ci` mapped `no_mr`,
+  `common/write-ci-status` wrote green and bmad-loop's `[verify]` converged the story over a
+  pipeline nobody had looked at; a red one would have passed identically, and no trace MR was
+  left for `close-trace-mr` to close. review-finish now `INCLUDE`s `common/ensure-mr` inside
+  the same `review_status eq "done"` guard, ahead of the gate — the invariant #79 established
+  for dev-finish — and `ensure-mr` stays a no-op when the MR already exists.
+
+- `ci-status.json` ended up committed to the integration branch. The file is transient gate
+  output written at the worktree root by `common/write-ci-status.yaml`, but setup step 4
+  gitignored only the gate's INPUTS, so bmad-loop's single commit of the story worktree
+  carried each story's verdict into the target branch and the next story's worktree started
+  with the previous one's file already on disk. Setup now appends `ci-status.json` to
+  `.gitignore` (never to `worktree_seed` — it is output, not a seeded input).
+
 - The retrospective issue was never created. `retrospective/complete.yaml` read the
   retrospective document from `{implementation_artifacts}/retrospectives/{retro_key}.md`, a
   name no BMM version writes: BMM 6.12.0's `bmad-retrospective` saves it as

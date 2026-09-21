@@ -5,7 +5,11 @@
 # Dispatched by phase:
 #   - "create-story": spec just created, no code yet — create issue + commit + push + create trace MR
 #   - "dev-finish":    dev session done — push + issue + MR + wait CI + write ci-status.json + update issue + post dev comment
-#   - "review-finish": review session done — push + wait CI + post review findings + update issue final + optional merge
+#   - "review-finish": review session done — push + update issue final + post review findings +
+#       MR + wait CI + write ci-status.json + optional merge
+# Every phase that gates on CI ensures the MR first (create-story creates it; dev-finish and
+# review-finish both INCLUDE common/ensure-mr before common/wait-for-green-ci): the gate reads
+# the MR's pipeline, so a gate that runs without one reads nothing and writes green.
 # Input variables:
 #   - phase: "create-story" | "dev-finish" | "review-finish" (set by dispatcher or caller)
 #   - spec_status: the spec frontmatter `status` the dispatcher routed on — the producer's
@@ -19,7 +23,7 @@
 #   - head_sha: the commit this phase pushed (dev-finish, review-finish) — every CI lookup
 #       under common/wait-for-green-ci filters on it, so the gate judges the pushed tree and
 #       not whichever run the platform happens to list first. Seeded "" by check-config.
-# Side effects: pushes branch, writes {worktree}/ci-status.json (dev-finish), creates/updates issues on tracker, creates/merges MR
+# Side effects: pushes branch, writes {worktree}/ci-status.json (dev-finish, review-finish), creates/updates issues on tracker, creates/merges MR
 
 - INCLUDE: common/check-config
 - INCLUDE: common/find-prd-key
@@ -352,17 +356,50 @@ print(body)
             - SET: { variable: comment_file, value: "/tmp/review-findings-{story_key}.md" }
             - INCLUDE: common/post-issue-comment
             - RUN: rm -f /tmp/review-findings-{story_key}.md
-    # CI gate before merge + write ci-status.json (contract for ci-status.sh)
+    # CI gate before merge + write ci-status.json (contract for ci-status.sh).
+    #
+    # The MR comes FIRST here too — the invariant #79 established for dev-finish, missing
+    # on this path until #95. bmad-build-auto finalises dev AND review in ONE session, so
+    # under bmad-loop this phase is the only one that ever runs for a story: with no MR
+    # ensured, find-mr answered nothing, check-mr-ci mapped `no_mr`, write-ci-status wrote
+    # green and bmad-loop's [verify] passed on a gate that had read no pipeline — while
+    # the branch it had just pushed did have one. A red pipeline would have passed the
+    # same way. ensure-mr is a no-op when the MR already exists (it resolves mr_iid via
+    # find-mr and skips the create), so the interactive flows, which got their MR from
+    # create-story or dev-finish, are unchanged.
+    #
+    # common/ensure-mr reads its inputs from the caller's scope, so they are set here.
+    # source_branch is the branch we are ON, never the pattern-derived story_branch:
+    # bmad-loop names its branches bmad-loop/<run>/<story_key>, a ref no pattern spells.
+    # mr_repo (the git remote's "host/project") comes from check-config; issue_id is what
+    # common/find-issue resolved above, and is "" when this story has no issue yet.
     - CHECK: review_status eq "done"
       TRUE:
+        - SET: { variable: source_branch, value: "{current_branch}" }
+        - SET: { variable: target_branch, value: "{prd_branch}" }
+        - SET: { variable: mr_title, value: "Story {epic_num}.{story_num}: {story_key}" }
+        - WRITE:
+            file: /tmp/ensure-mr-desc-{story_key}.md
+            content: "Sprint key: {story_key}\n\nRelated to #{issue_id}"
+            mode: overwrite
+        - SET: { variable: mr_description_file, value: "/tmp/ensure-mr-desc-{story_key}.md" }
+        - SET: { variable: mr_draft, value: "false" }
+        - INCLUDE: common/ensure-mr
+        - RUN: rm -f /tmp/ensure-mr-desc-{story_key}.md
         - INCLUDE: common/wait-for-green-ci
         - INCLUDE: common/write-ci-status
     # Is the CI verdict one that may be merged? The green set is
-    # common/write-ci-status.yaml's: `passed` is a real green pipeline, `no_ci`/`no_mr` are
-    # the flows with no gate to enforce. Everything else — `failed`, `timeout`, and the ""
-    # of a review that did not end `done` — is not. The gate matters since #75: the timeout
-    # path now returns instead of ending the run, so without this the prompt would offer to
-    # merge a story whose pipeline never finished.
+    # common/write-ci-status.yaml's: `passed` is a real green pipeline and `no_ci` is a
+    # branch that defines no CI, so there is nothing to enforce. `no_mr` is the odd one
+    # out and no longer means "the MR had not been created yet" — ensure-mr ran a few
+    # steps above, so on THIS path it means the MR could not be resolved at all: none
+    # existed and the create produced nothing find-mr can see. It still counts as green
+    # because a flow with no remote MR has no gate to enforce, but on the bmad-loop path
+    # it is now a symptom to read, not the normal case it was before #95. Everything
+    # else — `failed`, `timeout`, and the "" of a review that did not end `done` — is not
+    # green. The gate matters since #75: the timeout path now returns instead of ending
+    # the run, so without this the prompt would offer to merge a story whose pipeline
+    # never finished.
     - SET: { variable: ci_merge_ok, value: "false" }
     - CHECK: ci_status eq "passed"
       TRUE:
