@@ -348,9 +348,10 @@ def close_one(runner: Runner, ctx: Ctx, iid: int) -> CloseResult:
 
     GitLab: `glab api projects/.../merge_requests/{iid} -X PUT -F state_event=close`
             — 200 OK on success, 409 with "Already closed" body when closed.
-    GitHub: `gh pr close <iid> -R <project> [--delete-branch false]`
+    GitHub: `gh pr close <iid> -R <project>`
             — exit 0 even when already closed (message on stdout); non-zero
-              only on real failures.
+              only on real failures. `-R` is right here: `gh pr close` takes it,
+              unlike `gh api` in list_open_mrs above.
 
     Failure: a non-zero exit with no "already closed" signal → state="failed"
     so the marker records the miss and the operator can re-run by hand.
@@ -364,10 +365,15 @@ def close_one(runner: Runner, ctx: Ctx, iid: int) -> CloseResult:
             "-F", "state_event", "close",
         ]
     else:  # github
+        # No `--delete-branch` (D42, #101): it is a BOOLEAN flag, so the literal
+        # "false" landed as a second positional and gh answered "too many
+        # arguments" — rc=2, `failed_mrs: [<n>]`, nothing closed. Keeping the
+        # branch is already gh's default, which is what the flag was reaching for;
+        # and the branch must survive, because the trace PR's whole point is to
+        # stay readable as the story's execution trace after the local merge.
         cmd = [
             "gh", "pr", "close", str(iid),
             "-R", ctx.project,
-            "--delete-branch", "false",
         ]
     proc = runner(cmd, capture_output=True, text=True, timeout=_SUBPROC_TIMEOUT_SEC)
     combined = (proc.stdout + proc.stderr).lower()

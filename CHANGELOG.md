@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Even with the lookup fixed, the GitHub close itself could not run. `close_one` built
+  `gh pr close <n> -R <project> --delete-branch false`, but `--delete-branch` is a BOOLEAN
+  flag, so the literal `false` arrived as a second positional and gh answered
+  `too many arguments` — rc=2, marker `closed_mrs: [] failed_mrs: [<n>]`. The flag is gone:
+  keeping the branch is gh's default, and the trace PR's branch has to survive anyway,
+  since the PR exists to stay readable as the story's execution trace after the local merge.
+
 - No GitHub trace PR had ever been closed, and fixing that naively would have closed every
   other open PR of the repository. The `close-trace-mr` bmad-loop plugin looked its PR up with
   `gh api repos/<project>/pulls -R <project> -f head=<branch> -f state=open`: `gh api` has no

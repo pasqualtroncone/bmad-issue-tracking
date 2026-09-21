@@ -461,7 +461,26 @@ class TestCloseOne:
         cmd, _ = recorder.calls[0]
         joined = " ".join(cmd)
         assert "pr close 11" in joined
+        # `-R` IS a flag of `gh pr close` — unlike `gh api`, see TestListOpenMrs.
         assert "-R owner/repo" in joined
+
+    def test_github_close_passes_no_delete_branch_flag(self):
+        """D42 (#101): `--delete-branch` is a boolean flag.
+
+        The command was `gh pr close <n> -R <p> --delete-branch false`; the literal
+        "false" became a second positional and gh answered "too many arguments"
+        (rc=2, marker `failed_mrs: [<n>]`). Keeping the branch is gh's default and
+        is what the flag was reaching for — the trace PR must stay readable.
+        """
+        recorder = _Recorder()
+        recorder.add(_Recorder.cmd_starts_with("gh"), _FakeProc(0, "✓ Closed pull request #11\n"))
+        ctm.close_one(recorder, _github_ctx(), iid=11)
+        cmd, _ = recorder.calls[0]
+        assert "--delete-branch" not in cmd
+        assert "-d" not in cmd
+        assert "false" not in cmd
+        # A positional count of exactly one: `gh pr close <n>` and nothing else.
+        assert [a for a in cmd if not a.startswith("-")] == ["gh", "pr", "close", "11", "owner/repo"]
 
     def test_github_already_closed_is_success(self):
         recorder = _Recorder()
