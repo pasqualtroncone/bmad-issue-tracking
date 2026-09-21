@@ -69,6 +69,67 @@ bmad-loop run --dry-run
 bmad-loop run --story 1-1 --max-stories 1      # from a normal terminal, not from Claude Code
 ```
 
+## Running it under ai-jail
+
+[ai-jail](https://github.com/akitaonrails/ai-jail) (a `bwrap` wrapper) is how the operator
+runs this level now: bmad-loop drives `claude --permission-mode bypassPermissions`, so the
+session is sandboxed rather than trusted. The launcher is a ~10-line wrapper kept outside the
+repo (the working copy lives with the run evidence, which is gitignored); what matters is the
+invocation and why each mount is there.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+PRD=/tmp/bmad-it-lab/<lab>/consumer/_bmad/worktrees/prd
+export GH_TOKEN="${GH_TOKEN:-$(gh auth token)}"
+BMAD_LOOP_ARGS="$(printf '%q ' "$@")"; export BMAD_LOOP_ARGS
+cd "$PRD"
+exec ai-jail --no-save-config --exec --terminal-passthrough --network --worktree \
+  --rw-map "$HOME/.claude" --rw-map "$HOME/.claude.json" \
+  --map "$HOME/.config/gh" --map "$HOME/.local/bin" --map "$HOME/.local/share/uv" \
+  --rw-map "$HOME/.local/state/bmad-loop" --rw-map "$HOME/.cache/uv" --rw-map "/tmp/tmux-$(id -u)" \
+  --env PATH --env GH_TOKEN --env BMAD_LOOP_ARGS -- bash -c 'eval "exec bmad-loop $BMAD_LOOP_ARGS"'
+```
+
+Invoked as `bmad-loop-jail.sh run --story 1-10 --max-stories 1`, i.e. exactly the bmad-loop
+command line from the block above.
+
+**Why each flag and mount:**
+
+| Flag / mount | Why |
+|---|---|
+| `--exec --terminal-passthrough` | ai-jail requires the pair on a real TTY: the child runs directly on the caller's terminal with no PTY proxy, which is what tmux and `bmad-loop attach` need. Not usable from inside a Claude Code session. |
+| `--network` | ai-jail starts with networking **off**. gh, git and the Claude API all need it. |
+| `--worktree` | the PRD checkout is a *linked* worktree, so its `.git` is a file pointing into the main repo; the flag mounts that metadata and the main repo rw, without which every VCS command inside fails. |
+| `--rw-map ~/.claude`, `~/.claude.json` | ai-jail gives the child a private HOME. These two carry Claude Code's OAuth credentials, the directory-trust record and session state — rw because the session writes back. |
+| `--map ~/.config/gh` (ro) | gh's config. The token itself is **not** here (it lives in the desktop keyring, which the jail cannot reach) — hence `GH_TOKEN`. |
+| `--map ~/.local/bin`, `~/.local/share/uv` (ro) | bmad-loop (installed as a `uv` tool) and `uv` itself. |
+| `--rw-map ~/.local/state/bmad-loop` | bmad-loop's events dir — the hook relay writes there. |
+| `--rw-map ~/.cache/uv` | every module step is `uv run --no-project python -c …`; without the cache each one re-resolves. |
+| `--rw-map /tmp/tmux-$(id -u)` | shares the tmux socket dir so `bmad-loop attach` also works from the **host**. |
+| `--env PATH --env GH_TOKEN` | `PATH` so `~/.local/bin` is reachable inside; `GH_TOKEN` exported on the host from `gh auth token` because gh's keyring is unreachable in the jail. It travels through the environment, never written to disk. |
+
+**Not mounted: `~/.ssh`.** No keys, no agent. The lab remote must therefore be **HTTPS**, and
+the VCS authenticates through the global `gh auth git-credential` helper (`gh auth setup-git`
+on the host, so the helper sits in the user-level config). An `ssh://` or `user@host:` remote
+fails at the first push with no useful message.
+
+**Argument passing.** ai-jail rejects child flags that collide with its own — `--dry-run`,
+`--verbose` — even when they come after `--`. So the bmad-loop arguments travel shell-quoted
+inside `BMAD_LOOP_ARGS` and are `eval exec`-ed on the inside. That is why the wrapper ends in
+`bash -c 'eval "exec bmad-loop $BMAD_LOOP_ARGS"'` rather than passing `"$@"` through.
+
+**Judging liveness from the host.** `engine.pid` in the run dir holds the pid *inside* the
+jail's namespace, so `bmad-loop list` / `bmad-loop status` run on the host report a perfectly
+healthy jailed run as **`interrupted`**. That is an artefact, not a failure — do not stop or
+clean up on it. Judge liveness with:
+
+```bash
+pgrep -af "bmad-loop run"                       # the real process, on the host
+tmux ls; tmux attach -r -t bmad-loop-<run_id>   # read-only attach to the session
+tail -f .bmad-loop/runs/<run_id>/journal.jsonl  # the authoritative event stream
+```
+
 ## What to capture (into `tests/e2e/evidence/<lab>/L/`)
 
 - `.bmad-loop/runs/<run_id>/journal*` and the feedback/ directory (verify rc, diagnostics)
