@@ -220,6 +220,9 @@ build_consumer() {  # build_consumer <dir> <platform> <remote-url> <host> <proje
   sed -e "s|@PLATFORM@|$plat|" -e "s|@GIT_PLATFORM@|$plat|" -e "s|@HOST@|$host|" -e "s|@PROJECT@|$project|" -e "s|@CROSS@|$cross|" \
       "$E2E_ROOT/fixtures/issue-tracking.yaml.tmpl" | sed '/^$/d' > _bmad/custom/issue-tracking.yaml
   grep -qxF '_bmad/worktrees' .gitignore 2>/dev/null || echo '_bmad/worktrees' >> .gitignore
+  # the CI gate's OUTPUT file, written at the worktree root by common/write-ci-status.yaml:
+  # transient, and untracked it rides bmad-loop's story commit into the target branch (#96)
+  grep -qxF 'ci-status.json' .gitignore 2>/dev/null || echo 'ci-status.json' >> .gitignore
 
   # --- 5. fixtures in the paths bmm/config.yaml declares ---
   local pa ia
