@@ -3,10 +3,11 @@
 #
 #   replay.sh static                # S1..S8 + D03/D22 arithmetic — no lab needed
 #   replay.sh d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d9|d31|r1|r3|r7|r11|r13|r17|r18|r19|r24  # GitHub lab (d15/d21/d29/r13/r17/r18/r19 are local; r24 also drives the GitLab consumer when there is one)
-#   replay.sh d29|d32|d33|d34|d36  # local: no lab API — d29 the dev-finish INCLUDE order,
+#   replay.sh d29|d32|d33|d34|d36|d37  # local: no lab API — d29 the dev-finish INCLUDE order,
 #                                   #   d32 the sprint hooks' commit/push, d33 the review verdict,
 #                                   #   d34 the PRD-side update hooks' commit/push,
-#                                   #   d36 the PRD worktree lookup's branch
+#                                   #   d36 the PRD worktree lookup's branch,
+#                                   #   d37 the retrospective document's path
 #   replay.sh g06|g10|d26|d03       # GitLab lab (g10 is a rendering proof, no glab needed)
 #   replay.sh all                   # static + every GitHub case (≈35 min: Actions + seeding)
 #
@@ -1947,15 +1948,74 @@ PY
   ( cd "$work/repo" && git worktree remove --force "$work/prd" ) >/dev/null 2>&1 || true
 }
 
+case_d37() {  # #92 — the retro hook read the document from a path BMM 6.12.0 never writes
+  # Local, no lab API. BMM 6.12.0's bmad-retrospective writes the document as
+  # {implementation_artifacts}/epic-{n}-retro-{date}.md (its references/retro-document.md)
+  # and marks the sprint-status key done with `--set-retro-done`; the hook read
+  # {implementation_artifacts}/retrospectives/{retro_key}.md, a name nothing writes, so the
+  # step exited non-zero and the whole run halted (lang section 5) before the retrospective
+  # issue existed. The resolution step must answer the BMM name (newest first — the date is
+  # IN the name), the legacy name, and EMPTY on a miss, the last one so the CHECK after it
+  # can halt naming both candidates instead of the run dying on a traceback.
+  local c=d37
+  load_lab 2>/dev/null || true
+  EVIDENCE="${EVIDENCE:-$E2E_ROOT/evidence/static}"
+  local d; d="$(case_dir $c)"
+  local f="$WF/retrospective/complete.yaml"
+  local lr; lr="$(run_line_of retrospective/complete.yaml 'STORE: retro_path')"
+  if [ -z "$lr" ]; then
+    verdict $c CONFIRMED "retrospective/complete.yaml resolves no retro_path at all — the document is still read from one hardcoded path: $(grep -n 'retrospectives/{retro_key}' "$f" | head -1 | cut -c1-140)"
+    return
+  fi
+  local work="$d/scratch"; rm -rf "$work"
+  mkdir -p "$work/bmm" "$work/legacy/retrospectives" "$work/none"
+  # BMM's own name twice: the older date must lose, so the answer is not "any glob hit"
+  printf '%s\n' '---' 'epic: 1' 'date: 2026-09-21' 'verdict: accepted' '---' '# Retrospective — Epic 1' > "$work/bmm/epic-1-retro-2026-09-21.md"
+  printf '%s\n' '---' 'epic: 1' 'date: 2026-09-14' 'verdict: rejected' '---' '# Retrospective — Epic 1 (older)' > "$work/bmm/epic-1-retro-2026-09-14.md"
+  printf '%s\n' '# Retrospective — Epic 1 (legacy layout)' > "$work/legacy/retrospectives/epic-1-retrospective.md"
+  local REPLAY_CWD="$work"
+  replay $c bmm    retrospective/complete.yaml "$lr" epic_number=1 retro_key=epic-1-retrospective implementation_artifacts="$work/bmm"
+  replay $c legacy retrospective/complete.yaml "$lr" epic_number=1 retro_key=epic-1-retrospective implementation_artifacts="$work/legacy"
+  replay $c none   retrospective/complete.yaml "$lr" epic_number=1 retro_key=epic-1-retrospective implementation_artifacts="$work/none"
+  local got_bmm got_legacy got_none rc_none
+  got_bmm="$(head -1 "$d/bmm.out")"; got_legacy="$(head -1 "$d/legacy.out")"; got_none="$(head -1 "$d/none.out")"
+  rc_none="$(cat "$d/none.rc")"
+  # the miss must reach a halt that names BOTH candidates, and the read must take the
+  # resolved path — a surviving hardcoded `retrospectives/{retro_key}` read defeats all of it
+  local halt=0 names=0 reads=0 hard msg
+  grep -m1 -A 5 -- '- CHECK: empty retro_path' "$f" | grep -q 'stop: true' && halt=1
+  msg="$(grep -m1 -A 5 -- '- CHECK: empty retro_path' "$f" | grep -m1 'message:')"
+  printf '%s' "$msg" | grep -qF 'epic-{epic_number}-retro-' && printf '%s' "$msg" | grep -qF 'retrospectives/' && names=1
+  grep -q -- '- READ: {retro_path}' "$f" && reads=1
+  # comments excluded: the fix's own comment quotes the legacy path to say why it moved
+  hard="$(grep -v '^ *#' "$f" | grep -cF 'retrospectives/{retro_key}' || true)"
+  { echo "resolution step: retrospective/complete.yaml:$lr"
+    echo "BMM names present ($(ls "$work/bmm" | tr '\n' ' ')) → '${got_bmm:-(empty)}'"
+    echo "    want $work/bmm/epic-1-retro-2026-09-21.md (the newest of the two)"
+    echo "legacy name only (retrospectives/epic-1-retrospective.md) → '${got_legacy:-(empty)}'"
+    echo "no document at all → '${got_none:-(empty)}' rc=$rc_none (want empty, rc 0)"
+    echo "halt on the miss: stop:true=$halt  message names both candidates=$names"
+    echo "the read takes {retro_path}: $reads   steps still naming retrospectives/{retro_key}: $hard"; } > "$d/summary.txt"
+  cat "$d/summary.txt" >&2
+  if [ "$got_bmm" = "$work/bmm/epic-1-retro-2026-09-21.md" ] \
+     && [ "$got_legacy" = "$work/legacy/retrospectives/epic-1-retrospective.md" ] \
+     && [ -z "$got_none" ] && [ "$rc_none" = 0 ] \
+     && [ "$halt" = 1 ] && [ "$names" = 1 ] && [ "$reads" = 1 ] && [ "$hard" = 0 ]; then
+    verdict $c REFUTED "retrospective/complete.yaml:$lr resolves the document instead of assuming one name: the BMM layout answers '$got_bmm' (the newest of $(ls "$work/bmm" | wc -l) epic-1-retro-*.md, so the date in the name decides), the legacy layout still answers '$got_legacy', and a directory holding neither answers empty at rc=$rc_none — where the pre-fix read raised FileNotFoundError and took the whole hook down (lang section 5) before the issue existed. The empty answer reaches a CHECK that halts naming both candidates (stop:true=$halt, names both=$names), and the document is read from {retro_path} ($reads), with no step left reading retrospectives/{retro_key} ($hard)"
+  else
+    verdict $c CONFIRMED "the retrospective document is not resolved: BMM layout → '${got_bmm:-(empty)}' (want $work/bmm/epic-1-retro-2026-09-21.md), legacy layout → '${got_legacy:-(empty)}', neither → '${got_none:-(empty)}' rc=$rc_none (want empty, rc 0); halt names both candidates: stop:true=$halt names=$names; read takes {retro_path}: $reads; steps still naming retrospectives/{retro_key}: $hard"
+  fi
+}
+
 # ============================================================================
 main() {
   local what="${1:-}"
   case "$what" in
     static) case_static;;
-    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|d34|d36|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
+    d17|d18|d2|d4|d7|d8|d15|d16|d19|d21|d24|d26|d9|d29|d31|d32|d33|d34|d36|d37|r1|r3|r7|r11|r13|r17|r18|r19|r24|g06|g10|gl-d23|gl-d16|gl-d4) "case_$what";;
     gitlab) for k in g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03; do log "=== $k"; "case_$k"; done;;
     gl-d2|gl-d18|d03) "case_$what";;
-    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 d34 d36 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
+    all) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29 d31 d32 d33 d34 d36 d37 r13 r17 r18 r19 d19 d2 d18 r11 d4 d24 r1 r3 r24 r7; do log "=== $k"; "case_$k"; done;;
     all-quick) case_static; for k in d17 d7 d8 d16 d9 d15 d21 d29; do log "=== $k"; "case_$k"; done;;
     *) sed -n 2,12p "$0"; exit 2;;
   esac

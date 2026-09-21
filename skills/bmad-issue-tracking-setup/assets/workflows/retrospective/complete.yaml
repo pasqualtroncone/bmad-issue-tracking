@@ -27,6 +27,32 @@ parts = key.split('-')
 print(parts[1])
 " {retro_key}
   STORE: epic_number
+# Resolve the retrospective document before reading it. BMM 6.12.0's bmad-retrospective
+# writes it as {implementation_artifacts}/epic-{n}-retro-{date}.md (its
+# references/retro-document.md) and marks the sprint-status key done with
+# `--set-retro-done`; this hook read {implementation_artifacts}/retrospectives/{retro_key}.md,
+# a name BMM never writes, so on a real run the read missed, the step exited non-zero and
+# the whole hook halted (lang section 5) before the retrospective issue existed. Candidates,
+# in order: the BMM name newest first (the date is IN the name, so a name sort is
+# chronological and mtime only breaks ties), then the legacy name. A document that exists
+# under neither prints empty instead of raising, so the CHECK below can name both.
+- RUN: uv run --no-project python -c "
+import glob, os, sys
+epic = sys.argv[1].strip()
+key = sys.argv[2].strip()
+base = sys.argv[3]
+candidates = sorted(glob.glob(os.path.join(base, 'epic-' + epic + '-retro-*.md')), key=lambda p: (os.path.basename(p), os.path.getmtime(p)), reverse=True)
+candidates.append(os.path.join(base, 'retrospectives', key + '.md'))
+print(next((c for c in candidates if os.path.isfile(c)), ''))
+" "{epic_number}" "{retro_key}" "{implementation_artifacts}"
+  STORE: retro_path
+- CHECK: empty retro_path
+  TRUE:
+    - OUTPUT:
+        message: "No retrospective document for epic {epic_number}: neither {implementation_artifacts}/epic-{epic_number}-retro-*.md (what BMM's bmad-retrospective writes) nor {implementation_artifacts}/retrospectives/epic-{epic_number}-retrospective.md (the legacy name) exists. Run the retrospective before syncing it."
+        stop: true
+- READ: {retro_path}
+  STORE: retrospective_content
 # Write description file (retrospective document content).
 # The **Sprint Key** line is the identity every producer writes and common/find-issue
 # selects on for a key-shaped search: sync-issues looks this issue up as
@@ -34,12 +60,6 @@ print(parts[1])
 # retrospective as created on every sync, never reconciling its status label. The key is
 # composed from epic_number rather than reused from retro_key because retro_key comes out
 # of the FILTER with trailing whitespace (hence the rstrip() above).
-- RUN: uv run --no-project python -c "
-import sys
-with open(sys.argv[1], 'r', encoding='utf-8') as f:
-    print(f.read())
-" {implementation_artifacts}/retrospectives/{retro_key}.md
-  STORE: retrospective_content
 - WRITE:
     file: /tmp/retro-desc-epic-{epic_number}.md
     content: "**Sprint Key:** `epic-{epic_number}-retrospective`\n**Epic:** {epic_number}\n\n---\n\n{retrospective_content}"

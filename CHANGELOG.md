@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The retrospective issue was never created. `retrospective/complete.yaml` read the
+  retrospective document from `{implementation_artifacts}/retrospectives/{retro_key}.md`, a
+  name no BMM version writes: BMM 6.12.0's `bmad-retrospective` saves it as
+  `{implementation_artifacts}/epic-{n}-retro-{date}.md` and marks the sprint-status key done
+  with `--set-retro-done`. On a real run the read raised `FileNotFoundError`, the step exited
+  non-zero and the whole hook halted before the issue existed. The document is now resolved
+  against the BMM name (newest first — the date is in the name) and the legacy name, and a
+  document under neither halts with a message naming both candidates instead of a traceback.
+
 - Every PRD-side hook could halt at activation. `common/find-prd.yaml` globbed the PRD branch
   correctly and then filtered the worktree list with `branch matches "{prd_pattern}"` — the RAW
   config value `feat/{prd_key}/prd`, whose braces are regex quantifier syntax, so as a regex it
