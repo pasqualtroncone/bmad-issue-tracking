@@ -20,8 +20,46 @@ skills-lock.json
 # e2e lab evidence (traces, snapshots, tokens of cost) — never committed
 tests/e2e/evidence/
 
-# subagent worktrees
-.claude/worktrees/
-
-# personal working notes for Claude Code
+# Claude Code session state — local only, never committed
+# (.claude/ covers the former .claude/worktrees/ entry: the subagent worktrees)
+.claude/
+CLAUDE.local.md
 .claude.local.md
+.mcp.json
+
+# Sandboxes and loops, when they are run against THIS checkout by mistake
+.ai-jail
+.bmad-loop/
+ci-status.json
+.bmad-ci-handled
+
+# Python and tooling caches, build output
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node (the classic installer runs through npx)
+node_modules/
+npm-debug.log*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+*~
+*.orig
+*.rej
+*.bak
+*.tmp
+*.log
