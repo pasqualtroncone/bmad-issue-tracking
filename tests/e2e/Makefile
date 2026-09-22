@@ -1,10 +1,14 @@
-# e2e lab entry points (see tests/e2e/README.md). The offline suite stays `uv run … pytest`.
-E2E := tests/e2e
+# e2e lab entry points (see the README.md next to this file). The offline suite stays `uv run … pytest`.
+#
+#   make -C tests/e2e <target>   from the repo root
+#   make <target>                from inside tests/e2e/
+E2E  := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+ROOT := $(abspath $(E2E)/../..)
 
 .PHONY: test e2e-static e2e-up e2e-check e2e-replay e2e-agent e2e-down
 
-test:
-	uv run --with pytest --with pyyaml pytest -q
+test:              ## the offline suite, from the repo root
+	cd $(ROOT) && uv run --with pytest --with pyyaml pytest -q
 
 e2e-static:        ## level 0 — greps only, no lab
 	$(E2E)/replay.sh static
