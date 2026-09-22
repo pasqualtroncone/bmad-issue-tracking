@@ -24,6 +24,7 @@ Nothing here is collected by pytest (no `test_*.py`), and nothing runs without y
 
 ```
 tests/e2e/
+  Makefile          the `test` and `e2e-*` entry points (`make -C tests/e2e <target>` from the repo root)
   lib/common.sh     $LAB, evidence dirs, verdict(), snapshot(), wait_run(), claude_headless(), worktree helpers
   lab-up.sh         repo + consumer + BMM install + module deploy (--via-skill for the real setup skill) + fixtures; --check
   lab-down.sh       delete/archive the repo(s), remove the consumer and the /tmp leftovers
@@ -46,17 +47,21 @@ a bare `git push` look like it sets the upstream: the D08 replay has to see the 
 
 ## Usage
 
+The `Makefile` lives in this folder. Run it as `make -C tests/e2e <target>` from the repo root,
+or as plain `make <target>` from inside `tests/e2e/`; the paths below are from the repo root.
+
 ```bash
-make e2e-static                 # level 0, seconds, no lab
-make e2e-up  [PLATFORM=github]  # ≈4 min (npm install of bmad-method)
+make -C tests/e2e e2e-static                 # level 0, seconds, no lab
+make -C tests/e2e e2e-up  [PLATFORM=github]  # ≈4 min (npm install of bmad-method)
 tests/e2e/lab-up.sh --add-gitlab --gl-host gitlab.example.com   # add a GitLab consumer to the current lab
-tests/e2e/replay.sh gitlab      # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03
-make e2e-check                  # resolve_customization.py returns the module's on_complete per skill
-make e2e-replay                 # level 1, ≈45 min (four Actions runs, 105 issues seeded, index waits)
-tests/e2e/replay.sh d18         # or one case at a time
-tests/e2e/scenarios/A1.sh       # level 2, one hook run ≈3–8 min; see `make e2e-agent` for the order
-tests/e2e/scenarios/P1.sh       # real BMM skill, ≈5–15 min each
-make e2e-down
+tests/e2e/replay.sh gitlab                   # g06 gl-d23 gl-d16 gl-d4 gl-d2 gl-d18 d26 d03
+make -C tests/e2e e2e-check                  # resolve_customization.py returns the module's on_complete per skill
+make -C tests/e2e e2e-replay                 # level 1, ≈45 min (four Actions runs, 105 issues seeded, index waits)
+tests/e2e/replay.sh d18                      # or one case at a time
+tests/e2e/scenarios/A1.sh                    # level 2, one hook run ≈3–8 min; see `make -C tests/e2e e2e-agent` for the order
+tests/e2e/scenarios/P1.sh                    # real BMM skill, ≈5–15 min each
+make -C tests/e2e e2e-down
+make -C tests/e2e test                       # the offline pytest suite, run from the repo root
 ```
 
 Cases and what they prove:

@@ -96,8 +96,8 @@ case_static() {
   # S9 (new) conftest parser depth. The increment's line is located, never spelled out:
   # it moved once already (a renumbering of sync-issues.yaml) and the message went stale.
   local s9l; s9l="$(run_line_of common/sync-issues.yaml '^" \{sync_created\}$')"
-  local seen; seen="$($PY - <<'PY'
-import sys; sys.path.insert(0,'tests'); import conftest
+  local seen; seen="$($PY - "$MOD/tests" <<'PY'
+import sys; sys.path.insert(0, sys.argv[1]); import conftest
 wf=conftest.load_workflow('common/sync-issues.yaml')
 print(sum(1 for s in conftest.flatten_steps(wf['steps']) if s['type']=='RUN' and 'sync_created' in s['raw_value']))
 PY
